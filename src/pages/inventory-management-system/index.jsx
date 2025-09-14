@@ -5,6 +5,8 @@ import { InventoryService } from '../../services/inventoryService';
 import Header from '../../components/ui/Header';
 import Sidebar from '../../components/ui/Sidebar';
 import Breadcrumb from '../../components/ui/Breadcrumb';
+import Icon from '../../components/AppIcon';
+import Button from '../../components/ui/Button';
 import CategorySidebar from './components/CategorySidebar';
 import InventoryHeader from './components/InventoryHeader';
 import InventoryGrid from './components/InventoryGrid';
@@ -14,7 +16,7 @@ import BulkActionModal from './components/BulkActionModal';
 const InventoryManagementSystem = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { userProfile, loading: authLoading, sidebarCollapsed, toggleSidebar } = useAuth();
+  const { userProfile, loading: authLoading, sidebarCollapsed, toggleSidebar: toggleMainSidebar } = useAuth();
   const [selectedLocation, setSelectedLocation] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -27,6 +29,13 @@ const InventoryManagementSystem = () => {
     availability: 'all',
     stockLevel: 'all'
   });
+  const [isFiltering, setIsFiltering] = useState(false);
+  const [appliedFilters, setAppliedFilters] = useState({
+    condition: 'all',
+    availability: 'all',
+    stockLevel: 'all'
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // State for Supabase data
   const [inventoryItems, setInventoryItems] = useState([]);
@@ -86,6 +95,43 @@ const InventoryManagementSystem = () => {
     }
   };
 
+  const handleApplyFilters = async () => {
+    setIsFiltering(true);
+    try {
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Apply the filters
+      setAppliedFilters({ ...filters });
+      
+      // Clear selected items when filters change
+      setSelectedItems([]);
+      
+      console.log('Filters applied:', filters);
+    } catch (error) {
+      console.error('Error applying filters:', error);
+    } finally {
+      setIsFiltering(false);
+    }
+  };
+
+  const toggleSidebar = () => {
+    setSidebarOpen(!sidebarOpen);
+  };
+
+  // Keyboard shortcut for toggling sidebar (Ctrl/Cmd + F)
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'f') {
+        event.preventDefault();
+        toggleSidebar();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [sidebarOpen]);
+
   // Filter and sort inventory items
   const filteredItems = useMemo(() => {
     let filtered = inventoryItems?.filter(item => {
@@ -107,23 +153,23 @@ const InventoryManagementSystem = () => {
       }
 
       // Condition filter
-      if (filters?.condition !== 'all' && item?.condition !== filters?.condition) {
+      if (appliedFilters?.condition !== 'all' && item?.condition !== appliedFilters?.condition) {
         return false;
       }
 
       // Availability filter
-      if (filters?.availability !== 'all') {
-        if (filters?.availability === 'available' && item?.available_quantity === 0) return false;
-        if (filters?.availability === 'reserved' && item?.reserved_quantity === 0) return false;
-        if (filters?.availability === 'out-of-stock' && item?.total_quantity > 0) return false;
+      if (appliedFilters?.availability !== 'all') {
+        if (appliedFilters?.availability === 'available' && item?.available_quantity === 0) return false;
+        if (appliedFilters?.availability === 'reserved' && item?.reserved_quantity === 0) return false;
+        if (appliedFilters?.availability === 'out-of-stock' && item?.total_quantity > 0) return false;
       }
 
       // Stock level filter
-      if (filters?.stockLevel !== 'all') {
+      if (appliedFilters?.stockLevel !== 'all') {
         const ratio = item?.available_quantity / item?.reorder_point;
-        if (filters?.stockLevel === 'critical' && item?.available_quantity > 0) return false;
-        if (filters?.stockLevel === 'low' && (item?.available_quantity === 0 || ratio > 1)) return false;
-        if (filters?.stockLevel === 'good' && ratio <= 1) return false;
+        if (appliedFilters?.stockLevel === 'critical' && item?.available_quantity > 0) return false;
+        if (appliedFilters?.stockLevel === 'low' && (item?.available_quantity === 0 || ratio > 1)) return false;
+        if (appliedFilters?.stockLevel === 'good' && ratio <= 1) return false;
       }
 
       return true;
@@ -265,7 +311,7 @@ const InventoryManagementSystem = () => {
       <Header user={userProfile} />
       <Sidebar 
         isCollapsed={sidebarCollapsed} 
-        onToggle={toggleSidebar}
+        onToggle={toggleMainSidebar}
         user={userProfile}
       />
       <main className={`transition-all duration-300 ${
@@ -281,18 +327,41 @@ const InventoryManagementSystem = () => {
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             onBarcodeScan={() => console.log('Barcode scan initiated')}
+            inventoryItems={inventoryItems}
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={toggleSidebar}
           />
 
           <div className="flex-1 flex overflow-hidden">
-            <CategorySidebar
-              categories={categories}
-              selectedCategory={selectedCategory}
-              onCategorySelect={setSelectedCategory}
-              filters={filters}
-              onFilterChange={handleFilterChange}
-            />
 
-            <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Sidebar */}
+            <div className={`transition-all duration-300 ease-in-out overflow-hidden ${
+              sidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0'
+            }`}>
+              {sidebarOpen && (
+                <CategorySidebar
+                  categories={categories}
+                  selectedCategory={selectedCategory}
+                  onCategorySelect={setSelectedCategory}
+                  filters={filters}
+                  onFilterChange={handleFilterChange}
+                  onApplyFilters={handleApplyFilters}
+                  isFiltering={isFiltering}
+                />
+              )}
+            </div>
+
+            <div className={`flex-1 flex flex-col overflow-hidden relative transition-all duration-300 ${
+              sidebarOpen ? '' : 'ml-0'
+            }`}>
+              {isFiltering && (
+                <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
+                  <div className="bg-card border border-border rounded-lg p-6 shadow-luxury flex items-center space-x-3">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                    <span className="text-foreground font-medium">Applying filters...</span>
+                  </div>
+                </div>
+              )}
               <div className="p-4 border-b border-border">
                 <Breadcrumb />
                 <div className="flex items-center justify-between">
@@ -304,6 +373,24 @@ const InventoryManagementSystem = () => {
                       <span className="text-sm text-primary font-medium">
                         {selectedItems?.length} selected
                       </span>
+                    )}
+                    {Object.values(appliedFilters).some(filter => filter !== 'all') && (
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full">
+                          Filters Applied
+                        </span>
+                        {!sidebarOpen && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={toggleSidebar}
+                            className="text-xs text-primary hover:text-primary/80"
+                          >
+                            <Icon name="PanelLeftOpen" size={14} className="mr-1" />
+                            Show Filters
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </div>
                   <div className="flex items-center space-x-2">

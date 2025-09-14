@@ -14,7 +14,9 @@ const InventoryHeader = ({
   searchQuery, 
   onSearchChange,
   onBarcodeScan,
-  inventoryItems = []
+  inventoryItems = [],
+  sidebarOpen,
+  onToggleSidebar
 }) => {
   const [showBulkActions, setShowBulkActions] = useState(false);
 
@@ -46,6 +48,18 @@ const InventoryHeader = ({
         </div>
 
         <div className="flex items-center space-x-3">
+          {/* Sidebar Toggle */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onToggleSidebar}
+            iconName={sidebarOpen ? "PanelLeftClose" : "PanelLeftOpen"}
+            iconPosition="left"
+            title={`${sidebarOpen ? 'Hide' : 'Show'} Filters Sidebar (Ctrl+F)`}
+          >
+            {sidebarOpen ? 'Hide' : 'Show'} Filters
+          </Button>
+
           {/* Stock Alerts */}
           <div className="relative">
             <Button variant="outline" className="relative">

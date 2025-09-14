@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { AuthService } from '../services/authService';
+import { LocationService } from '../services/locationService';
 
 const AuthContext = createContext({})
 
@@ -15,7 +16,10 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [userProfile, setUserProfile] = useState(null)
+  const [userLocations, setUserLocations] = useState([])
+  const [currentLocation, setCurrentLocation] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   useEffect(() => {
     // Get initial session - Use Promise chain
@@ -47,9 +51,25 @@ export const AuthProvider = ({ children }) => {
   const fetchUserProfile = (userId) => {
     AuthService?.getUserProfile(userId)?.then(profile => {
         setUserProfile(profile)
+        // Fetch user locations after profile is loaded
+        fetchUserLocations()
       })?.catch(error => {
         console.error('Error fetching user profile:', error)
       })
+  }
+
+  const fetchUserLocations = async () => {
+    try {
+      const locations = await LocationService.getUserLocations()
+      setUserLocations(locations)
+      
+      // Set default location if none is selected
+      if (locations.length > 0 && !currentLocation) {
+        setCurrentLocation(locations[0])
+      }
+    } catch (error) {
+      console.error('Error fetching user locations:', error)
+    }
   }
 
   const signIn = async (email, password) => {
@@ -75,6 +95,8 @@ export const AuthProvider = ({ children }) => {
       await AuthService?.signOut()
       setUser(null)
       setUserProfile(null)
+      setUserLocations([])
+      setCurrentLocation(null)
     } catch (error) {
       throw error
     }
@@ -92,14 +114,60 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
+  const switchLocation = (locationId) => {
+    const location = userLocations.find(loc => loc.id === locationId)
+    if (location) {
+      setCurrentLocation(location)
+    }
+  }
+
+  const hasPermission = (permission) => {
+    if (!userProfile) return false
+    
+    const role = userProfile.role?.toLowerCase()
+    
+    switch (permission) {
+      case 'admin':
+        return role === 'admin'
+      case 'manager':
+        return role === 'manager'
+      case 'billing_operations':
+        return ['admin', 'manager'].includes(role)
+      case 'user_management':
+        return role === 'admin'
+      case 'system_settings':
+        return role === 'admin'
+      case 'audit_logs':
+        return role === 'admin'
+      case 'location_manager':
+        return role === 'admin' || (currentLocation && currentLocation.access_level === 'manager')
+      case 'location_viewer':
+        return role === 'admin' || 
+               (currentLocation && ['manager', 'viewer'].includes(currentLocation.access_level))
+      default:
+        return false
+    }
+  }
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed(!sidebarCollapsed)
+  }
+
   const value = {
     user,
     userProfile,
+    userLocations,
+    currentLocation,
     loading,
+    sidebarCollapsed,
     signIn,
     signUp,
     signOut,
-    updateProfile
+    updateProfile,
+    switchLocation,
+    hasPermission,
+    fetchUserLocations,
+    toggleSidebar
   }
 
   return (

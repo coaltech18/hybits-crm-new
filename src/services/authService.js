@@ -24,7 +24,7 @@ export class AuthService {
         options: {
           data: {
             full_name: userData?.full_name || '',
-            role: userData?.role || 'staff'
+            role: userData?.role || 'manager'
           }
         }
       });

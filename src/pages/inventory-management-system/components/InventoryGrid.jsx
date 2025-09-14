@@ -16,21 +16,21 @@ const InventoryGrid = ({
   const [editingItem, setEditingItem] = useState(null);
   const [editValues, setEditValues] = useState({});
 
-  const getConditionColor = (condition) => {
-    switch (condition) {
-      case 'new': return 'text-success bg-success/10';
-      case 'good': return 'text-primary bg-primary/10';
-      case 'damaged': return 'text-error bg-error/10';
-      case 'maintenance': return 'text-warning bg-warning/10';
-      default: return 'text-muted-foreground bg-muted';
-    }
+  const getStockLevelIndicator = (current, reorderPoint) => {
+    if (current === 0) return { color: 'text-white bg-red-600', icon: 'XCircle' };
+    if (current <= reorderPoint * 0.5) return { color: 'text-white bg-red-600', icon: 'AlertTriangle' };
+    if (current <= reorderPoint) return { color: 'text-white bg-yellow-500', icon: 'AlertCircle' };
+    return { color: 'text-white bg-green-600', icon: 'CheckCircle' };
   };
 
-  const getStockLevelIndicator = (current, reorderPoint) => {
-    if (current === 0) return { color: 'text-error', icon: 'XCircle' };
-    if (current <= reorderPoint * 0.5) return { color: 'text-error', icon: 'AlertTriangle' };
-    if (current <= reorderPoint) return { color: 'text-warning', icon: 'AlertCircle' };
-    return { color: 'text-success', icon: 'CheckCircle' };
+  const getConditionColor = (condition) => {
+    switch (condition) {
+      case 'new': return 'text-white bg-green-600';
+      case 'good': return 'text-white bg-blue-600';
+      case 'damaged': return 'text-white bg-red-600';
+      case 'maintenance': return 'text-white bg-yellow-500';
+      default: return 'text-white bg-gray-600';
+    }
   };
 
   const handleEditStart = (item) => {
@@ -163,14 +163,16 @@ const InventoryGrid = ({
                         className="w-20 h-8 text-sm"
                       />
                     ) : (
-                      <span className="font-medium text-foreground">{item?.currentStock}</span>
+                      <span className={`font-bold px-2 py-1 rounded-md ${stockIndicator?.color} shadow-sm`}>
+                        {item?.currentStock}
+                      </span>
                     )}
                   </td>
                   <td className="p-3">
-                    <span className="text-sm text-warning">{item?.reserved}</span>
+                    <span className="text-sm font-bold text-orange-700 bg-orange-100 px-2 py-1 rounded-md">{item?.reserved}</span>
                   </td>
                   <td className="p-3">
-                    <span className="text-sm font-medium text-success">{item?.available}</span>
+                    <span className="text-sm font-bold text-green-700 bg-green-100 px-2 py-1 rounded-md">{item?.available}</span>
                   </td>
                   <td className="p-3">
                     {isEditing ? (
@@ -185,7 +187,7 @@ const InventoryGrid = ({
                         <option value="maintenance">Maintenance</option>
                       </select>
                     ) : (
-                      <span className={`text-xs px-2 py-1 rounded font-medium ${getConditionColor(item?.condition)}`}>
+                      <span className={`text-xs px-3 py-1.5 rounded-full font-semibold shadow-sm ${getConditionColor(item?.condition)}`}>
                         {item?.condition?.charAt(0)?.toUpperCase() + item?.condition?.slice(1)}
                       </span>
                     )}

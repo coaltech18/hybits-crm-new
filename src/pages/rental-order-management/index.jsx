@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 import Header from '../../components/ui/Header';
 import Sidebar from '../../components/ui/Sidebar';
 import Breadcrumb from '../../components/ui/Breadcrumb';
@@ -11,7 +13,9 @@ import Button from '../../components/ui/Button';
 import Icon from '../../components/AppIcon';
 
 const RentalOrderManagement = () => {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { userProfile, sidebarCollapsed, toggleSidebar } = useAuth();
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showOrderForm, setShowOrderForm] = useState(false);
@@ -204,6 +208,20 @@ const RentalOrderManagement = () => {
 
   // Keyboard shortcuts
   useEffect(() => {
+    // Check for success message from order creation
+    if (location.state?.message) {
+      // You could show a toast notification here
+      console.log(location.state.message);
+    }
+    
+    // Add new order if created
+    if (location.state?.newOrder) {
+      // In a real app, you'd add this to the orders list
+      console.log('New order created:', location.state.newOrder);
+    }
+  }, [location.state]);
+
+  useEffect(() => {
     const handleKeyPress = (e) => {
       if (e?.ctrlKey) {
         switch (e?.key) {
@@ -241,9 +259,6 @@ const RentalOrderManagement = () => {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, []);
 
-  const handleSidebarToggle = () => {
-    setSidebarCollapsed(!sidebarCollapsed);
-  };
 
   const handleLogout = () => {
     console.log('Logging out...');
@@ -285,7 +300,7 @@ const RentalOrderManagement = () => {
         break;
       case 'generate-invoice': console.log('Generating invoices for selected orders');
         break;
-      case 'schedule-delivery': console.log('Scheduling delivery for selected orders');
+      case 'schedule-delivery': handleScheduleDelivery();
         break;
       default:
         break;
@@ -297,12 +312,11 @@ const RentalOrderManagement = () => {
     
     switch (actionId) {
       case 'new-order':
-        setSelectedOrder(null);
-        setShowOrderForm(true);
+        handleCreateOrder();
         break;
       case 'bulk-invoice': console.log('Opening bulk invoice generator');
         break;
-      case 'delivery-schedule': console.log('Opening delivery scheduler');
+      case 'delivery-schedule': handleScheduleDelivery();
         break;
       case 'payment-reminder': console.log('Sending payment reminders');
         break;
@@ -313,6 +327,24 @@ const RentalOrderManagement = () => {
         break;
       default:
         break;
+    }
+  };
+
+  const handleCreateOrder = () => {
+    navigate('/order-creation');
+  };
+
+  const handleEditOrder = (order) => {
+    navigate('/order-creation', { state: { order } });
+  };
+
+  const handleScheduleDelivery = () => {
+    if (selectedOrders.length > 0) {
+      // Navigate with selected orders
+      navigate('/schedule-delivery', { state: { orders: selectedOrders } });
+    } else {
+      // Navigate without pre-selected orders
+      navigate('/schedule-delivery');
     }
   };
 
@@ -379,8 +411,8 @@ const RentalOrderManagement = () => {
       />
       <Sidebar
         isCollapsed={sidebarCollapsed}
-        onToggle={handleSidebarToggle}
-        user={mockUser}
+        onToggle={toggleSidebar}
+        user={userProfile}
       />
       <main className={`transition-all duration-300 ${
         sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-70'
@@ -453,6 +485,7 @@ const RentalOrderManagement = () => {
                   onOrderSelect={handleOrderSelect}
                   onOrderClick={handleOrderClick}
                   onBulkAction={handleBulkAction}
+                  onScheduleDelivery={(order) => navigate('/schedule-delivery', { state: { order } })}
                 />
               </div>
 

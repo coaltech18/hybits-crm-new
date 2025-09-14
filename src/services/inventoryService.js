@@ -3,15 +3,27 @@ import { supabase } from '../lib/supabase';
 export class InventoryService {
   static async getInventoryItems(filters = {}) {
     try {
-      let query = supabase?.from('inventory_items')?.select('*')?.order('created_at', { ascending: false });
+      let query = supabase
+        ?.from('inventory_items')
+        ?.select(`
+          *,
+          locations (
+            id,
+            location_code,
+            name,
+            city,
+            state
+          )
+        `)
+        ?.order('created_at', { ascending: false });
 
       // Apply filters
       if (filters?.category && filters?.category !== 'all') {
         query = query?.eq('category', filters?.category);
       }
 
-      if (filters?.location && filters?.location !== 'all') {
-        query = query?.ilike('location', `%${filters?.location}%`);
+      if (filters?.location_id && filters?.location_id !== 'all') {
+        query = query?.eq('location_id', filters?.location_id);
       }
 
       if (filters?.condition && filters?.condition !== 'all') {

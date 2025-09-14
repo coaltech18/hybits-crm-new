@@ -3,7 +3,7 @@ import Icon from '../../../components/AppIcon';
 import Button from '../../../components/ui/Button';
 import { Checkbox } from '../../../components/ui/Checkbox';
 
-const OrderGrid = ({ orders, selectedOrders, onOrderSelect, onOrderClick, onBulkAction }) => {
+const OrderGrid = ({ orders, selectedOrders, onOrderSelect, onOrderClick, onBulkAction, onScheduleDelivery }) => {
   const [sortConfig, setSortConfig] = useState({ key: 'orderDate', direction: 'desc' });
 
   const handleSort = (key) => {
@@ -32,17 +32,17 @@ const OrderGrid = ({ orders, selectedOrders, onOrderSelect, onOrderClick, onBulk
 
   const getStatusBadge = (status) => {
     const statusConfig = {
-      draft: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Draft' },
-      confirmed: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Confirmed' },
-      'in-progress': { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'In Progress' },
-      delivered: { bg: 'bg-green-100', text: 'text-green-800', label: 'Delivered' },
-      returned: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Returned' },
-      cancelled: { bg: 'bg-red-100', text: 'text-red-800', label: 'Cancelled' }
+      draft: { bg: 'bg-gray-600', text: 'text-white', label: 'Draft' },
+      confirmed: { bg: 'bg-blue-600', text: 'text-white', label: 'Confirmed' },
+      'in-progress': { bg: 'bg-yellow-500', text: 'text-white', label: 'In Progress' },
+      delivered: { bg: 'bg-green-600', text: 'text-white', label: 'Delivered' },
+      returned: { bg: 'bg-purple-600', text: 'text-white', label: 'Returned' },
+      cancelled: { bg: 'bg-red-600', text: 'text-white', label: 'Cancelled' }
     };
 
     const config = statusConfig?.[status] || statusConfig?.draft;
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config?.bg} ${config?.text}`}>
+      <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm ${config?.bg} ${config?.text}`}>
         {config?.label}
       </span>
     );
@@ -50,15 +50,15 @@ const OrderGrid = ({ orders, selectedOrders, onOrderSelect, onOrderClick, onBulk
 
   const getPaymentStatusBadge = (status) => {
     const statusConfig = {
-      pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending' },
-      partial: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Partial' },
-      paid: { bg: 'bg-green-100', text: 'text-green-800', label: 'Paid' },
-      overdue: { bg: 'bg-red-100', text: 'text-red-800', label: 'Overdue' }
+      pending: { bg: 'bg-gray-600', text: 'text-white', label: 'Pending' },
+      partial: { bg: 'bg-yellow-500', text: 'text-white', label: 'Partial' },
+      paid: { bg: 'bg-green-600', text: 'text-white', label: 'Paid' },
+      overdue: { bg: 'bg-red-600', text: 'text-white', label: 'Overdue' }
     };
 
     const config = statusConfig?.[status] || statusConfig?.pending;
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config?.bg} ${config?.text}`}>
+      <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm ${config?.bg} ${config?.text}`}>
         {config?.label}
       </span>
     );
@@ -212,8 +212,8 @@ const OrderGrid = ({ orders, selectedOrders, onOrderSelect, onOrderClick, onBulk
                   </div>
                 </td>
                 <td className="px-4 py-4">
-                  <div className="text-sm font-medium text-foreground">{formatCurrency(order?.totalAmount)}</div>
-                  <div className="text-xs text-muted-foreground">
+                  <div className="text-sm font-bold text-primary bg-primary/5 px-2 py-1 rounded-md">{formatCurrency(order?.totalAmount)}</div>
+                  <div className="text-xs text-muted-foreground mt-1">
                     Security: {formatCurrency(order?.securityDeposit)}
                   </div>
                 </td>
@@ -232,9 +232,15 @@ const OrderGrid = ({ orders, selectedOrders, onOrderSelect, onOrderClick, onBulk
                   )}
                 </td>
                 <td className="px-4 py-4">
-                  <div className="flex items-center space-x-1">
+                  <div className="flex items-center space-x-2">
                     {getProfitabilityIndicator(order?.profitMargin)}
-                    <span className="text-sm text-foreground">{order?.profitMargin}%</span>
+                    <span className={`text-sm font-bold px-2 py-1 rounded-md ${
+                      order?.profitMargin >= 30 ? 'text-green-700 bg-green-100' :
+                      order?.profitMargin >= 15 ? 'text-yellow-700 bg-yellow-100' :
+                      'text-red-700 bg-red-100'
+                    }`}>
+                      {order?.profitMargin}%
+                    </span>
                   </div>
                 </td>
                 <td className="px-4 py-4" onClick={(e) => e?.stopPropagation()}>
@@ -252,6 +258,14 @@ const OrderGrid = ({ orders, selectedOrders, onOrderSelect, onOrderClick, onBulk
                       onClick={() => console.log('Edit order:', order?.id)}
                     >
                       <Icon name="Edit" size={16} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onScheduleDelivery && onScheduleDelivery(order)}
+                      title="Schedule Delivery"
+                    >
+                      <Icon name="Truck" size={16} />
                     </Button>
                     <Button
                       variant="ghost"

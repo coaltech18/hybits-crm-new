@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
+import ImportExport from '../../../components/ui/ImportExport';
 import Icon from '../../../components/AppIcon';
 
-const FilterToolbar = ({ onFilterChange, onExport, onRefresh }) => {
+const FilterToolbar = ({ onFilterChange, onExport, onRefresh, dashboardData = [] }) => {
   const [dateRange, setDateRange] = useState('30d');
   const [location, setLocation] = useState('all');
   const [metric, setMetric] = useState('revenue');
@@ -130,42 +131,19 @@ const FilterToolbar = ({ onFilterChange, onExport, onRefresh }) => {
             Refresh
           </Button>
 
-          <div className="relative group">
-            <Button
-              variant="outline"
-              size="sm"
-              iconName="Download"
-              iconPosition="left"
-            >
-              Export
-            </Button>
-            
-            <div className="absolute right-0 top-full mt-1 w-48 bg-popover border border-border rounded-lg shadow-pronounced opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto z-50">
-              <div className="p-2">
-                <button
-                  onClick={() => handleExport('pdf')}
-                  className="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-muted rounded-md transition-colors flex items-center space-x-2"
-                >
-                  <Icon name="FileText" size={16} />
-                  <span>Export as PDF</span>
-                </button>
-                <button
-                  onClick={() => handleExport('excel')}
-                  className="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-muted rounded-md transition-colors flex items-center space-x-2"
-                >
-                  <Icon name="FileSpreadsheet" size={16} />
-                  <span>Export as Excel</span>
-                </button>
-                <button
-                  onClick={() => handleExport('csv')}
-                  className="w-full text-left px-3 py-2 text-sm text-popover-foreground hover:bg-muted rounded-md transition-colors flex items-center space-x-2"
-                >
-                  <Icon name="FileDown" size={16} />
-                  <span>Export as CSV</span>
-                </button>
-              </div>
-            </div>
-          </div>
+          <ImportExport
+            data={dashboardData}
+            dataType="dashboard"
+            onExport={(result) => {
+              console.log('Dashboard export completed:', result);
+              if (onExport) onExport(result);
+            }}
+            onImport={(result) => {
+              console.log('Dashboard import completed:', result);
+            }}
+            requiredFields={['date', 'metric', 'value']}
+            showImport={false}
+          />
 
           <Button
             variant="ghost"

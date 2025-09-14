@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import Icon from '../../../components/AppIcon';
 import Button from '../../../components/ui/Button';
+import ImportExport from '../../../components/ui/ImportExport';
 
-const CustomerSegmentSidebar = ({ onSegmentSelect, onFilterSelect, selectedSegment, selectedFilters }) => {
+const CustomerSegmentSidebar = ({ onSegmentSelect, onFilterSelect, selectedSegment, selectedFilters, onAddCustomer, customers = [] }) => {
   const [expandedSections, setExpandedSections] = useState({
     segments: true,
     leadSources: true,
@@ -43,7 +44,7 @@ const CustomerSegmentSidebar = ({ onSegmentSelect, onFilterSelect, selectedSegme
   };
 
   return (
-    <div className="w-full h-full bg-surface border-r border-border overflow-y-auto">
+    <div className="w-full h-full bg-card border-r border-border overflow-y-auto shadow-sm">
       <div className="p-4 border-b border-border">
         <h2 className="text-lg font-semibold text-foreground">Customer Segments</h2>
         <p className="text-sm text-muted-foreground mt-1">Organize and filter customers</p>
@@ -70,14 +71,22 @@ const CustomerSegmentSidebar = ({ onSegmentSelect, onFilterSelect, selectedSegme
                   key={segment?.id}
                   variant={selectedSegment === segment?.id ? "default" : "ghost"}
                   onClick={() => onSegmentSelect(segment?.id)}
-                  className="w-full justify-start h-auto p-3 text-left"
+                  className={`w-full justify-start h-auto p-3 text-left transition-all duration-200 ${
+                    selectedSegment === segment?.id 
+                      ? 'bg-primary text-primary-foreground' 
+                      : 'hover:bg-muted hover:text-foreground'
+                  }`}
                 >
                   <Icon name={segment?.icon} size={16} className="mr-3 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
                       <span className="font-medium truncate">{segment?.name}</span>
-                      <span className="text-xs bg-muted px-2 py-1 rounded-full ml-2">
-                        {segment?.count}
+                      <span className={`text-xs px-3 py-1.5 rounded-full ml-2 font-semibold ${
+                        selectedSegment === segment?.id 
+                          ? 'bg-white/20 text-white' 
+                          : 'bg-primary/10 text-primary border border-primary/20'
+                      }`}>
+                        {segment?.count?.toLocaleString()}
                       </span>
                     </div>
                   </div>
@@ -166,18 +175,23 @@ const CustomerSegmentSidebar = ({ onSegmentSelect, onFilterSelect, selectedSegme
               className="w-full justify-start"
               iconName="Plus"
               iconPosition="left"
+              onClick={onAddCustomer}
             >
               Add Customer
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full justify-start"
-              iconName="Import"
-              iconPosition="left"
-            >
-              Import Contacts
-            </Button>
+            <ImportExport
+              data={customers}
+              dataType="customers"
+              onExport={(result) => {
+                console.log('Customer export completed:', result);
+              }}
+              onImport={(result) => {
+                console.log('Customer import completed:', result);
+              }}
+              requiredFields={['name', 'email']}
+              showExport={false}
+              className="w-full"
+            />
             <Button
               variant="outline"
               size="sm"

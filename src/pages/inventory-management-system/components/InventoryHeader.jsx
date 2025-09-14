@@ -3,15 +3,18 @@ import Icon from '../../../components/AppIcon';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
+import ImportExport from '../../../components/ui/ImportExport';
 
 const InventoryHeader = ({ 
   selectedLocation, 
   onLocationChange, 
   stockAlerts, 
   onBulkAction, 
+  onAddItem,
   searchQuery, 
   onSearchChange,
-  onBarcodeScan 
+  onBarcodeScan,
+  inventoryItems = []
 }) => {
   const [showBulkActions, setShowBulkActions] = useState(false);
 
@@ -92,7 +95,12 @@ const InventoryHeader = ({
           </div>
 
           {/* Add Item */}
-          <Button variant="default" iconName="Plus" iconPosition="left">
+          <Button 
+            variant="default" 
+            iconName="Plus" 
+            iconPosition="left"
+            onClick={onAddItem}
+          >
             Add Item
           </Button>
         </div>
@@ -139,12 +147,17 @@ const InventoryHeader = ({
           <Button variant="outline" size="sm" iconName="RefreshCw" iconPosition="left">
             Sync
           </Button>
-          <Button variant="outline" size="sm" iconName="Download" iconPosition="left">
-            Export
-          </Button>
-          <Button variant="outline" size="sm" iconName="Upload" iconPosition="left">
-            Import
-          </Button>
+          <ImportExport
+            data={inventoryItems}
+            dataType="inventory"
+            onExport={(result) => {
+              console.log('Inventory export completed:', result);
+            }}
+            onImport={(result) => {
+              console.log('Inventory import completed:', result);
+            }}
+            requiredFields={['item_code', 'name', 'category']}
+          />
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { InventoryService } from '../../services/inventoryService';
 import Header from '../../components/ui/Header';
@@ -11,8 +12,9 @@ import StockAlertPanel from './components/StockAlertPanel';
 import BulkActionModal from './components/BulkActionModal';
 
 const InventoryManagementSystem = () => {
-  const { userProfile, loading: authLoading } = useAuth();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { userProfile, loading: authLoading, sidebarCollapsed, toggleSidebar } = useAuth();
   const [selectedLocation, setSelectedLocation] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -40,7 +42,18 @@ const InventoryManagementSystem = () => {
       loadCategories();
       loadStockAlerts();
     }
-  }, [authLoading, userProfile]);
+    
+    // Check for success message from item creation
+    if (location.state?.message) {
+      // You could show a toast notification here
+      console.log(location.state.message);
+    }
+    
+    // Add new item if created
+    if (location.state?.newItem) {
+      setInventoryItems(prev => [location.state.newItem, ...prev]);
+    }
+  }, [authLoading, userProfile, location.state]);
 
   const loadInventoryData = async () => {
     try {
@@ -181,6 +194,14 @@ const InventoryManagementSystem = () => {
     setBulkActionModal({ isOpen: true, actionType });
   };
 
+  const handleAddItem = () => {
+    navigate('/inventory-item-creation');
+  };
+
+  const handleEditItem = (item) => {
+    navigate('/inventory-item-creation', { state: { item } });
+  };
+
   const handleBulkActionExecute = async (actionType, items, formData) => {
     try {
       console.log('Executing bulk action:', actionType, items, formData);
@@ -244,7 +265,7 @@ const InventoryManagementSystem = () => {
       <Header user={userProfile} />
       <Sidebar 
         isCollapsed={sidebarCollapsed} 
-        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        onToggle={toggleSidebar}
         user={userProfile}
       />
       <main className={`transition-all duration-300 ${
@@ -256,6 +277,7 @@ const InventoryManagementSystem = () => {
             onLocationChange={setSelectedLocation}
             stockAlerts={stockAlerts?.length}
             onBulkAction={handleBulkAction}
+            onAddItem={handleAddItem}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             onBarcodeScan={() => console.log('Barcode scan initiated')}

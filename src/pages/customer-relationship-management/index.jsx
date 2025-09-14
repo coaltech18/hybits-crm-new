@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 import Header from '../../components/ui/Header';
 import Sidebar from '../../components/ui/Sidebar';
 import Breadcrumb from '../../components/ui/Breadcrumb';
@@ -10,7 +11,8 @@ import SearchAndFilters from './components/SearchAndFilters';
 
 const CustomerRelationshipManagement = () => {
   const navigate = useNavigate();
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const location = useLocation();
+  const { userProfile, sidebarCollapsed, toggleSidebar } = useAuth();
   const [selectedSegment, setSelectedSegment] = useState('all');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedCustomers, setSelectedCustomers] = useState([]);
@@ -298,6 +300,26 @@ const CustomerRelationshipManagement = () => {
     });
   };
 
+  // Navigation functions
+  const handleAddCustomer = () => {
+    navigate('/customer-creation');
+  };
+
+  const handleEditCustomer = (customer) => {
+    navigate('/customer-creation', { state: { customer } });
+  };
+
+  // Handle success messages and new customers
+  useEffect(() => {
+    if (location.state?.message) {
+      // Show success message (you can implement toast notification here)
+      console.log(location.state.message);
+      
+      // Clear the message from location state
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.state, navigate]);
+
   const handleLogout = () => {
     navigate('/authentication-role-selection');
   };
@@ -320,13 +342,13 @@ const CustomerRelationshipManagement = () => {
       />
       
       <Sidebar
-        isCollapsed={isSidebarCollapsed}
-        onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-        user={mockUser}
+        isCollapsed={sidebarCollapsed}
+        onToggle={toggleSidebar}
+        user={userProfile}
       />
 
       <main className={`pt-16 transition-all duration-300 ${
-        isSidebarCollapsed ? 'lg:ml-16' : 'lg:ml-70'
+        sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-70'
       }`}>
         <div className="p-6">
           <Breadcrumb />
@@ -345,6 +367,7 @@ const CustomerRelationshipManagement = () => {
             onFilterChange={handleFilterChange}
             searchQuery={searchQuery}
             activeFilters={activeFilters}
+            onAddCustomer={handleAddCustomer}
           />
 
           <div className="grid grid-cols-12 gap-6 h-[calc(100vh-280px)]">
@@ -355,6 +378,7 @@ const CustomerRelationshipManagement = () => {
                 onFilterSelect={handleFilterSelect}
                 selectedSegment={selectedSegment}
                 selectedFilters={activeFilters}
+                onAddCustomer={handleAddCustomer}
               />
             </div>
 
@@ -367,6 +391,7 @@ const CustomerRelationshipManagement = () => {
                 selectedCustomers={selectedCustomers}
                 onCustomerToggle={handleCustomerToggle}
                 onBulkAction={handleBulkAction}
+                onEditCustomer={handleEditCustomer}
               />
             </div>
 

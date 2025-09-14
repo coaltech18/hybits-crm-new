@@ -3,8 +3,9 @@ import Icon from '../../../components/AppIcon';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
 import { Checkbox } from '../../../components/ui/Checkbox';
+import ImportExport from '../../../components/ui/ImportExport';
 
-const CustomerGrid = ({ customers, onCustomerSelect, selectedCustomer, selectedCustomers, onCustomerToggle, onBulkAction }) => {
+const CustomerGrid = ({ customers, onCustomerSelect, selectedCustomer, selectedCustomers, onCustomerToggle, onBulkAction, onEditCustomer }) => {
   const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
   const [editingCell, setEditingCell] = useState(null);
   const [editValue, setEditValue] = useState('');
@@ -51,19 +52,20 @@ const CustomerGrid = ({ customers, onCustomerSelect, selectedCustomer, selectedC
     setEditValue('');
   };
 
-  const getHealthScoreColor = (score) => {
-    if (score >= 80) return 'text-success bg-success/10';
-    if (score >= 60) return 'text-warning bg-warning/10';
-    return 'text-error bg-error/10';
-  };
-
   const getStatusColor = (status) => {
     switch (status) {
-      case 'Active': return 'text-success bg-success/10';
-      case 'Inactive': return 'text-muted-foreground bg-muted';
-      case 'Prospect': return 'text-primary bg-primary/10';
-      default: return 'text-muted-foreground bg-muted';
+      case 'Active': return 'text-white bg-green-600 shadow-sm';
+      case 'Inactive': return 'text-white bg-gray-600 shadow-sm';
+      case 'Prospect': return 'text-white bg-blue-600 shadow-sm';
+      default: return 'text-white bg-gray-500 shadow-sm';
     }
+  };
+
+  const getHealthScoreColor = (score) => {
+    if (score >= 80) return 'text-white bg-green-600 shadow-sm';
+    if (score >= 60) return 'text-white bg-yellow-500 shadow-sm';
+    if (score >= 40) return 'text-white bg-orange-500 shadow-sm';
+    return 'text-white bg-red-600 shadow-sm';
   };
 
   const formatCurrency = (amount) => {
@@ -122,15 +124,21 @@ const CustomerGrid = ({ customers, onCustomerSelect, selectedCustomer, selectedC
               >
                 Email ({selectedCustomers?.length})
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                iconName="Download"
-                iconPosition="left"
-                onClick={() => onBulkAction('export')}
-              >
-                Export
-              </Button>
+              <ImportExport
+                data={selectedCustomers?.length > 0 ? selectedCustomers : customers}
+                dataType="customers"
+                onExport={(result) => {
+                  console.log('Export completed:', result);
+                  onBulkAction('export');
+                }}
+                onImport={(result) => {
+                  console.log('Import completed:', result);
+                  // Handle import logic here
+                }}
+                requiredFields={['name', 'email']}
+                showImport={false}
+                className="inline-flex"
+              />
               <Button
                 variant="outline"
                 size="sm"
@@ -309,7 +317,7 @@ const CustomerGrid = ({ customers, onCustomerSelect, selectedCustomer, selectedC
                 </td>
                 
                 <td className="p-3">
-                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(customer?.status)}`}>
+                      <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm ${getStatusColor(customer?.status)}`}>
                     {customer?.status}
                   </span>
                 </td>
@@ -321,27 +329,38 @@ const CustomerGrid = ({ customers, onCustomerSelect, selectedCustomer, selectedC
                 </td>
                 
                 <td className="p-3">
-                  <div className="text-sm font-medium text-foreground">
+                  <div className="text-sm font-bold text-primary bg-primary/5 px-2 py-1 rounded-md">
                     {formatCurrency(customer?.totalValue)}
                   </div>
                 </td>
                 
                 <td className="p-3">
                   <div className="flex items-center space-x-2">
-                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getHealthScoreColor(customer?.healthScore)}`}>
+                    <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm ${getHealthScoreColor(customer?.healthScore)}`}>
                       {customer?.healthScore}%
                     </span>
                   </div>
                 </td>
                 
                 <td className="p-3" onClick={(e) => e?.stopPropagation()}>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                  >
-                    <Icon name="MoreHorizontal" size={16} />
-                  </Button>
+                  <div className="flex items-center space-x-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => onEditCustomer && onEditCustomer(customer)}
+                      title="Edit Customer"
+                    >
+                      <Icon name="Edit" size={14} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                    >
+                      <Icon name="MoreHorizontal" size={16} />
+                    </Button>
+                  </div>
                 </td>
               </tr>
             ))}

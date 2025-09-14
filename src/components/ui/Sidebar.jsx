@@ -12,36 +12,50 @@ const Sidebar = ({ isCollapsed = false, onToggle, user }) => {
       label: 'Dashboard',
       path: '/executive-dashboard',
       icon: 'BarChart3',
-      tooltip: 'Executive command center with real-time KPIs',
-      roles: ['executive', 'manager', 'admin']
+      tooltip: 'Business intelligence and operational oversight',
+      roles: ['admin', 'manager']
     },
     {
       label: 'Customers',
       path: '/customer-relationship-management',
       icon: 'Users',
       tooltip: 'Customer relationship and lead management',
-      roles: ['executive', 'manager', 'sales', 'admin']
+      roles: ['admin', 'manager']
     },
     {
       label: 'Orders',
       path: '/rental-order-management',
       icon: 'ShoppingCart',
       tooltip: 'Rental order processing and tracking',
-      roles: ['executive', 'manager', 'operations', 'admin']
+      roles: ['admin', 'manager']
     },
     {
       label: 'Inventory',
       path: '/inventory-management-system',
       icon: 'Package',
       tooltip: 'Stock tracking and inventory management',
-      roles: ['executive', 'manager', 'operations', 'warehouse', 'admin']
+      roles: ['admin', 'manager']
     },
     {
       label: 'Billing',
       path: '/gst-compliant-billing-system',
       icon: 'Receipt',
-      tooltip: 'GST-compliant invoicing and tax management',
-      roles: ['executive', 'manager', 'accounting', 'admin']
+      tooltip: 'GST-compliant invoicing and payment management',
+      roles: ['admin', 'manager']
+    },
+    {
+      label: 'Locations',
+      path: '/location-management',
+      icon: 'MapPin',
+      tooltip: 'Manage warehouse locations and access',
+      roles: ['admin']
+    },
+    {
+      label: 'Users',
+      path: '/user-management',
+      icon: 'Users',
+      tooltip: 'Manage system users and roles',
+      roles: ['admin']
     }
   ];
 
@@ -61,7 +75,7 @@ const Sidebar = ({ isCollapsed = false, onToggle, user }) => {
   return (
     <>
       {/* Desktop Sidebar */}
-      <aside className={`fixed left-0 top-16 bottom-0 z-40 bg-surface border-r border-border transition-all duration-300 ${
+      <aside className={`fixed left-0 top-16 bottom-0 z-40 bg-card border-r border-border transition-all duration-300 shadow-subtle ${
         isCollapsed ? 'w-16' : 'w-70'
       } hidden lg:block`}>
         <div className="flex flex-col h-full">
@@ -84,11 +98,15 @@ const Sidebar = ({ isCollapsed = false, onToggle, user }) => {
                 <Button
                   variant={isActive(item?.path) ? "default" : "ghost"}
                   onClick={() => handleNavigation(item?.path)}
-                  className={`w-full justify-start h-12 px-3 ${
+                  className={`w-full h-12 transition-all duration-300 rounded-lg ${
+                    isCollapsed 
+                      ? 'justify-center px-0' 
+                      : 'justify-start px-3'
+                  } ${
                     isActive(item?.path) 
-                      ? 'bg-primary text-primary-foreground shadow-subtle' 
-                      : 'hover:bg-muted text-foreground'
-                  } transition-all duration-200`}
+                      ? 'gradient-primary text-white shadow-pronounced hover:shadow-luxury' 
+                      : 'hover:bg-primary/10 text-foreground hover:text-primary hover:scale-105'
+                  }`}
                 >
                   <Icon 
                     name={item?.icon} 
@@ -102,7 +120,7 @@ const Sidebar = ({ isCollapsed = false, onToggle, user }) => {
 
                 {/* Tooltip for collapsed state */}
                 {isCollapsed && (
-                  <div className="absolute left-full top-1/2 transform -translate-y-1/2 ml-2 px-3 py-2 bg-popover text-popover-foreground text-sm rounded-lg shadow-pronounced opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
+                  <div className="absolute left-full top-1/2 transform -translate-y-1/2 ml-2 px-3 py-2 glass text-foreground text-sm rounded-lg shadow-luxury opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none whitespace-nowrap z-50 animate-scale-in">
                     <div className="font-medium">{item?.label}</div>
                     <div className="text-xs text-muted-foreground mt-1">{item?.tooltip}</div>
                     <div className="absolute left-0 top-1/2 transform -translate-y-1/2 -translate-x-1 w-2 h-2 bg-popover rotate-45 border-l border-t border-border"></div>
@@ -143,7 +161,7 @@ const Sidebar = ({ isCollapsed = false, onToggle, user }) => {
         />
         
         {/* Sidebar */}
-        <aside className={`absolute left-0 top-0 bottom-0 w-80 bg-surface border-r border-border transform transition-transform duration-300 ${
+        <aside className={`absolute left-0 top-0 bottom-0 w-80 bg-card border-r border-border transform transition-transform duration-300 ${
           isCollapsed ? '-translate-x-full' : 'translate-x-0'
         }`}>
           <div className="flex flex-col h-full">

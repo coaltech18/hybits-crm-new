@@ -28,21 +28,25 @@ const KPICard = ({ title, value, change, changeType, icon, trend, subtitle, load
   }
 
   return (
-    <div className="bg-card border border-border rounded-lg p-6 hover:shadow-subtle transition-shadow">
+    <div className="gradient-card border border-primary/20 rounded-xl p-6 hover:shadow-pronounced transition-all duration-300 hover:scale-105">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium text-muted-foreground">{title}</h3>
-        <div className="p-2 bg-primary/10 rounded-lg">
-          <Icon name={icon} size={20} className="text-primary" />
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <div className="p-3 gradient-primary rounded-xl shadow-subtle">
+          <Icon name={icon} size={20} className="text-white" />
         </div>
       </div>
       
-      <div className="space-y-2">
-        <div className="text-2xl font-bold text-foreground">{value}</div>
+      <div className="space-y-3">
+        <div className="text-3xl font-bold text-gradient">{value}</div>
         {subtitle && (
-          <div className="text-sm text-muted-foreground">{subtitle}</div>
+          <div className="text-sm text-muted-foreground font-medium">{subtitle}</div>
         )}
         {change && (
-          <div className={`flex items-center space-x-1 text-sm ${getChangeColor()}`}>
+          <div className={`flex items-center space-x-2 text-sm font-semibold px-3 py-1.5 rounded-full ${
+            changeType === 'positive' ? 'text-green-700 bg-green-100' :
+            changeType === 'negative' ? 'text-red-700 bg-red-100' :
+            'text-gray-700 bg-gray-100'
+          }`}>
             <Icon name={getChangeIcon()} size={16} />
             <span>{change}</span>
             {trend && <span className="text-muted-foreground">vs last month</span>}

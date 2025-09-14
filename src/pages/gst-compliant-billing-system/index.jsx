@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 import Header from '../../components/ui/Header';
 import Sidebar from '../../components/ui/Sidebar';
 import Breadcrumb from '../../components/ui/Breadcrumb';
@@ -14,20 +16,15 @@ import PaymentTracker from './components/PaymentTracker';
 import BulkOperations from './components/BulkOperations';
 
 const GSTCompliantBillingSystem = () => {
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { userProfile, sidebarCollapsed, toggleSidebar } = useAuth();
   const [activeView, setActiveView] = useState('invoices');
   const [selectedInvoices, setSelectedInvoices] = useState([]);
   const [editingInvoice, setEditingInvoice] = useState(null);
   const [showBulkOperations, setShowBulkOperations] = useState(false);
   const [invoices, setInvoices] = useState([]);
 
-  // Mock user data
-  const mockUser = {
-    name: 'Priya Sharma',
-    email: 'priya.sharma@hybits.com',
-    role: 'Accounting Manager',
-    avatar: 'https://randomuser.me/api/portraits/women/32.jpg'
-  };
 
   // Mock invoice data
   const mockInvoices = [
@@ -114,11 +111,19 @@ const GSTCompliantBillingSystem = () => {
 
   useEffect(() => {
     setInvoices(mockInvoices);
-  }, []);
+    
+    // Check for success message from invoice creation
+    if (location.state?.message) {
+      // You could show a toast notification here
+      console.log(location.state.message);
+    }
+    
+    // Add new invoice if created
+    if (location.state?.newInvoice) {
+      setInvoices(prev => [location.state.newInvoice, ...prev]);
+    }
+  }, [location.state]);
 
-  const handleSidebarToggle = () => {
-    setIsSidebarCollapsed(!isSidebarCollapsed);
-  };
 
   const handleLogout = () => {
     console.log('Logging out...');
@@ -140,6 +145,14 @@ const GSTCompliantBillingSystem = () => {
 
   const handleInvoiceEdit = (invoice) => {
     setEditingInvoice(invoice);
+  };
+
+  const handleCreateInvoice = () => {
+    navigate('/invoice-creation');
+  };
+
+  const handleEditInvoice = (invoice) => {
+    navigate('/invoice-creation', { state: { invoice } });
   };
 
   const handleBulkAction = (action) => {
@@ -196,16 +209,16 @@ const GSTCompliantBillingSystem = () => {
   return (
     <div className="min-h-screen bg-background">
       <Header 
-        user={mockUser}
+        user={userProfile}
         onLogout={handleLogout}
       />
       <Sidebar 
-        isCollapsed={isSidebarCollapsed}
-        onToggle={handleSidebarToggle}
-        user={mockUser}
+        isCollapsed={sidebarCollapsed}
+        onToggle={toggleSidebar}
+        user={userProfile}
       />
       <main className={`transition-all duration-300 ${
-        isSidebarCollapsed ? 'lg:ml-16' : 'lg:ml-70'
+        sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-70'
       } pt-16`}>
         <div className="p-6">
           <Breadcrumb />
@@ -227,7 +240,7 @@ const GSTCompliantBillingSystem = () => {
                 Export Data
               </Button>
               <Button
-                onClick={() => setEditingInvoice({})}
+                onClick={handleCreateInvoice}
                 iconName="Plus"
                 iconPosition="left"
               >
@@ -268,7 +281,7 @@ const GSTCompliantBillingSystem = () => {
                   invoices={invoices}
                   selectedInvoices={selectedInvoices}
                   onInvoiceSelect={handleInvoiceSelect}
-                  onInvoiceEdit={handleInvoiceEdit}
+                  onInvoiceEdit={handleEditInvoice}
                   onBulkAction={handleBulkAction}
                 />
               </div>
@@ -281,7 +294,7 @@ const GSTCompliantBillingSystem = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <Button
                       variant="outline"
-                      onClick={() => setEditingInvoice({})}
+                      onClick={handleCreateInvoice}
                       iconName="Plus"
                       iconPosition="left"
                       className="h-16 flex-col"
@@ -377,7 +390,7 @@ const GSTCompliantBillingSystem = () => {
                 invoice={editingInvoice?.id ? editingInvoice : null}
                 onSave={handleInvoiceSave}
                 onCancel={handleInvoiceCancel}
-                userRole={mockUser?.role}
+                userRole={userProfile?.role}
               />
             </div>
           )}

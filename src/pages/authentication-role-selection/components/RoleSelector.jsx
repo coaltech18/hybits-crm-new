@@ -3,8 +3,38 @@ import Icon from '../../../components/AppIcon';
 import Button from '../../../components/ui/Button';
 import Select from '../../../components/ui/Select';
 
-const RoleSelector = ({ user, availableRoles, onRoleSelect, isLoading }) => {
+const RoleSelector = ({ user, onRoleSelect, isLoading }) => {
   const [selectedRole, setSelectedRole] = useState('');
+
+  // Define available roles based on simplified RBAC
+  const availableRoles = [
+    {
+      id: 'admin',
+      name: 'Administrator',
+      description: 'Full system control and configuration',
+      permissions: [
+        'User Management', 
+        'Global Settings', 
+        'All Financial Data', 
+        'Audit Logs', 
+        'System Integrations',
+        'Location Management'
+      ]
+    },
+    {
+      id: 'manager',
+      name: 'Manager',
+      description: 'Billing operations and reporting oversight',
+      permissions: [
+        'Invoice Creation & Approval', 
+        'Payment Collection', 
+        'Billing Follow-ups', 
+        'Dashboard & Reports', 
+        'Customer Management',
+        'Order Management'
+      ]
+    }
+  ];
 
   const roleOptions = availableRoles?.map(role => ({
     value: role?.id,
@@ -22,11 +52,7 @@ const RoleSelector = ({ user, availableRoles, onRoleSelect, isLoading }) => {
   const getRoleIcon = (roleId) => {
     const iconMap = {
       'admin': 'Shield',
-      'operations': 'Settings',
-      'accounting': 'Calculator',
-      'sales': 'Users',
-      'warehouse': 'Package',
-      'field': 'Truck'
+      'manager': 'Users'
     };
     return iconMap?.[roleId] || 'User';
   };

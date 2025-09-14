@@ -3,8 +3,10 @@ import { useLocation } from 'react-router-dom';
 import Icon from '../AppIcon';
 import Button from './Button';
 import Input from './Input';
+import LocationSelector from './LocationSelector';
+import ThemeToggle from './ThemeToggle';
 
-const Header = ({ user, notifications = [], onLogout, onRoleSwitch, onSearch }) => {
+const Header = ({ user, notifications = [], onLogout, onRoleSwitch, onSearch, userLocations = [], currentLocation, onLocationSwitch }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -33,17 +35,17 @@ const Header = ({ user, notifications = [], onLogout, onRoleSwitch, onSearch }) 
   const displayUnreadCount = notifications?.length > 0 ? unreadCount : 2;
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 bg-surface border-b border-border shadow-subtle">
+    <header className="fixed top-0 left-0 right-0 z-50 bg-background border-b border-border shadow-subtle">
       <div className="flex items-center justify-between h-16 px-6">
         {/* Logo */}
         <div className="flex items-center">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <Icon name="Building2" size={20} color="white" />
+            <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-subtle">
+              <Icon name="Building2" size={22} color="white" />
             </div>
             <div className="flex flex-col">
-              <span className="text-lg font-semibold text-foreground">Hybits CRM</span>
-              <span className="text-xs text-muted-foreground">Rental Management</span>
+              <span className="text-lg font-bold text-foreground">Hybits CRM</span>
+              <span className="text-xs text-muted-foreground font-medium">Rental Management</span>
             </div>
           </div>
         </div>
@@ -70,6 +72,13 @@ const Header = ({ user, notifications = [], onLogout, onRoleSwitch, onSearch }) 
 
         {/* Right Section */}
         <div className="flex items-center space-x-4">
+          {/* Location Selector */}
+          <LocationSelector
+            userLocations={userLocations}
+            currentLocation={currentLocation}
+            onLocationSwitch={onLocationSwitch}
+          />
+
           {/* Notifications */}
           <div className="relative">
             <Button
@@ -85,6 +94,9 @@ const Header = ({ user, notifications = [], onLogout, onRoleSwitch, onSearch }) 
                 </span>
               )}
             </Button>
+
+            {/* Theme Toggle */}
+            <ThemeToggle />
 
             {isNotificationOpen && (
               <div className="absolute right-0 top-full mt-2 w-80 bg-popover border border-border rounded-lg shadow-pronounced z-50">

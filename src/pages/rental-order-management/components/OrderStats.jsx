@@ -100,25 +100,25 @@ const OrderStats = ({ stats }) => {
       {statCards?.map((stat, index) => (
         <div
           key={index}
-          className="bg-surface border border-border rounded-lg p-4 hover:shadow-subtle transition-shadow duration-200"
+          className="gradient-card border border-primary/20 rounded-xl p-4 hover:shadow-pronounced transition-all duration-300 hover:scale-105"
         >
           <div className="flex items-center justify-between">
             <div className="flex-1">
-              <p className="text-sm font-medium text-muted-foreground mb-1">
+              <p className="text-sm font-semibold text-foreground mb-1">
                 {stat?.title}
               </p>
-              <p className="text-2xl font-bold text-foreground mb-2">
+              <p className="text-3xl font-bold text-gradient mb-2">
                 {stat?.value}
               </p>
-              <div className="flex items-center space-x-1">
+              <div className="flex items-center space-x-2">
                 <Icon
                   name={stat?.changeType === 'positive' ? 'TrendingUp' : 'TrendingDown'}
                   size={14}
                   className={stat?.changeType === 'positive' ? 'text-green-600' : 'text-red-600'}
                 />
                 <span
-                  className={`text-xs font-medium ${
-                    stat?.changeType === 'positive' ? 'text-green-600' : 'text-red-600'
+                  className={`text-xs font-semibold px-2 py-1 rounded-md ${
+                    stat?.changeType === 'positive' ? 'text-green-700 bg-green-100' : 'text-red-700 bg-red-100'
                   }`}
                 >
                   {stat?.change}
@@ -126,7 +126,7 @@ const OrderStats = ({ stats }) => {
                 <span className="text-xs text-muted-foreground">vs last month</span>
               </div>
             </div>
-            <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${stat?.color}`}>
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center gradient-primary shadow-subtle`}>
               <Icon name={stat?.icon} size={24} color="white" />
             </div>
           </div>

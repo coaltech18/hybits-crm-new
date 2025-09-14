@@ -2,8 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import Icon from '../../../components/AppIcon';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
+import ImportExport from '../../../components/ui/ImportExport';
 
-const SearchAndFilters = ({ onSearch, onFilterChange, searchQuery, activeFilters }) => {
+const SearchAndFilters = ({ onSearch, onFilterChange, searchQuery, activeFilters, onAddCustomer, customers = [] }) => {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -242,19 +243,25 @@ const SearchAndFilters = ({ onSearch, onFilterChange, searchQuery, activeFilters
         </div>
 
         {/* Export Button */}
-        <Button
-          variant="outline"
-          iconName="Download"
-          iconPosition="left"
-        >
-          Export
-        </Button>
+        <ImportExport
+          data={customers}
+          dataType="customers"
+          onExport={(result) => {
+            console.log('Customer export completed:', result);
+          }}
+          onImport={(result) => {
+            console.log('Customer import completed:', result);
+          }}
+          requiredFields={['name', 'email']}
+          showImport={false}
+        />
 
         {/* Add Customer Button */}
         <Button
           variant="default"
           iconName="Plus"
           iconPosition="left"
+          onClick={onAddCustomer}
         >
           Add Customer
         </Button>

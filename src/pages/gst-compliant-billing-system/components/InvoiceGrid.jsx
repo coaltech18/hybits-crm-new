@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Icon from '../../../components/AppIcon';
 import Button from '../../../components/ui/Button';
 import { Checkbox } from '../../../components/ui/Checkbox';
+import ImportExport from '../../../components/ui/ImportExport';
 
 const InvoiceGrid = ({ invoices, selectedInvoices, onInvoiceSelect, onInvoiceEdit, onBulkAction }) => {
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
@@ -32,16 +33,16 @@ const InvoiceGrid = ({ invoices, selectedInvoices, onInvoiceSelect, onInvoiceEdi
 
   const getStatusBadge = (status) => {
     const statusConfig = {
-      paid: { color: 'bg-success text-success-foreground', label: 'Paid' },
-      pending: { color: 'bg-warning text-warning-foreground', label: 'Pending' },
-      overdue: { color: 'bg-error text-error-foreground', label: 'Overdue' },
-      partial: { color: 'bg-accent text-accent-foreground', label: 'Partial' },
-      cancelled: { color: 'bg-muted text-muted-foreground', label: 'Cancelled' }
+      paid: { color: 'bg-green-600 text-white', label: 'Paid' },
+      pending: { color: 'bg-yellow-500 text-white', label: 'Pending' },
+      overdue: { color: 'bg-red-600 text-white', label: 'Overdue' },
+      partial: { color: 'bg-blue-600 text-white', label: 'Partial' },
+      cancelled: { color: 'bg-gray-600 text-white', label: 'Cancelled' }
     };
 
     const config = statusConfig?.[status] || statusConfig?.pending;
     return (
-      <span className={`px-2 py-1 rounded-full text-xs font-medium ${config?.color}`}>
+      <span className={`px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm ${config?.color}`}>
         {config?.label}
       </span>
     );
@@ -53,9 +54,13 @@ const InvoiceGrid = ({ invoices, selectedInvoices, onInvoiceSelect, onInvoiceEdi
         <Icon 
           name={isCompliant ? "CheckCircle" : "AlertCircle"} 
           size={16} 
-          className={isCompliant ? "text-success" : "text-warning"} 
+          className={isCompliant ? "text-green-600" : "text-orange-600"} 
         />
-        <span className={`ml-1 text-xs ${isCompliant ? "text-success" : "text-warning"}`}>
+        <span className={`ml-2 text-xs font-semibold px-2 py-1 rounded-md ${
+          isCompliant 
+            ? "text-green-700 bg-green-100" 
+            : "text-orange-700 bg-orange-100"
+        }`}>
           {isCompliant ? "Compliant" : "Review"}
         </span>
       </div>
@@ -117,15 +122,20 @@ const InvoiceGrid = ({ invoices, selectedInvoices, onInvoiceSelect, onInvoiceEdi
               >
                 Send Reminder
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onBulkAction('export')}
-                iconName="Download"
-                iconPosition="left"
-              >
-                Export
-              </Button>
+              <ImportExport
+                data={selectedInvoices?.length > 0 ? selectedInvoices : invoices}
+                dataType="invoices"
+                onExport={(result) => {
+                  console.log('Invoice export completed:', result);
+                  onBulkAction('export');
+                }}
+                onImport={(result) => {
+                  console.log('Invoice import completed:', result);
+                }}
+                requiredFields={['invoice_number', 'customer_name', 'total_amount']}
+                showImport={false}
+                className="inline-flex"
+              />
             </div>
           </div>
         </div>
@@ -216,8 +226,8 @@ const InvoiceGrid = ({ invoices, selectedInvoices, onInvoiceSelect, onInvoiceEdi
                 </td>
                 <td className="p-3 text-foreground">{formatDate(invoice?.date)}</td>
                 <td className="p-3">
-                  <div className="font-medium text-foreground">{formatCurrency(invoice?.totalAmount)}</div>
-                  <div className="text-xs text-muted-foreground">
+                  <div className="font-bold text-primary bg-primary/5 px-2 py-1 rounded-md">{formatCurrency(invoice?.totalAmount)}</div>
+                  <div className="text-xs text-muted-foreground mt-1">
                     Base: {formatCurrency(invoice?.baseAmount)}
                   </div>
                 </td>

@@ -79,24 +79,24 @@ const QuickActions = ({ onActionClick }) => {
         <h4 className="text-sm font-medium text-foreground mb-3">System Status</h4>
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Database</span>
+            <span className="text-muted-foreground font-medium">Database</span>
             <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-success rounded-full"></div>
-              <span className="text-success">Online</span>
+              <div className="w-3 h-3 bg-green-600 rounded-full shadow-sm"></div>
+              <span className="text-green-700 bg-green-100 px-2 py-1 rounded-md font-semibold text-xs">Online</span>
             </div>
           </div>
           <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Payment Gateway</span>
+            <span className="text-muted-foreground font-medium">Payment Gateway</span>
             <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-success rounded-full"></div>
-              <span className="text-success">Connected</span>
+              <div className="w-3 h-3 bg-green-600 rounded-full shadow-sm"></div>
+              <span className="text-green-700 bg-green-100 px-2 py-1 rounded-md font-semibold text-xs">Connected</span>
             </div>
           </div>
           <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">GST Portal</span>
+            <span className="text-muted-foreground font-medium">GST Portal</span>
             <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-warning rounded-full"></div>
-              <span className="text-warning">Syncing</span>
+              <div className="w-3 h-3 bg-yellow-500 rounded-full shadow-sm"></div>
+              <span className="text-orange-700 bg-orange-100 px-2 py-1 rounded-md font-semibold text-xs">Syncing</span>
             </div>
           </div>
         </div>

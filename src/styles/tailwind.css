@@ -1,62 +1,68 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    /* Core Colors */
-    --color-background: #FAFBFC; /* gray-50 */
-    --color-foreground: #1F2937; /* gray-800 */
-    --color-border: #E5E7EB; /* gray-200 */
-    --color-input: #FFFFFF; /* white */
-    --color-ring: #1E40AF; /* blue-800 */
-    
-    /* Card Colors */
-    --color-card: #FFFFFF; /* white */
-    --color-card-foreground: #1F2937; /* gray-800 */
-    
-    /* Popover Colors */
-    --color-popover: #FFFFFF; /* white */
-    --color-popover-foreground: #1F2937; /* gray-800 */
-    
-    /* Muted Colors */
-    --color-muted: #F9FAFB; /* gray-50 */
-    --color-muted-foreground: #6B7280; /* gray-500 */
-    
-    /* Primary Colors */
-    --color-primary: #1E40AF; /* blue-800 */
-    --color-primary-foreground: #FFFFFF; /* white */
-    
-    /* Secondary Colors */
-    --color-secondary: #64748B; /* slate-500 */
-    --color-secondary-foreground: #FFFFFF; /* white */
-    
-    /* Accent Colors */
-    --color-accent: #F59E0B; /* amber-500 */
-    --color-accent-foreground: #FFFFFF; /* white */
-    
-    /* Success Colors */
-    --color-success: #10B981; /* emerald-500 */
-    --color-success-foreground: #FFFFFF; /* white */
-    
-    /* Warning Colors */
-    --color-warning: #F59E0B; /* amber-500 */
-    --color-warning-foreground: #FFFFFF; /* white */
-    
-    /* Error/Destructive Colors */
-    --color-error: #EF4444; /* red-500 */
-    --color-error-foreground: #FFFFFF; /* white */
-    --color-destructive: #EF4444; /* red-500 */
-    --color-destructive-foreground: #FFFFFF; /* white */
-    
-    /* Surface Color */
-    --color-surface: #FFFFFF; /* white */
-    
-    /* Text Colors */
-    --color-text-primary: #1F2937; /* gray-800 */
-    --color-text-secondary: #6B7280; /* gray-500 */
+    /* Light Mode Colors */
+    --background: 0 0% 100%;         /* White */
+    --foreground: 222 47% 11%;       /* Neutral dark gray */
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 142 72% 40%;          /* Vibrant green */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;        /* Soft gray for sections */
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 215 20% 40%;
+
+    --accent: 200 98% 40%;           /* Fresh blue accent */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;        /* Red */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 14% 90%;
+    --input: 220 14% 96%;
+    --ring: 142 72% 40%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Dark Mode Colors */
+    --background: 222 47% 11%;       /* Dark neutral */
+    --foreground: 210 40% 98%;       /* Almost white */
+    --card: 222 47% 15%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 15%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 142 72% 45%;          /* Brighter green for dark mode */
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 217 33% 17%;        /* Soft neutral */
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217 33% 20%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 200 98% 50%;           /* Blue accent */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 142 72% 45%;
   }
 
   * {
@@ -66,56 +72,118 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
   
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Inter', sans-serif;
     font-weight: 600;
+    line-height: 1.2;
+    color: hsl(var(--foreground));
   }
   
-  body, p, span, div {
+  p {
     font-family: 'Inter', sans-serif;
-    font-weight: 400;
+    color: hsl(var(--foreground));
   }
   
-  .font-mono {
+  code {
     font-family: 'JetBrains Mono', monospace;
   }
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
-  
+@layer components {
+  /* Clean Shadow System */
   .shadow-subtle {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
   }
   
   .shadow-pronounced {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
   }
   
+  .shadow-luxury {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  }
+
+  /* Clean Transitions */
   .transition-micro {
-    transition: all 200ms ease-out;
+    transition: all 0.15s ease;
   }
   
-  .hover-scale {
-    transition: transform 200ms ease-out;
+  .transition-smooth {
+    transition: all 0.3s ease;
   }
   
+  .transition-luxury {
+    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Simple Hover Effects */
   .hover-scale:hover {
     transform: scale(1.02);
   }
   
-  @media (prefers-reduced-motion: reduce) {
-    .transition-micro,
-    .hover-scale {
-      transition: none;
+  .hover-lift:hover {
+    transform: translateY(-2px);
+  }
+}
+
+@layer utilities {
+  /* Animation Classes */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+  
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+  
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out;
+  }
+  
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
     }
-    
-    .hover-scale:hover {
-      transform: none;
+    to {
+      opacity: 1;
     }
+  }
+  
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* Dark mode specific utilities */
+  .dark .shadow-subtle {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  }
+  
+  .dark .shadow-pronounced {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+  }
+  
+  .dark .shadow-luxury {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
   }
 }

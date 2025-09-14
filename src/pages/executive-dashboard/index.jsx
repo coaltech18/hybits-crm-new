@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import Header from '../../components/ui/Header';
 import Sidebar from '../../components/ui/Sidebar';
 import Breadcrumb from '../../components/ui/Breadcrumb';
@@ -13,21 +14,13 @@ import Icon from '../../components/AppIcon';
 import Button from '../../components/ui/Button';
 
 const ExecutiveDashboard = () => {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const { user, userProfile, userLocations, currentLocation, signOut, hasPermission, switchLocation, sidebarCollapsed, toggleSidebar } = useAuth();
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     dateRange: '30d',
     location: 'all',
     metric: 'revenue'
   });
-
-  // Mock user data
-  const mockUser = {
-    name: 'Rajesh Patel',
-    email: 'rajesh.patel@hybits.com',
-    role: 'Executive',
-    avatar: 'https://randomuser.me/api/portraits/men/32.jpg'
-  };
 
   // Mock KPI data
   const kpiData = [
@@ -90,9 +83,6 @@ const ExecutiveDashboard = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  const handleSidebarToggle = () => {
-    setSidebarCollapsed(!sidebarCollapsed);
-  };
 
   const handleFilterChange = (newFilters) => {
     setFilters(newFilters);
@@ -127,9 +117,12 @@ const ExecutiveDashboard = () => {
     console.log('Quick action clicked:', actionId);
   };
 
-  const handleLogout = () => {
-    console.log('User logged out');
-    // In a real app, this would handle logout
+  const handleLogout = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('Error logging out:', error);
+    }
   };
 
   const handleSearch = (query) => {
@@ -140,14 +133,17 @@ const ExecutiveDashboard = () => {
   return (
     <div className="min-h-screen bg-background">
       <Header 
-        user={mockUser}
+        user={userProfile}
+        userLocations={userLocations}
+        currentLocation={currentLocation}
+        onLocationSwitch={switchLocation}
         onLogout={handleLogout}
         onSearch={handleSearch}
       />
       <Sidebar 
         isCollapsed={sidebarCollapsed}
-        onToggle={handleSidebarToggle}
-        user={mockUser}
+        onToggle={toggleSidebar}
+        user={userProfile}
       />
       <main className={`transition-all duration-300 ${
         sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-70'

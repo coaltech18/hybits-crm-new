@@ -56,19 +56,10 @@ const PendingApprovals = ({ approvals, onApprove, onReject }) => {
 
   const getPriorityColor = (priority) => {
     switch (priority) {
-      case 'high': return 'text-error';
-      case 'medium': return 'text-warning';
-      case 'low': return 'text-muted-foreground';
-      default: return 'text-muted-foreground';
-    }
-  };
-
-  const getPriorityBg = (priority) => {
-    switch (priority) {
-      case 'high': return 'bg-error/10';
-      case 'medium': return 'bg-warning/10';
-      case 'low': return 'bg-muted/30';
-      default: return 'bg-muted/30';
+      case 'high': return 'text-white bg-red-600';
+      case 'medium': return 'text-white bg-yellow-500';
+      case 'low': return 'text-white bg-gray-600';
+      default: return 'text-white bg-gray-600';
     }
   };
 
@@ -111,7 +102,7 @@ const PendingApprovals = ({ approvals, onApprove, onReject }) => {
       </div>
       <div className="space-y-3">
         {mockApprovals?.map((approval) => (
-          <div key={approval?.id} className={`border border-border rounded-lg p-4 ${getPriorityBg(approval?.priority)}`}>
+          <div key={approval?.id} className="border border-border rounded-lg p-4 bg-surface">
             <div className="flex items-start justify-between mb-3">
               <div className="flex items-start space-x-3">
                 <div className="p-2 bg-surface rounded-lg">
@@ -122,8 +113,8 @@ const PendingApprovals = ({ approvals, onApprove, onReject }) => {
                     <h4 className="text-sm font-medium text-foreground">
                       {approval?.title}
                     </h4>
-                    <span className={`text-xs px-2 py-1 rounded-full ${getPriorityColor(approval?.priority)} bg-surface`}>
-                      {approval?.priority}
+                    <span className={`text-xs px-3 py-1.5 rounded-full font-semibold shadow-sm ${getPriorityColor(approval?.priority)}`}>
+                      {approval?.priority?.toUpperCase()}
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground mb-2">

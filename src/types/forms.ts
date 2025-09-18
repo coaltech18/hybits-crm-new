@@ -245,7 +245,7 @@ export interface FormProps<T> {
   children: React.ReactNode;
 }
 
-export interface FormFieldProps {
+export interface FormFieldComponentProps {
   field: FormField;
   value: any;
   error?: string;

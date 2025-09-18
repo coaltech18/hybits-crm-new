@@ -83,7 +83,7 @@ const LoginForm = ({ onSuccess, onError }) => {
               name="email"
               value={formData?.email}
               onChange={handleInputChange}
-              className="block w-full pl-12 pr-4 py-3 border-2 border-primary/20 bg-white/90 backdrop-blur-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary/40 transition-all duration-300 hover:border-primary/30 shadow-subtle hover:shadow-pronounced text-foreground font-medium"
+              className="block w-full pl-12 pr-4 py-3 border-2 border-primary/20 bg-card backdrop-blur-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary/40 transition-all duration-300 hover:border-primary/30 shadow-subtle hover:shadow-pronounced text-foreground placeholder:text-muted-foreground font-medium"
               placeholder="Enter your email"
               required
             />
@@ -104,7 +104,7 @@ const LoginForm = ({ onSuccess, onError }) => {
               name="password"
               value={formData?.password}
               onChange={handleInputChange}
-              className="block w-full pl-12 pr-12 py-3 border-2 border-primary/20 bg-white/90 backdrop-blur-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary/40 transition-all duration-300 hover:border-primary/30 shadow-subtle hover:shadow-pronounced text-foreground font-medium"
+              className="block w-full pl-12 pr-12 py-3 border-2 border-primary/20 bg-card backdrop-blur-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary/40 transition-all duration-300 hover:border-primary/30 shadow-subtle hover:shadow-pronounced text-foreground placeholder:text-muted-foreground font-medium"
               placeholder="Enter your password"
               required
             />

@@ -1,107 +1,382 @@
-# React
+# Hybits CRM - Rental Management System
 
-A modern React-based project utilizing the latest frontend technologies and tools for building responsive web applications.
+A comprehensive Customer Relationship Management (CRM) system built specifically for Hybits company's internal operations. This modern web application streamlines rental management, inventory tracking, customer relationships, and business analytics.
 
-## 🚀 Features
+## 🏢 About Hybits CRM
 
-- **React 18** - React version with improved rendering and concurrent features
-- **Vite** - Lightning-fast build tool and development server
-- **Redux Toolkit** - State management with simplified Redux setup
-- **TailwindCSS** - Utility-first CSS framework with extensive customization
-- **React Router v6** - Declarative routing for React applications
-- **Data Visualization** - Integrated D3.js and Recharts for powerful data visualization
-- **Form Management** - React Hook Form for efficient form handling
-- **Animation** - Framer Motion for smooth UI animations
-- **Testing** - Jest and React Testing Library setup
+Hybits CRM is a full-featured internal software solution designed to manage all aspects of Hybits' rental business operations. The system provides real-time insights, automated workflows, and comprehensive management tools for inventory, customers, orders, and financial operations.
 
-## 📋 Prerequisites
+## 🚀 Key Features
 
-- Node.js (v14.x or higher)
-- npm or yarn
+### 📊 Executive Dashboard
+- **Real-time KPI Monitoring**: Revenue tracking, active orders, customer satisfaction metrics
+- **Interactive Charts**: Revenue trends, inventory utilization, and performance analytics
+- **Quick Actions**: Fast access to critical business functions
+- **Activity Feed**: Live updates on system activities and important events
 
-## 🛠️ Installation
+### 🏪 Inventory Management System
+- **Multi-location Inventory Tracking**: Manage inventory across multiple warehouses
+- **Real-time Stock Monitoring**: Live updates on stock levels and movements
+- **Category Management**: Organize items by categories and subcategories
+- **Stock Alerts**: Automated notifications for low stock and reorder points
+- **Bulk Operations**: Mass updates, imports, and exports
+- **Barcode Integration**: Support for barcode scanning and management
 
-1. Install dependencies:
+### 👥 Customer Relationship Management
+- **Customer Database**: Comprehensive customer profiles and history
+- **Segmentation Tools**: Organize customers by various criteria
+- **Communication Tracking**: Record and track all customer interactions
+- **Customer Analytics**: Insights into customer behavior and preferences
+
+### 📋 Order Management
+- **Rental Order Processing**: Complete order lifecycle management
+- **Order Tracking**: Real-time status updates and delivery tracking
+- **Payment Management**: Integrated payment processing and tracking
+- **Order Analytics**: Performance metrics and trend analysis
+
+### 💰 GST Compliant Billing System
+- **Automated GST Calculations**: Compliant with Indian tax regulations
+- **Invoice Generation**: Professional invoice creation and management
+- **Payment Tracking**: Monitor payments and outstanding amounts
+- **GST Return Tools**: Simplified GST filing and compliance
+- **Bulk Billing Operations**: Process multiple invoices efficiently
+
+### 👤 User Management
+- **Role-based Access Control**: Secure access based on user roles
+- **Multi-user Support**: Support for multiple concurrent users
+- **Permission Management**: Granular control over system access
+- **User Activity Tracking**: Monitor user actions and system usage
+
+### 📍 Location Management
+- **Multi-location Support**: Manage multiple business locations
+- **Location-specific Inventory**: Track inventory by location
+- **Location Analytics**: Performance metrics by location
+
+## 🛠️ Technology Stack
+
+### Frontend
+- **React 18**: Modern React with concurrent features and improved performance
+- **TypeScript**: Type-safe JavaScript with enhanced developer experience
+- **Vite**: Lightning-fast build tool and development server
+- **Tailwind CSS**: Utility-first CSS framework with custom design system
+- **React Router v6**: Declarative routing for single-page application
+- **Recharts**: Powerful data visualization library for charts and graphs
+- **Lucide React**: Beautiful, customizable SVG icons
+- **Framer Motion**: Smooth animations and transitions
+
+### Backend & Database
+- **Supabase**: Backend-as-a-Service with PostgreSQL database
+- **Real-time Subscriptions**: Live data updates across the application
+- **Row Level Security**: Secure data access and user permissions
+- **Authentication**: Built-in user authentication and session management
+
+### State Management
+- **React Context API**: Global state management for authentication and themes
+- **Local State**: Component-level state with React hooks
+- **Supabase Client**: Real-time data synchronization
+
+### Development Tools
+- **TypeScript**: Static type checking and enhanced IDE support
+- **ESLint**: Code linting and quality assurance with TypeScript support
+- **Prettier**: Code formatting and consistency
+- **Git**: Version control and collaboration
+- **Rocket.new**: Rapid development and deployment platform
+
+## 📁 Project Structure
+
+```
+hybits-crm-new/
+├── public/                          # Static assets and images
+│   ├── assets/images/              # Application images
+│   ├── favicon.ico                 # Site favicon
+│   ├── manifest.json               # PWA manifest
+│   └── robots.txt                  # SEO robots file
+├── src/
+│   ├── components/                 # Reusable UI components
+│   │   ├── ui/                    # Base UI components
+│   │   │   ├── Button.jsx         # Custom button component
+│   │   │   ├── Input.jsx          # Form input component
+│   │   │   ├── Select.jsx         # Dropdown select component
+│   │   │   ├── Header.jsx         # Application header
+│   │   │   ├── Sidebar.jsx        # Navigation sidebar
+│   │   │   ├── Breadcrumb.jsx     # Navigation breadcrumbs
+│   │   │   └── ...
+│   │   ├── AppIcon.jsx            # Icon component wrapper
+│   │   ├── AppImage.jsx           # Image component wrapper
+│   │   ├── ErrorBoundary.jsx      # Error handling component
+│   │   ├── ProtectedRoute.jsx     # Route protection component
+│   │   └── ScrollToTop.jsx        # Scroll behavior component
+│   ├── contexts/                   # React Context providers
+│   │   ├── AuthContext.jsx        # Authentication context
+│   │   └── ThemeContext.jsx       # Theme management context
+│   ├── pages/                      # Page components
+│   │   ├── executive-dashboard/   # Executive dashboard module
+│   │   ├── inventory-management-system/ # Inventory management
+│   │   ├── customer-relationship-management/ # Customer management
+│   │   ├── rental-order-management/ # Order management
+│   │   ├── gst-compliant-billing-system/ # Billing system
+│   │   ├── user-management/       # User management
+│   │   ├── location-management/   # Location management
+│   │   └── authentication-role-selection/ # Authentication
+│   ├── services/                   # API and service layer
+│   │   ├── authService.js         # Authentication services
+│   │   ├── customerService.js     # Customer data services
+│   │   ├── inventoryService.js    # Inventory data services
+│   │   ├── locationService.js     # Location data services
+│   │   └── orderService.js        # Order data services
+│   ├── styles/                     # Global styles
+│   │   ├── index.css              # Global CSS styles
+│   │   └── tailwind.css           # Tailwind CSS configuration
+│   ├── utils/                      # Utility functions
+│   │   ├── cn.js                  # Class name utility
+│   │   └── importExport.js        # Import/export utilities
+│   ├── lib/                        # External library configurations
+│   │   └── supabase.js            # Supabase client configuration
+│   ├── App.jsx                     # Main application component
+│   ├── Routes.jsx                  # Application routing
+│   └── index.jsx                   # Application entry point
+├── supabase/                       # Database migrations
+│   └── migrations/                 # SQL migration files
+├── package.json                    # Project dependencies
+├── tailwind.config.js              # Tailwind CSS configuration
+├── vite.config.mjs                 # Vite build configuration
+└── README.md                       # Project documentation
+```
+
+## 🚀 Getting Started
+
+### Prerequisites
+- **Node.js** (v16.x or higher)
+- **npm** or **yarn** package manager
+- **TypeScript** (v4.9.x or higher)
+- **Supabase Account** (for backend services)
+
+### Installation
+
+1. **Clone the repository:**
+   ```bash
+   git clone <repository-url>
+   cd hybits-crm-new
+   ```
+
+2. **Install dependencies:**
    ```bash
    npm install
    # or
    yarn install
    ```
-   
-2. Start the development server:
+
+3. **Environment Setup:**
+   Create a `.env.local` file in the root directory:
+   ```env
+   VITE_SUPABASE_URL=your_supabase_url
+   VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
+
+4. **Database Setup:**
+   - Run the SQL migrations in the `supabase/migrations/` directory
+   - Set up Row Level Security policies
+   - Configure authentication settings
+
+5. **Start the development server:**
    ```bash
    npm start
    # or
    yarn start
    ```
 
-## 📁 Project Structure
+6. **Type checking (optional):**
+   ```bash
+   npm run type-check
+   # or
+   yarn type-check
+   ```
 
-```
-react_app/
-├── public/             # Static assets
-├── src/
-│   ├── components/     # Reusable UI components
-│   ├── pages/          # Page components
-│   ├── styles/         # Global styles and Tailwind configuration
-│   ├── App.jsx         # Main application component
-│   ├── Routes.jsx      # Application routes
-│   └── index.jsx       # Application entry point
-├── .env                # Environment variables
-├── index.html          # HTML template
-├── package.json        # Project dependencies and scripts
-├── tailwind.config.js  # Tailwind CSS configuration
-└── vite.config.js      # Vite configuration
-```
+6. **Access the application:**
+   Open [http://localhost:4028](http://localhost:4028) in your browser
 
-## 🧩 Adding Routes
+## 🎨 Design System
 
-To add new routes to the application, update the `Routes.jsx` file:
+### Color Palette
+- **Primary**: Vibrant green (#1E40AF) for main actions and branding
+- **Secondary**: Soft gray (#220 14% 96%) for sections and backgrounds
+- **Success**: Green (#10B981) for positive actions and states
+- **Warning**: Amber (#F59E0B) for caution and attention
+- **Error**: Red (#EF4444) for errors and destructive actions
+- **Muted**: Gray tones for secondary text and elements
 
-```jsx
-import { useRoutes } from "react-router-dom";
-import HomePage from "pages/HomePage";
-import AboutPage from "pages/AboutPage";
+### Typography
+- **Font Family**: Inter (primary), JetBrains Mono (code)
+- **Responsive Typography**: Fluid scaling across device sizes
+- **Font Weights**: 400 (regular), 500 (medium), 600 (semibold), 700 (bold)
 
-const ProjectRoutes = () => {
-  let element = useRoutes([
-    { path: "/", element: <HomePage /> },
-    { path: "/about", element: <AboutPage /> },
-    // Add more routes as needed
-  ]);
+### Components
+- **Consistent Spacing**: 4px base unit with consistent spacing scale
+- **Border Radius**: Rounded corners with consistent radius values
+- **Shadows**: Subtle, pronounced, and luxury shadow variants
+- **Transitions**: Smooth 300ms transitions for interactive elements
 
-  return element;
-};
-```
+## 🔐 Authentication & Security
 
-## 🎨 Styling
+### User Roles
+- **Super Admin**: Full system access and configuration
+- **Admin**: Management access to all modules
+- **Manager**: Department-specific access and oversight
+- **Operator**: Day-to-day operational access
+- **Viewer**: Read-only access for reporting
 
-This project uses Tailwind CSS for styling. The configuration includes:
+### Security Features
+- **Row Level Security**: Database-level access control
+- **JWT Authentication**: Secure token-based authentication
+- **Session Management**: Automatic session handling and refresh
+- **Input Validation**: Client and server-side validation
+- **XSS Protection**: Sanitized inputs and outputs
 
-- Forms plugin for form styling
-- Typography plugin for text styling
-- Aspect ratio plugin for responsive elements
-- Container queries for component-specific responsive design
-- Fluid typography for responsive text
-- Animation utilities
+## 📊 Data Management
 
-## 📱 Responsive Design
+### Real-time Features
+- **Live Updates**: Real-time data synchronization across users
+- **WebSocket Integration**: Instant notifications and updates
+- **Conflict Resolution**: Automatic handling of concurrent edits
+- **Offline Support**: Local caching with sync when reconnected
 
-The app is built with responsive design using Tailwind CSS breakpoints.
+### Data Export/Import
+- **CSV Export**: Export data in CSV format for external analysis
+- **Excel Integration**: Import/export Excel files
+- **Bulk Operations**: Mass data operations and updates
+- **Data Backup**: Automated backup and recovery systems
 
+## 🚀 Deployment
 
-## 📦 Deployment
-
-Build the application for production:
-
+### Production Build
 ```bash
 npm run build
 ```
 
+### Deployment Options
+- **Vercel**: Recommended for frontend deployment
+- **Netlify**: Alternative frontend hosting
+- **Supabase**: Backend and database hosting
+- **Docker**: Containerized deployment option
+
+### Environment Configuration
+- **Development**: Local development with hot reload
+- **Staging**: Pre-production testing environment
+- **Production**: Live production environment
+
+## 📈 Performance Optimization
+
+### Frontend Optimizations
+- **Code Splitting**: Lazy loading of components and routes
+- **Memoization**: React.memo and useMemo for expensive operations
+- **Bundle Optimization**: Tree shaking and dead code elimination
+- **Image Optimization**: Optimized images and lazy loading
+
+### Database Optimizations
+- **Indexing**: Optimized database indexes for fast queries
+- **Connection Pooling**: Efficient database connection management
+- **Query Optimization**: Optimized SQL queries and operations
+- **Caching**: Redis caching for frequently accessed data
+
+## 🧪 Testing
+
+### Testing Strategy
+- **Unit Tests**: Component and utility function testing
+- **Integration Tests**: API and service integration testing
+- **E2E Tests**: End-to-end user workflow testing
+- **Performance Tests**: Load and stress testing
+
+### Testing Tools
+- **Jest**: JavaScript testing framework
+- **React Testing Library**: React component testing
+- **Cypress**: End-to-end testing framework
+- **Lighthouse**: Performance and accessibility testing
+
+## 📱 Mobile Responsiveness
+
+### Responsive Design
+- **Mobile First**: Designed for mobile devices first
+- **Breakpoints**: Tailwind CSS responsive breakpoints
+- **Touch Optimization**: Touch-friendly interface elements
+- **Progressive Web App**: PWA capabilities for mobile installation
+
+### Device Support
+- **Desktop**: Full feature set with advanced interactions
+- **Tablet**: Optimized layout for tablet devices
+- **Mobile**: Streamlined interface for mobile devices
+
+## 🔧 Customization
+
+### Theme Customization
+- **Light/Dark Mode**: Automatic theme switching
+- **Custom Colors**: Configurable color palette
+- **Branding**: Customizable logos and branding elements
+- **Layout**: Flexible layout configurations
+
+### Module Configuration
+- **Feature Flags**: Enable/disable specific features
+- **Custom Fields**: Add custom fields to data models
+- **Workflow Customization**: Customize business workflows
+- **Integration Options**: Third-party service integrations
+
+## 📚 API Documentation
+
+### REST API Endpoints
+- **Authentication**: `/auth/*` - User authentication and management
+- **Customers**: `/customers/*` - Customer data operations
+- **Inventory**: `/inventory/*` - Inventory management operations
+- **Orders**: `/orders/*` - Order processing and tracking
+- **Billing**: `/billing/*` - Invoice and payment operations
+
+### Real-time Subscriptions
+- **Inventory Updates**: Live inventory level changes
+- **Order Status**: Real-time order status updates
+- **Customer Activity**: Live customer interaction tracking
+- **System Notifications**: Instant system alerts and notifications
+
+## 🤝 Contributing
+
+### Development Guidelines
+- **Code Style**: ESLint and Prettier configuration
+- **Git Workflow**: Feature branches and pull requests
+- **Documentation**: Comprehensive code documentation
+- **Testing**: Test coverage requirements
+
+### Contribution Process
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
+
+## 📞 Support & Maintenance
+
+### Support Channels
+- **Internal Documentation**: Comprehensive system documentation
+- **Technical Support**: Dedicated support team
+- **Training Materials**: User training and onboarding resources
+- **Community Forum**: Internal user community and knowledge sharing
+
+### Maintenance Schedule
+- **Regular Updates**: Monthly feature updates and improvements
+- **Security Patches**: Immediate security updates and patches
+- **Performance Monitoring**: Continuous performance monitoring and optimization
+- **Backup & Recovery**: Automated backup and disaster recovery procedures
+
+## 📄 License
+
+This project is proprietary software developed for Hybits company's internal use. All rights reserved.
+
 ## 🙏 Acknowledgments
 
-- Built with [Rocket.new](https://rocket.new)
-- Powered by React and Vite
-- Styled with Tailwind CSS
+- **Built with [Rocket.new](https://rocket.new)** - Rapid development platform
+- **Powered by React and Vite** - Modern frontend technologies
+- **Styled with Tailwind CSS** - Utility-first CSS framework
+- **Backend by Supabase** - Backend-as-a-Service platform
+- **Icons by Lucide** - Beautiful, customizable SVG icons
 
-Built with ❤️ on Rocket.new
+---
+
+**Built with ❤️ for Hybits Company**
+
+*For internal use only. All rights reserved.*

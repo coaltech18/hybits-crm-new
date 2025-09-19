@@ -2,29 +2,32 @@
 // NEW INVENTORY ITEM PAGE
 // ============================================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useForm } from '@/hooks/useForm';
 import { commonValidationRules } from '@/utils/validation';
 import { hasPermission } from '@/utils/permissions';
-import OutletService from '@/services/outletService';
+import InventoryService from '@/services/inventoryService';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
+import ImageUpload from '@/components/ui/ImageUpload';
 import Icon from '@/components/AppIcon';
 
 interface ItemFormData {
-  code: string;
   name: string;
   description: string;
   category: string;
-  subcategory: string;
   location_id: string;
-  condition: string;
+  condition: 'excellent' | 'good' | 'fair' | 'damaged' | 'out_of_service';
   total_quantity: number;
+  available_quantity: number;
   reorder_point: number;
   unit_price: number;
+  image_url?: string;
+  thumbnail_url?: string;
+  image_alt_text?: string;
 }
 
 const NewItemPage: React.FC = () => {
@@ -32,24 +35,22 @@ const NewItemPage: React.FC = () => {
   const { user, availableOutlets } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { data, errors, handleChange, handleSubmit, setError } = useForm<ItemFormData>({
+  const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<ItemFormData>({
     initialData: {
-      code: '',
       name: '',
       description: '',
       category: '',
-      subcategory: '',
       location_id: '',
-      condition: '',
+      condition: 'excellent',
       total_quantity: 0,
+      available_quantity: 0,
       reorder_point: 0,
       unit_price: 0,
+      image_url: '',
+      thumbnail_url: '',
+      image_alt_text: '',
     },
     validationRules: {
-      code: [
-        commonValidationRules.required('Item code is required'),
-        commonValidationRules.minLength(2, 'Code must be at least 2 characters'),
-      ],
       name: [
         commonValidationRules.required('Item name is required'),
         commonValidationRules.minLength(2, 'Name must be at least 2 characters'),
@@ -76,15 +77,16 @@ const NewItemPage: React.FC = () => {
     onSubmit: async (formData) => {
       try {
         setIsSubmitting(true);
-        // TODO: Implement item creation API call
         console.log('Creating inventory item:', formData);
         
-        // Simulate API call
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Create item in database
+        const newItem = await InventoryService.createInventoryItem(formData);
+        console.log('Item created successfully:', newItem);
         
         // Redirect to inventory page
         navigate('/inventory');
       } catch (error: any) {
+        console.error('Error creating item:', error);
         setError('name', error.message || 'Failed to create item');
       } finally {
         setIsSubmitting(false);
@@ -94,21 +96,21 @@ const NewItemPage: React.FC = () => {
 
   const categoryOptions = [
     { value: '', label: 'Select category' },
-    { value: 'furniture', label: 'Furniture' },
-    { value: 'decorations', label: 'Decorations' },
-    { value: 'lighting', label: 'Lighting' },
-    { value: 'audio_visual', label: 'Audio/Visual' },
-    { value: 'catering', label: 'Catering Equipment' },
-    { value: 'tents', label: 'Tents & Canopies' },
-    { value: 'other', label: 'Other' },
+    { value: 'plates', label: 'Plates' },
+    { value: 'cups', label: 'Cups' },
+    { value: 'glasses', label: 'Glasses' },
+    { value: 'cutlery', label: 'Cutlery' },
+    { value: 'bowls', label: 'Bowls' },
+    { value: 'serving_dishes', label: 'Serving Dishes' },
   ];
 
   const conditionOptions = [
     { value: '', label: 'Select condition' },
-    { value: 'new', label: 'New' },
+    { value: 'excellent', label: 'Excellent' },
     { value: 'good', label: 'Good' },
     { value: 'fair', label: 'Fair' },
-    { value: 'poor', label: 'Poor' },
+    { value: 'damaged', label: 'Damaged' },
+    { value: 'out_of_service', label: 'Out of Service' },
   ];
 
   const locationOptions = availableOutlets.map(outlet => ({
@@ -156,16 +158,6 @@ const NewItemPage: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
                 type="text"
-                label="Item Code"
-                placeholder="Enter unique item code"
-                value={data.code}
-                onChange={handleChange('code')}
-                error={errors.code}
-                required
-                disabled={isSubmitting}
-              />
-              <Input
-                type="text"
                 label="Item Name"
                 placeholder="Enter item name"
                 value={data.name}
@@ -191,28 +183,20 @@ const NewItemPage: React.FC = () => {
           {/* Category & Location */}
           <div className="space-y-4">
             <h3 className="text-lg font-semibold text-foreground">Category & Location</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Select
                 options={categoryOptions}
                 value={data.category}
-                onChange={handleChange('category')}
+                onChange={(value) => setData({ category: value })}
                 label="Category"
                 error={errors.category}
                 required
                 disabled={isSubmitting}
               />
-              <Input
-                type="text"
-                label="Subcategory"
-                placeholder="Enter subcategory (optional)"
-                value={data.subcategory}
-                onChange={handleChange('subcategory')}
-                disabled={isSubmitting}
-              />
               <Select
                 options={locationOptions}
                 value={data.location_id}
-                onChange={handleChange('location_id')}
+                onChange={(value) => setData({ location_id: value })}
                 label="Location"
                 error={errors.location_id}
                 required
@@ -221,7 +205,7 @@ const NewItemPage: React.FC = () => {
               <Select
                 options={conditionOptions}
                 value={data.condition}
-                onChange={handleChange('condition')}
+                onChange={(value) => setData({ condition: value as 'excellent' | 'good' | 'fair' | 'damaged' | 'out_of_service' })}
                 label="Condition"
                 error={errors.condition}
                 required
@@ -233,7 +217,7 @@ const NewItemPage: React.FC = () => {
           {/* Inventory Details */}
           <div className="space-y-4">
             <h3 className="text-lg font-semibold text-foreground">Inventory Details</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <Input
                 type="number"
                 label="Total Quantity"
@@ -241,6 +225,17 @@ const NewItemPage: React.FC = () => {
                 value={data.total_quantity}
                 onChange={handleChange('total_quantity')}
                 error={errors.total_quantity}
+                required
+                min={0}
+                disabled={isSubmitting}
+              />
+              <Input
+                type="number"
+                label="Available Quantity"
+                placeholder="Enter available quantity"
+                value={data.available_quantity}
+                onChange={handleChange('available_quantity')}
+                error={errors.available_quantity}
                 required
                 min={0}
                 disabled={isSubmitting}
@@ -268,6 +263,50 @@ const NewItemPage: React.FC = () => {
                 step={0.01}
                 disabled={isSubmitting}
               />
+            </div>
+          </div>
+
+          {/* Item Image */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-foreground">Item Image</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <ImageUpload
+                value={data.image_url || ''}
+                onChange={(url) => {
+                  // Update both image_url and thumbnail_url (in real implementation, thumbnail would be generated)
+                  setData({
+                    image_url: url,
+                    thumbnail_url: url
+                  });
+                }}
+                onError={(error) => setError('image_url', error)}
+                label="Item Image"
+                error={errors.image_url || ''}
+                disabled={isSubmitting}
+                maxSize={5}
+                aspectRatio="4:3"
+                showPreview={true}
+              />
+              <div className="space-y-4">
+                <Input
+                  type="text"
+                  label="Image Alt Text"
+                  placeholder="Describe the item for accessibility"
+                  value={data.image_alt_text || ''}
+                  onChange={handleChange('image_alt_text')}
+                  error={errors.image_alt_text}
+                  disabled={isSubmitting}
+                />
+                <div className="text-sm text-muted-foreground">
+                  <p className="font-medium mb-1">Image Guidelines:</p>
+                  <ul className="space-y-1 text-xs">
+                    <li>• Use high-quality images (JPG, PNG, WebP)</li>
+                    <li>• Maximum file size: 5MB</li>
+                    <li>• Recommended size: 800x600px or similar 4:3 ratio</li>
+                    <li>• Show the item clearly against a clean background</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </div>
 

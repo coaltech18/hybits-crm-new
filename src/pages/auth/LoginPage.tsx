@@ -9,7 +9,6 @@ import { useForm } from '@/hooks/useForm';
 import { commonValidationRules } from '@/utils/validation';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import Icon from '@/components/AppIcon';
 
 interface LoginFormData {
   email: string;

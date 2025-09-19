@@ -52,7 +52,6 @@ export interface FormState<T> {
 
 // Customer Form
 export interface CustomerFormData {
-  code: string;
   name: string;
   email: string;
   phone: string;
@@ -70,17 +69,18 @@ export interface CustomerFormData {
 
 // Inventory Item Form
 export interface InventoryItemFormData {
-  code: string;
   name: string;
   description?: string;
   category: string;
-  subcategory?: string;
   location_id: string;
-  condition: 'new' | 'good' | 'fair' | 'poor';
+  condition: 'excellent' | 'good' | 'fair' | 'damaged' | 'out_of_service';
   total_quantity: number;
   available_quantity: number;
   reorder_point: number;
   unit_price: number;
+  image_url?: string;
+  thumbnail_url?: string;
+  image_alt_text?: string;
 }
 
 // Order Form

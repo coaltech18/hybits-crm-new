@@ -8,7 +8,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useForm } from '@/hooks/useForm';
 import { commonValidationRules } from '@/utils/validation';
 import { hasPermission } from '@/utils/permissions';
-import OutletService from '@/services/outletService';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
@@ -30,7 +29,7 @@ const AddUserPage: React.FC = () => {
   const { user, availableOutlets } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { data, errors, handleChange, handleSubmit, setError } = useForm<UserFormData>({
+  const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<UserFormData>({
     initialData: {
       email: '',
       password: '',
@@ -184,7 +183,7 @@ const AddUserPage: React.FC = () => {
               <Select
                 options={roleOptions}
                 value={data.role}
-                onChange={handleChange('role')}
+                onChange={(value) => setData({ role: value })}
                 label="Role"
                 error={errors.role}
                 required
@@ -227,7 +226,7 @@ const AddUserPage: React.FC = () => {
               <Select
                 options={outletOptionsWithEmpty}
                 value={data.outlet_id}
-                onChange={handleChange('outlet_id')}
+                onChange={(value) => setData({ outlet_id: value })}
                 label="Outlet Assignment"
                 error={data.role === 'manager' && !data.outlet_id ? 'Outlet is required for managers' : undefined}
                 required={data.role === 'manager'}

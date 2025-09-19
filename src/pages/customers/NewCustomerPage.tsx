@@ -8,24 +8,26 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useForm } from '@/hooks/useForm';
 import { commonValidationRules } from '@/utils/validation';
 import { hasPermission } from '@/utils/permissions';
+import { CustomerService } from '@/services/customerService';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Icon from '@/components/AppIcon';
 
 interface CustomerFormData {
-  code: string;
   name: string;
   email: string;
   phone: string;
   company: string;
-  street: string;
-  city: string;
-  state: string;
-  pincode: string;
-  country: string;
+  address: {
+    street: string;
+    city: string;
+    state: string;
+    pincode: string;
+    country: string;
+  };
   gstin: string;
-  status: string;
+  status: 'active' | 'inactive' | 'suspended';
 }
 
 const NewCustomerPage: React.FC = () => {
@@ -33,26 +35,23 @@ const NewCustomerPage: React.FC = () => {
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { data, errors, handleChange, handleSubmit, setError } = useForm<CustomerFormData>({
+  const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<CustomerFormData>({
     initialData: {
-      code: '',
       name: '',
       email: '',
       phone: '',
       company: '',
-      street: '',
-      city: '',
-      state: '',
-      pincode: '',
-      country: 'India',
+      address: {
+        street: '',
+        city: '',
+        state: '',
+        pincode: '',
+        country: 'India',
+      },
       gstin: '',
       status: 'active',
     },
     validationRules: {
-      code: [
-        commonValidationRules.required('Customer code is required'),
-        commonValidationRules.minLength(2, 'Code must be at least 2 characters'),
-      ],
       name: [
         commonValidationRules.required('Customer name is required'),
         commonValidationRules.minLength(2, 'Name must be at least 2 characters'),
@@ -65,31 +64,13 @@ const NewCustomerPage: React.FC = () => {
         commonValidationRules.required('Phone number is required'),
         commonValidationRules.pattern(/^[0-9+\-\s()]+$/, 'Please enter a valid phone number'),
       ],
-      street: [
-        commonValidationRules.required('Street address is required'),
-      ],
-      city: [
-        commonValidationRules.required('City is required'),
-      ],
-      state: [
-        commonValidationRules.required('State is required'),
-      ],
-      pincode: [
-        commonValidationRules.required('Pincode is required'),
-        commonValidationRules.pattern(/^[0-9]{6}$/, 'Pincode must be 6 digits'),
-      ],
-      country: [
-        commonValidationRules.required('Country is required'),
-      ],
     },
     onSubmit: async (formData) => {
       try {
         setIsSubmitting(true);
-        // TODO: Implement customer creation API call
-        console.log('Creating customer:', formData);
         
-        // Simulate API call
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Create customer using CustomerService
+        await CustomerService.createCustomer(formData);
         
         // Redirect to customers page
         navigate('/customers');
@@ -166,16 +147,6 @@ const NewCustomerPage: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
                 type="text"
-                label="Customer Code"
-                placeholder="Enter unique customer code"
-                value={data.code}
-                onChange={handleChange('code')}
-                error={errors.code}
-                required
-                disabled={isSubmitting}
-              />
-              <Input
-                type="text"
                 label="Customer Name"
                 placeholder="Enter customer name"
                 value={data.name}
@@ -215,7 +186,7 @@ const NewCustomerPage: React.FC = () => {
               <Select
                 options={statusOptions}
                 value={data.status}
-                onChange={handleChange('status')}
+                onChange={(value) => setData({ status: value as 'active' | 'inactive' | 'suspended' })}
                 label="Status"
                 disabled={isSubmitting}
               />
@@ -231,9 +202,8 @@ const NewCustomerPage: React.FC = () => {
                   type="text"
                   label="Street Address"
                   placeholder="Enter street address"
-                  value={data.street}
-                  onChange={handleChange('street')}
-                  error={errors.street}
+                  value={data.address.street}
+                  onChange={(e) => setData({ address: { ...data.address, street: e.target.value } })}
                   required
                   disabled={isSubmitting}
                 />
@@ -242,18 +212,16 @@ const NewCustomerPage: React.FC = () => {
                 type="text"
                 label="City"
                 placeholder="Enter city"
-                value={data.city}
-                onChange={handleChange('city')}
-                error={errors.city}
+                value={data.address.city}
+                onChange={(e) => setData({ address: { ...data.address, city: e.target.value } })}
                 required
                 disabled={isSubmitting}
               />
               <Select
                 options={stateOptions}
-                value={data.state}
-                onChange={handleChange('state')}
+                value={data.address.state}
+                onChange={(value) => setData({ address: { ...data.address, state: value } })}
                 label="State"
-                error={errors.state}
                 required
                 disabled={isSubmitting}
               />
@@ -261,20 +229,17 @@ const NewCustomerPage: React.FC = () => {
                 type="text"
                 label="Pincode"
                 placeholder="Enter 6-digit pincode"
-                value={data.pincode}
-                onChange={handleChange('pincode')}
-                error={errors.pincode}
+                value={data.address.pincode}
+                onChange={(e) => setData({ address: { ...data.address, pincode: e.target.value } })}
                 required
-                maxLength={6}
                 disabled={isSubmitting}
               />
               <Input
                 type="text"
                 label="Country"
                 placeholder="Enter country"
-                value={data.country}
-                onChange={handleChange('country')}
-                error={errors.country}
+                value={data.address.country}
+                onChange={(e) => setData({ address: { ...data.address, country: e.target.value } })}
                 required
                 disabled={isSubmitting}
               />

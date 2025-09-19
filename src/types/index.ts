@@ -120,11 +120,14 @@ export interface InventoryItem {
   reorder_point: number;
   unit_price: number;
   last_movement?: string;
+  image_url?: string;
+  thumbnail_url?: string;
+  image_alt_text?: string;
   created_at: string;
   updated_at: string;
 }
 
-export type ItemCondition = 'new' | 'good' | 'fair' | 'poor';
+export type ItemCondition = 'excellent' | 'good' | 'fair' | 'damaged' | 'out_of_service';
 
 export interface StockAlert {
   id: string;

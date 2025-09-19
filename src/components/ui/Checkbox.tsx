@@ -110,7 +110,6 @@ export const CheckboxGroup: React.FC<CheckboxGroupProps> = ({
   onChange,
   className,
   error,
-  required = false,
 }) => {
   const handleChange = (optionValue: string, checked: boolean) => {
     if (checked) {
@@ -128,7 +127,7 @@ export const CheckboxGroup: React.FC<CheckboxGroupProps> = ({
           id={`checkbox-${option.value}`}
           checked={value.includes(option.value)}
           onChange={(checked) => handleChange(option.value, checked)}
-          disabled={option.disabled}
+          disabled={option.disabled || false}
           label={option.label}
         />
       ))}

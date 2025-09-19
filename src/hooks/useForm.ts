@@ -107,7 +107,7 @@ export function useForm<T extends Record<string, any>>({
     setIsSubmitting(false);
   }, [initialData]);
 
-  const isValid = Object.keys(errors).length === 0 && validateAll();
+  const isValid = Object.keys(errors).length === 0;
 
   return {
     data,

@@ -33,7 +33,7 @@ const AddOutletPage: React.FC = () => {
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { data, errors, handleChange, handleSubmit, setError } = useForm<OutletFormData>({
+  const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<OutletFormData>({
     initialData: {
       code: '',
       name: '',
@@ -205,7 +205,7 @@ const AddOutletPage: React.FC = () => {
               <Select
                 options={managerOptions}
                 value={data.manager_id}
-                onChange={handleChange('manager_id')}
+                onChange={(value) => setData({ manager_id: value })}
                 label="Manager"
                 disabled={isSubmitting}
               />
@@ -241,7 +241,7 @@ const AddOutletPage: React.FC = () => {
               <Select
                 options={stateOptions}
                 value={data.state}
-                onChange={handleChange('state')}
+                onChange={(value) => setData({ state: value })}
                 label="State"
                 error={errors.state}
                 required
@@ -255,7 +255,6 @@ const AddOutletPage: React.FC = () => {
                 onChange={handleChange('pincode')}
                 error={errors.pincode}
                 required
-                maxLength={6}
                 disabled={isSubmitting}
               />
               <Input

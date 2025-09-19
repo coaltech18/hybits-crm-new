@@ -41,7 +41,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           setCurrentOutlet(outlet || null);
         } else if (outlets.length > 0) {
           // Admin can choose any outlet, default to first one
-          setCurrentOutlet(outlets[0]);
+          setCurrentOutlet(outlets[0] || null);
         }
       }
     } catch (error) {
@@ -70,7 +70,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setCurrentOutlet(outlet || null);
       } else if (outlets.length > 0) {
         // Admin can choose any outlet, default to first one
-        setCurrentOutlet(outlets[0]);
+        setCurrentOutlet(outlets[0] || null);
       }
     } catch (error) {
       console.error('Login failed:', error);

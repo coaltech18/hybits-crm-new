@@ -2,7 +2,7 @@
 // ERROR BOUNDARY COMPONENT
 // ============================================================================
 
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react';
 import Icon from './AppIcon';
 
 interface Props {
@@ -32,7 +32,7 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   handleReset = () => {
-    this.setState({ hasError: false, error: undefined, errorInfo: undefined });
+    this.setState({ hasError: false });
   };
 
   render() {

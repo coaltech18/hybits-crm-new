@@ -51,7 +51,7 @@ const NewInvoicePage: React.FC = () => {
     }
   ]);
 
-  const { data, errors, handleChange, handleSubmit, setError } = useForm<InvoiceFormData>({
+  const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<InvoiceFormData>({
     initialData: {
       customer_name: '',
       customer_email: '',
@@ -61,8 +61,8 @@ const NewInvoicePage: React.FC = () => {
       customer_state: '',
       customer_pincode: '',
       customer_gstin: '',
-      invoice_date: new Date().toISOString().split('T')[0],
-      due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      invoice_date: new Date().toISOString().split('T')[0] || '',
+      due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] || '',
       notes: '',
     },
     validationRules: {
@@ -305,7 +305,7 @@ const NewInvoicePage: React.FC = () => {
               <Select
                 options={stateOptions}
                 value={data.customer_state}
-                onChange={handleChange('customer_state')}
+                onChange={(value) => setData({ customer_state: value })}
                 label="State"
                 error={errors.customer_state}
                 required
@@ -319,7 +319,6 @@ const NewInvoicePage: React.FC = () => {
                 onChange={handleChange('customer_pincode')}
                 error={errors.customer_pincode}
                 required
-                maxLength={6}
                 disabled={isSubmitting}
               />
             </div>
@@ -330,7 +329,7 @@ const NewInvoicePage: React.FC = () => {
             <h3 className="text-lg font-semibold text-foreground">Invoice Details</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
-                type="date"
+                type="text"
                 label="Invoice Date"
                 value={data.invoice_date}
                 onChange={handleChange('invoice_date')}
@@ -339,7 +338,7 @@ const NewInvoicePage: React.FC = () => {
                 disabled={isSubmitting}
               />
               <Input
-                type="date"
+                type="text"
                 label="Due Date"
                 value={data.due_date}
                 onChange={handleChange('due_date')}
@@ -366,7 +365,7 @@ const NewInvoicePage: React.FC = () => {
             </div>
             
             <div className="space-y-4">
-              {invoiceItems.map((item, index) => (
+              {invoiceItems.map((item) => (
                 <div key={item.id} className="grid grid-cols-12 gap-4 items-end p-4 border border-border rounded-lg">
                   <div className="col-span-5">
                     <Input

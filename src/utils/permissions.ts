@@ -2,7 +2,7 @@
 // PERMISSIONS UTILITY
 // ============================================================================
 
-import { UserRole, Permission, RolePermissions } from '@/types';
+import { UserRole, RolePermissions } from '@/types';
 
 // Define role-based permissions
 export const ROLE_PERMISSIONS: RolePermissions = {

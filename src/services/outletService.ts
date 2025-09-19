@@ -122,9 +122,9 @@ class OutletService {
       ...mockOutlets[outletIndex],
       ...updates,
       updated_at: new Date().toISOString()
-    };
+    } as Outlet;
     
-    return mockOutlets[outletIndex];
+    return mockOutlets[outletIndex]!;
   }
 
   // Delete outlet (admin only)
@@ -140,7 +140,7 @@ class OutletService {
   }
 
   // Get outlet statistics
-  static async getOutletStats(outletId: string): Promise<{
+  static async getOutletStats(_outletId: string): Promise<{
     totalCustomers: number;
     totalOrders: number;
     totalRevenue: number;

@@ -2,7 +2,7 @@
 // SELECT COMPONENT
 // ============================================================================
 
-import React, { useState, useRef, useEffect, forwardRef } from 'react';
+import { useState, useRef, useEffect, forwardRef } from 'react';
 import { cn } from '@/utils/cn';
 import { SelectProps, SelectOption } from '@/types';
 import Icon from '@/components/AppIcon';
@@ -22,7 +22,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
       error,
       ...props
     },
-    ref
+    _ref
   ) => {
     const [isOpen, setIsOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');

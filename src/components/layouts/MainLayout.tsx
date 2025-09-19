@@ -8,7 +8,11 @@ import Header from '../ui/Header';
 import Sidebar from '../ui/Sidebar';
 import { useAuth } from '@/contexts/AuthContext';
 
-const MainLayout: React.FC = () => {
+interface MainLayoutProps {
+  children?: React.ReactNode;
+}
+
+const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { user } = useAuth();
 
@@ -38,7 +42,7 @@ const MainLayout: React.FC = () => {
           
           {/* Page content */}
           <main className="flex-1 p-6">
-            <Outlet />
+            {children || <Outlet />}
           </main>
         </div>
       </div>

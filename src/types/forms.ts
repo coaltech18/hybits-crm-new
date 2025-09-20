@@ -147,20 +147,16 @@ export interface UserFormData {
 
 // Outlet Form
 export interface OutletFormData {
-  code: string;
   name: string;
-  address: {
-    street: string;
-    city: string;
-    state: string;
-    pincode: string;
-    country: string;
-  };
-  contact_person: string;
+  street: string;
+  city: string;
+  state: string;
+  pincode: string;
   contact_phone: string;
   contact_email: string;
+  gstin?: string;
   manager_id?: string;
-  is_active: boolean;
+  is_active?: boolean;
 }
 
 // Delivery Schedule Form

@@ -11,11 +11,10 @@ import OutletSelector from './OutletSelector';
 import { User } from '@/types';
 
 interface HeaderProps {
-  onToggleSidebar: () => void;
   user?: User | null;
 }
 
-const Header: React.FC<HeaderProps> = ({ onToggleSidebar, user }) => {
+const Header: React.FC<HeaderProps> = ({ user }) => {
   const { logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -33,18 +32,9 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar, user }) => {
       <div className="flex items-center justify-between">
         {/* Left side */}
         <div className="flex items-center space-x-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onToggleSidebar}
-            className="lg:hidden"
-          >
-            <Icon name="menu" size={20} />
-          </Button>
-          
           <div className="hidden md:block">
             <h1 className="text-xl font-semibold text-foreground">
-              Hybits CRM
+              Hybits Suite
             </h1>
           </div>
         </div>

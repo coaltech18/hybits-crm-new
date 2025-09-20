@@ -27,17 +27,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const checkSession = async () => {
     try {
       setLoading(true);
-      const currentUser = await AuthService.getCurrentUser();
+      const { user: currentUser } = await AuthService.getCurrentSession();
       setUser(currentUser);
       
       if (currentUser) {
         // Load available outlets for the user
-        const outlets = await OutletService.getUserOutlets(currentUser.role, currentUser.outlet_id);
+        const outlets = await OutletService.getAllOutlets();
         setAvailableOutlets(outlets);
         
         // Set current outlet
         if (currentUser.outlet_id) {
-          const outlet = outlets.find(o => o.id === currentUser.outlet_id);
+          const outlet = outlets.find((o: any) => o.id === currentUser.outlet_id);
           setCurrentOutlet(outlet || null);
         } else if (outlets.length > 0) {
           // Admin can choose any outlet, default to first one
@@ -61,12 +61,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(loggedInUser);
       
       // Load available outlets for the user
-      const outlets = await OutletService.getUserOutlets(loggedInUser.role, loggedInUser.outlet_id);
+      const outlets = await OutletService.getAllOutlets();
       setAvailableOutlets(outlets);
       
       // Set current outlet
       if (loggedInUser.outlet_id) {
-        const outlet = outlets.find(o => o.id === loggedInUser.outlet_id);
+        const outlet = outlets.find((o: any) => o.id === loggedInUser.outlet_id);
         setCurrentOutlet(outlet || null);
       } else if (outlets.length > 0) {
         // Admin can choose any outlet, default to first one
@@ -113,7 +113,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (!user) throw new Error('No user logged in');
       
       setLoading(true);
-      const updatedUser = await AuthService.updateProfile(user.id, updates);
+      const updatedUser = await AuthService.updateUserProfile(user.id, updates);
       setUser(updatedUser);
     } catch (error) {
       console.error('Profile update failed:', error);

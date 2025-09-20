@@ -2,76 +2,37 @@
 // LOCATIONS PAGE
 // ============================================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Icon from '@/components/AppIcon';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { Location } from '@/types';
-
-// Mock data
-const mockLocations: Location[] = [
-  {
-    id: '1',
-    code: 'LOC-001',
-    name: 'Mumbai Warehouse',
-    address: {
-      street: '123 Industrial Area',
-      city: 'Mumbai',
-      state: 'Maharashtra',
-      pincode: '400001',
-      country: 'India'
-    },
-    contact_person: 'Rajesh Kumar',
-    contact_phone: '+91 98765 43210',
-    contact_email: 'rajesh@hybits.com',
-    manager_id: 'user-1',
-    is_active: true,
-    created_at: '2024-01-01',
-    updated_at: '2024-01-15'
-  },
-  {
-    id: '2',
-    code: 'LOC-002',
-    name: 'Delhi Branch',
-    address: {
-      street: '456 Business Park',
-      city: 'Delhi',
-      state: 'Delhi',
-      pincode: '110001',
-      country: 'India'
-    },
-    contact_person: 'Priya Sharma',
-    contact_phone: '+91 87654 32109',
-    contact_email: 'priya@hybits.com',
-    manager_id: 'user-2',
-    is_active: true,
-    created_at: '2024-01-02',
-    updated_at: '2024-01-14'
-  },
-  {
-    id: '3',
-    code: 'LOC-003',
-    name: 'Bangalore Office',
-    address: {
-      street: '789 Tech Hub',
-      city: 'Bangalore',
-      state: 'Karnataka',
-      pincode: '560001',
-      country: 'India'
-    },
-    contact_person: 'Amit Patel',
-    contact_phone: '+91 76543 21098',
-    contact_email: 'amit@hybits.com',
-    manager_id: 'user-3',
-    is_active: false,
-    created_at: '2024-01-03',
-    updated_at: '2024-01-13'
-  }
-];
+import LocationService from '@/services/locationService';
 
 const LocationsPage: React.FC = () => {
-  const [locations] = useState<Location[]>(mockLocations);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Fetch locations on component mount
+  useEffect(() => {
+    const fetchLocations = async () => {
+      try {
+        setLoading(true);
+        const data = await LocationService.getLocations();
+        setLocations(data);
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching locations:', err);
+        setError('Failed to load locations. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLocations();
+  }, []);
 
   const filteredLocations = locations.filter(location => {
     const matchesSearch = location.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -111,8 +72,29 @@ const LocationsPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Loading State */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <div className="flex items-center space-x-2">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+            <span className="text-muted-foreground">Loading locations...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Error State */}
+      {error && (
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
+          <div className="flex items-center space-x-2">
+            <Icon name="alert-circle" className="h-5 w-5 text-destructive" />
+            <span className="text-destructive font-medium">{error}</span>
+          </div>
+        </div>
+      )}
+
       {/* Locations Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {!loading && !error && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredLocations.map((location) => (
           <div key={location.id} className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between mb-4">
@@ -183,14 +165,16 @@ const LocationsPage: React.FC = () => {
             </div>
           </div>
         ))}
-      </div>
+        </div>
+      )}
 
-      {filteredLocations.length === 0 && (
+      {/* No Locations Found */}
+      {!loading && !error && filteredLocations.length === 0 && (
         <div className="text-center py-12">
           <Icon name="map-pin" size={48} className="mx-auto text-muted-foreground mb-4" />
           <h3 className="text-lg font-semibold text-foreground mb-2">No locations found</h3>
           <p className="text-muted-foreground mb-4">
-            Try adjusting your search criteria or add new locations.
+            {searchTerm ? 'No locations match your search criteria.' : 'Get started by adding your first location.'}
           </p>
           <Button>
             <Icon name="plus" size={20} className="mr-2" />

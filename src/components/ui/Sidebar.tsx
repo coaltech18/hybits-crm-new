@@ -9,12 +9,10 @@ import Icon from '../AppIcon';
 import { User, NavItem } from '@/types';
 
 interface SidebarProps {
-  isCollapsed: boolean;
-  onToggle: () => void;
   user?: User | null;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, onToggle, user }) => {
+const Sidebar: React.FC<SidebarProps> = ({ user }) => {
   const { user: currentUser } = useAuth();
 
   const navigationItems: NavItem[] = [
@@ -73,30 +71,15 @@ const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, onToggle, user }) => {
   );
 
   return (
-    <div className={`fixed left-0 top-0 h-full bg-card border-r border-border transition-all duration-300 z-40 ${
-      isCollapsed ? 'w-16' : 'w-64'
-    }`}>
+    <div className="fixed left-0 top-0 h-full w-64 bg-card border-r border-border z-40">
       <div className="flex flex-col h-full">
         {/* Logo */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          {!isCollapsed && (
-            <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <Icon name="package" size={20} className="text-primary-foreground" />
-              </div>
-              <span className="font-semibold text-foreground">Hybits</span>
-            </div>
-          )}
-          
-          <button
-            onClick={onToggle}
-            className="p-1 hover:bg-muted rounded-md transition-colors"
-          >
-            <Icon 
-              name={isCollapsed ? 'chevron-right' : 'chevron-left'} 
-              size={16} 
-            />
-          </button>
+        <div className="flex items-center justify-center p-6 border-b border-border">
+          <img 
+            src="/assets/LOGO.png" 
+            alt="Hybits Logo" 
+            className="h-10 w-auto"
+          />
         </div>
 
         {/* Navigation */}
@@ -112,19 +95,17 @@ const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, onToggle, user }) => {
                     ? 'bg-primary text-primary-foreground' 
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                   }
-                  ${isCollapsed ? 'justify-center' : ''}
                 `}
-                title={isCollapsed ? item.name : undefined}
               >
                 <Icon name={item.icon} size={20} />
-                {!isCollapsed && <span>{item.name}</span>}
+                <span>{item.name}</span>
               </NavLink>
             );
           })}
         </nav>
 
         {/* User info */}
-        {!isCollapsed && user && (
+        {user && (
           <div className="p-4 border-t border-border">
             <div className="flex items-center space-x-3">
               <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">

@@ -93,7 +93,7 @@ export class CodeGeneratorService {
 
       let nextNumber = 1;
       if (data && data.length > 0) {
-        const lastCode = data[0][codeField];
+        const lastCode = (data[0] as any)?.[codeField];
         const extractedNumber = this.extractNumberFromCode(lastCode, config);
         if (extractedNumber !== null) {
           nextNumber = extractedNumber + 1;
@@ -127,7 +127,7 @@ export class CodeGeneratorService {
 
       let startNumber = 1;
       if (!error && data && data.length > 0) {
-        const lastCode = data[0][codeField];
+        const lastCode = (data[0] as any)?.[codeField];
         const extractedNumber = this.extractNumberFromCode(lastCode, config);
         if (extractedNumber !== null) {
           startNumber = extractedNumber + 1;

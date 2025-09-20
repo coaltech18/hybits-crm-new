@@ -28,7 +28,7 @@ const OutletsPage: React.FC = () => {
   const loadOutlets = async () => {
     try {
       setLoading(true);
-      const data = await OutletService.getUserOutlets(user?.role || 'manager', user?.outlet_id);
+      const data = await OutletService.getAllOutlets();
       setOutlets(data);
     } catch (error) {
       console.error('Failed to load outlets:', error);

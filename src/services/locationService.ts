@@ -1,16 +1,29 @@
 // ============================================================================
-// OUTLET SERVICE (Using Locations Table)
+// LOCATION SERVICE
 // ============================================================================
 
-import { Outlet, OutletFormData } from '@/types';
+import { Location } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { CodeGeneratorService } from './codeGeneratorService';
 
-class OutletService {
+export interface LocationFormData {
+  name: string;
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+  phone?: string;
+  email?: string;
+  gstin?: string;
+  manager_id?: string;
+  is_active?: boolean;
+}
+
+class LocationService {
   /**
-   * Get all outlets (locations)
+   * Get all locations
    */
-  static async getAllOutlets(): Promise<Outlet[]> {
+  static async getLocations(): Promise<Location[]> {
     try {
       const { data, error } = await supabase
         .from('locations')
@@ -28,7 +41,7 @@ class OutletService {
           city: location.city,
           state: location.state,
           pincode: location.pincode,
-          country: 'India' // Default country
+          country: 'India'
         },
         contact_person: location.manager_id ? 'Manager' : 'N/A',
         contact_phone: location.phone || '',
@@ -39,15 +52,15 @@ class OutletService {
         updated_at: location.updated_at
       }));
     } catch (error) {
-      console.error('Error fetching outlets:', error);
+      console.error('Error fetching locations:', error);
       throw error;
     }
   }
 
   /**
-   * Get outlet by ID
+   * Get location by ID
    */
-  static async getOutletById(id: string): Promise<Outlet | null> {
+  static async getLocationById(id: string): Promise<Location | null> {
     try {
       const { data, error } = await supabase
         .from('locations')
@@ -82,31 +95,31 @@ class OutletService {
         updated_at: data.updated_at
       };
     } catch (error) {
-      console.error('Error fetching outlet:', error);
+      console.error('Error fetching location:', error);
       throw error;
     }
   }
 
   /**
-   * Create new outlet (location)
+   * Create new location
    */
-  static async createOutlet(outletData: OutletFormData): Promise<Outlet> {
+  static async createLocation(locationData: LocationFormData): Promise<Location> {
     try {
       // Generate location code automatically
       const locationCode = await CodeGeneratorService.generateCode('location');
 
       const insertData = {
         location_code: locationCode,
-        name: outletData.name,
-        address: outletData.street,
-        city: outletData.city,
-        state: outletData.state,
-        pincode: outletData.pincode,
-        phone: outletData.contact_phone,
-        email: outletData.contact_email,
-        gstin: outletData.gstin,
-        manager_id: outletData.manager_id || null,
-        is_active: true,
+        name: locationData.name,
+        address: locationData.address,
+        city: locationData.city,
+        state: locationData.state,
+        pincode: locationData.pincode,
+        phone: locationData.phone,
+        email: locationData.email,
+        gstin: locationData.gstin,
+        manager_id: locationData.manager_id || null,
+        is_active: locationData.is_active ?? true,
         settings: {}
       };
 
@@ -138,29 +151,30 @@ class OutletService {
         updated_at: data.updated_at
       };
     } catch (error) {
-      console.error('Error creating outlet:', error);
+      console.error('Error creating location:', error);
       throw error;
     }
   }
 
   /**
-   * Update outlet
+   * Update location
    */
-  static async updateOutlet(id: string, updates: Partial<OutletFormData>): Promise<Outlet> {
+  static async updateLocation(id: string, updates: Partial<LocationFormData>): Promise<Location> {
     try {
       const updateData: any = {
         updated_at: new Date().toISOString()
       };
 
       if (updates.name) updateData.name = updates.name;
-      if (updates.street) updateData.address = updates.street;
+      if (updates.address) updateData.address = updates.address;
       if (updates.city) updateData.city = updates.city;
       if (updates.state) updateData.state = updates.state;
       if (updates.pincode) updateData.pincode = updates.pincode;
-      if (updates.contact_phone) updateData.phone = updates.contact_phone;
-      if (updates.contact_email) updateData.email = updates.contact_email;
+      if (updates.phone) updateData.phone = updates.phone;
+      if (updates.email) updateData.email = updates.email;
       if (updates.gstin) updateData.gstin = updates.gstin;
       if (updates.manager_id !== undefined) updateData.manager_id = updates.manager_id;
+      if (updates.is_active !== undefined) updateData.is_active = updates.is_active;
 
       const { data, error } = await supabase
         .from('locations')
@@ -191,15 +205,15 @@ class OutletService {
         updated_at: data.updated_at
       };
     } catch (error) {
-      console.error('Error updating outlet:', error);
+      console.error('Error updating location:', error);
       throw error;
     }
   }
 
   /**
-   * Delete outlet
+   * Delete location
    */
-  static async deleteOutlet(id: string): Promise<void> {
+  static async deleteLocation(id: string): Promise<void> {
     try {
       const { error } = await supabase
         .from('locations')
@@ -208,15 +222,15 @@ class OutletService {
 
       if (error) throw error;
     } catch (error) {
-      console.error('Error deleting outlet:', error);
+      console.error('Error deleting location:', error);
       throw error;
     }
   }
 
   /**
-   * Get outlet statistics
+   * Get location statistics
    */
-  static async getOutletStats(outletId: string): Promise<{
+  static async getLocationStats(locationId: string): Promise<{
     totalCustomers: number;
     totalOrders: number;
     totalRevenue: number;
@@ -227,19 +241,19 @@ class OutletService {
       const { count: customersCount } = await supabase
         .from('customers')
         .select('*', { count: 'exact', head: true })
-        .eq('primary_location_id', outletId);
+        .eq('primary_location_id', locationId);
 
       // Get orders count for this location
       const { count: ordersCount } = await supabase
         .from('rental_orders')
         .select('*', { count: 'exact', head: true })
-        .eq('location_id', outletId);
+        .eq('location_id', locationId);
 
       // Get total revenue for this location
       const { data: revenueData } = await supabase
         .from('invoices')
         .select('total_amount')
-        .eq('location_id', outletId)
+        .eq('location_id', locationId)
         .eq('payment_status', 'paid');
 
       const totalRevenue = revenueData?.reduce((sum, invoice) => sum + (invoice.total_amount || 0), 0) || 0;
@@ -248,7 +262,7 @@ class OutletService {
       const { count: inventoryCount } = await supabase
         .from('inventory_items')
         .select('*', { count: 'exact', head: true })
-        .eq('location_id', outletId)
+        .eq('location_id', locationId)
         .gt('available_quantity', 0);
 
       return {
@@ -258,49 +272,10 @@ class OutletService {
         activeInventory: inventoryCount || 0
       };
     } catch (error) {
-      console.error('Error fetching outlet stats:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get outlets by manager ID
-   */
-  static async getOutletsByManager(managerId: string): Promise<Outlet[]> {
-    try {
-      const { data, error } = await supabase
-        .from('locations')
-        .select('*')
-        .eq('manager_id', managerId)
-        .eq('is_active', true)
-        .order('name');
-
-      if (error) throw error;
-
-      return data.map((location: any) => ({
-        id: location.id,
-        code: location.location_code,
-        name: location.name,
-        address: {
-          street: location.address,
-          city: location.city,
-          state: location.state,
-          pincode: location.pincode,
-          country: 'India'
-        },
-        contact_person: 'Manager',
-        contact_phone: location.phone || '',
-        contact_email: location.email || '',
-        manager_id: location.manager_id,
-        is_active: location.is_active,
-        created_at: location.created_at,
-        updated_at: location.updated_at
-      }));
-    } catch (error) {
-      console.error('Error fetching outlets by manager:', error);
+      console.error('Error fetching location stats:', error);
       throw error;
     }
   }
 }
 
-export default OutletService;
+export default LocationService;

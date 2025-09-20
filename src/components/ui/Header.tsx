@@ -33,9 +33,19 @@ const Header: React.FC<HeaderProps> = ({ user }) => {
         {/* Left side */}
         <div className="flex items-center space-x-4">
           <div className="hidden md:block">
-            <h1 className="text-xl font-semibold text-foreground">
-              Hybits Suite
-            </h1>
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 bg-gradient-to-br from-primary to-primary/80 rounded-lg flex items-center justify-center">
+                <Icon name="zap" size={18} className="text-primary-foreground" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-foreground tracking-tight">
+                  Hybits Suite
+                </h1>
+                <p className="text-xs text-muted-foreground font-medium">
+                  Business Management Platform
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -50,7 +60,7 @@ const Header: React.FC<HeaderProps> = ({ user }) => {
             <input
               type="text"
               placeholder="Search customers, orders, inventory..."
-              className="w-full pl-10 pr-4 py-2 bg-muted border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              className="w-full pl-10 pr-4 py-2.5 bg-muted/50 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition-all duration-200 placeholder:text-muted-foreground/70"
             />
           </div>
         </div>
@@ -93,8 +103,8 @@ const Header: React.FC<HeaderProps> = ({ user }) => {
               onClick={() => setShowUserMenu(!showUserMenu)}
               className="flex items-center space-x-2"
             >
-              <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
-                <span className="text-primary-foreground text-sm font-medium">
+              <div className="w-9 h-9 bg-gradient-to-br from-primary to-primary/80 rounded-xl flex items-center justify-center shadow-sm">
+                <span className="text-primary-foreground text-sm font-bold">
                   {user?.full_name?.charAt(0) || 'U'}
                 </span>
               </div>
@@ -111,35 +121,35 @@ const Header: React.FC<HeaderProps> = ({ user }) => {
 
             {/* Dropdown menu */}
             {showUserMenu && (
-              <div className="absolute right-0 mt-2 w-48 bg-card border border-border rounded-md shadow-lg z-50">
-                <div className="py-1">
-                  <div className="px-4 py-2 border-b border-border">
-                    <p className="text-sm font-medium text-foreground">
+              <div className="absolute right-0 mt-2 w-56 bg-card border border-border rounded-xl shadow-xl z-50 backdrop-blur-sm">
+                <div className="py-2">
+                  <div className="px-4 py-3 border-b border-border bg-gradient-to-r from-muted/20 to-muted/10">
+                    <p className="text-sm font-semibold text-foreground">
                       {user?.full_name || 'User'}
                     </p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground font-medium">
                       {user?.email || 'user@example.com'}
                     </p>
                   </div>
                   
-                  <button className="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center space-x-2">
+                  <button className="w-full text-left px-4 py-3 text-sm text-foreground hover:bg-gradient-to-r hover:from-muted/30 hover:to-muted/20 flex items-center space-x-3 transition-all duration-150">
                     <Icon name="user" size={16} />
-                    <span>Profile</span>
+                    <span className="font-medium">Profile</span>
                   </button>
                   
-                  <button className="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center space-x-2">
+                  <button className="w-full text-left px-4 py-3 text-sm text-foreground hover:bg-gradient-to-r hover:from-muted/30 hover:to-muted/20 flex items-center space-x-3 transition-all duration-150">
                     <Icon name="settings" size={16} />
-                    <span>Settings</span>
+                    <span className="font-medium">Settings</span>
                   </button>
                   
                   <div className="border-t border-border my-1" />
                   
                   <button 
                     onClick={handleLogout}
-                    className="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center space-x-2"
+                    className="w-full text-left px-4 py-3 text-sm text-foreground hover:bg-gradient-to-r hover:from-red-50 hover:to-red-50/50 flex items-center space-x-3 transition-all duration-150"
                   >
                     <Icon name="log-out" size={16} />
-                    <span>Sign out</span>
+                    <span className="font-medium">Sign out</span>
                   </button>
                 </div>
               </div>

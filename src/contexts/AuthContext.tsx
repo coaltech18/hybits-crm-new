@@ -27,7 +27,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const checkSession = async () => {
     try {
       setLoading(true);
-      const { user: currentUser } = await AuthService.getCurrentSession();
+      const currentUser = await AuthService.getCurrentUser();
       setUser(currentUser);
       
       if (currentUser) {
@@ -113,7 +113,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (!user) throw new Error('No user logged in');
       
       setLoading(true);
-      const updatedUser = await AuthService.updateUserProfile(user.id, updates);
+      const updatedUser = await AuthService.updateProfile(user.id, updates);
       setUser(updatedUser);
     } catch (error) {
       console.error('Profile update failed:', error);

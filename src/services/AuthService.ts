@@ -1,122 +1,14 @@
 // ============================================================================
-// AUTH SERVICE
+// AUTH SERVICE - Updated
 // ============================================================================
 
 import { User, RegisterData } from '@/types';
-
-// Mock Supabase client for development
-const createMockSupabase = () => ({
-  auth: {
-    signInWithPassword: async ({ email, password }: { email: string; password: string }) => {
-      // Mock authentication logic
-        if (email === 'admin@hybits.in' && password === 'admin123') {
-        return {
-          data: {
-            user: {
-              id: '1',
-              email: 'admin@hybits.in',
-              full_name: 'Rajesh Kumar',
-              role: 'admin' as const,
-              is_active: true,
-              // Admin has no outlet_id - can access all outlets
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            },
-            session: { access_token: 'mock-token' }
-          },
-          error: null
-        };
-      }
-      
-      if (email === 'manager@hybits.in' && password === 'manager123') {
-        return {
-          data: {
-            user: {
-              id: '2',
-              email: 'manager@hybits.in',
-              full_name: 'Priya Sharma',
-              role: 'manager' as const,
-              is_active: true,
-              outlet_id: '1', // Manager is assigned to Central Mall outlet
-              outlet_name: 'Hybits Central Mall',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            },
-            session: { access_token: 'mock-token' }
-          },
-          error: null
-        };
-      }
-      
-      throw new Error('Invalid credentials');
-    },
-    
-    signUp: async ({ email, password: _password, options }: { email: string; password: string; options: any }) => {
-      return {
-        data: {
-          user: {
-            id: Date.now().toString(),
-            email,
-            full_name: options?.data?.full_name || 'New User',
-            role: options?.data?.role || 'manager',
-            is_active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          session: { access_token: 'mock-token' }
-        },
-        error: null
-      };
-    },
-    
-    signOut: async () => {
-      return { error: null };
-    },
-    
-    getSession: async () => {
-      const user = localStorage.getItem('mock-user');
-      return {
-        data: { session: user ? { user: JSON.parse(user) } : null },
-        error: null
-      };
-    },
-    
-    updateUser: async ({ password: _password }: { password: string }) => {
-      return { data: { user: null }, error: null };
-    },
-    
-    resetPasswordForEmail: async (_email: string) => {
-      return { data: {}, error: null };
-    }
-  },
-  
-  from: (_table: string) => ({
-    select: () => ({
-      eq: () => ({
-        single: async () => ({ data: null, error: null })
-      })
-    }),
-    update: (_updates: any) => ({
-      eq: (_field: string, _value: any) => ({
-        select: () => ({
-          single: async () => ({ data: null, error: null })
-        })
-      })
-    }),
-    insert: () => ({
-      select: () => ({
-        single: async () => ({ data: null, error: null })
-      })
-    })
-  })
-});
-
-// Use environment variables if available, otherwise use mock
-const supabase = import.meta.env.VITE_SUPABASE_URL 
-  ? createMockSupabase() // In real implementation, this would be the actual Supabase client
-  : createMockSupabase();
+import { supabase } from '@/lib/supabase';
 
 export class AuthService {
+  /**
+   * Sign in with email and password
+   */
   static async login(email: string, password: string): Promise<{ user: User; session: any }> {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -126,21 +18,48 @@ export class AuthService {
 
       if (error) throw error;
       
-      // Store user in localStorage for mock persistence
-      if (data.user) {
-        localStorage.setItem('mock-user', JSON.stringify(data.user));
+      if (!data.user) {
+        throw new Error('No user data returned');
       }
+
+      // Get user profile from user_profiles table
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', data.user.id)
+        .single();
+
+      if (profileError) {
+        console.error('Error fetching user profile:', profileError);
+        throw new Error('Failed to fetch user profile');
+      }
+
+      // Map Supabase user to our User interface
+      const user: User = {
+        id: data.user.id,
+        email: data.user.email || '',
+        full_name: profile.full_name,
+        role: profile.role,
+        phone: profile.phone,
+        is_active: profile.is_active,
+        created_at: profile.created_at,
+        updated_at: profile.updated_at
+      };
       
-      return data;
+      return { user, session: data.session };
     } catch (error) {
       console.error('Error signing in:', error);
       throw error;
     }
   }
 
+  /**
+   * Register a new user
+   */
   static async register(userData: RegisterData): Promise<{ user: User; session: any }> {
     try {
-      const { data, error } = await supabase.auth.signUp({
+      // First, create the auth user
+      const { data: authData, error: authError } = await supabase.auth.signUp({
         email: userData.email,
         password: userData.password,
         options: {
@@ -151,98 +70,236 @@ export class AuthService {
         }
       });
 
-      if (error) throw error;
+      if (authError) throw authError;
       
-      // Store user in localStorage for mock persistence
-      if (data.user) {
-        localStorage.setItem('mock-user', JSON.stringify(data.user));
+      if (!authData.user) {
+        throw new Error('No user data returned from registration');
       }
+
+      // Create user profile in user_profiles table
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .insert({
+          id: authData.user.id,
+          email: userData.email,
+          full_name: userData.full_name,
+          role: userData.role,
+          phone: userData.phone,
+          is_active: true
+        })
+        .select()
+        .single();
+
+      if (profileError) {
+        console.error('Error creating user profile:', profileError);
+        throw new Error('Failed to create user profile');
+      }
+
+      // Map to our User interface
+      const user: User = {
+        id: authData.user.id,
+        email: authData.user.email || '',
+        full_name: profile.full_name,
+        role: profile.role,
+        phone: profile.phone,
+        is_active: profile.is_active,
+        created_at: profile.created_at,
+        updated_at: profile.updated_at
+      };
       
-      return data;
+      return { user, session: authData.session };
     } catch (error) {
-      console.error('Error signing up:', error);
+      console.error('Error registering user:', error);
       throw error;
     }
   }
 
+  /**
+   * Sign out the current user
+   */
   static async logout(): Promise<void> {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      
-      // Clear localStorage
-      localStorage.removeItem('mock-user');
     } catch (error) {
       console.error('Error signing out:', error);
       throw error;
     }
   }
 
+  /**
+   * Get current user
+   */
   static async getCurrentUser(): Promise<User | null> {
     try {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      
-      if (session?.user) {
-        return session.user as User;
-      }
-      
-      // Check localStorage for mock user
-      const mockUser = localStorage.getItem('mock-user');
-      return mockUser ? JSON.parse(mockUser) : null;
+      const { user } = await this.getCurrentSession();
+      return user;
     } catch (error) {
       console.error('Error getting current user:', error);
       return null;
     }
   }
 
-  static async updateProfile(userId: string, updates: Partial<User>): Promise<User> {
+  /**
+   * Get current session
+   */
+  static async getCurrentSession(): Promise<{ user: User | null; session: any }> {
     try {
-      const { data, error } = await supabase.from('user_profiles').update({
-        ...updates,
-        updated_at: new Date().toISOString()
-      }).eq('id', userId).select().single();
-
+      const { data, error } = await supabase.auth.getSession();
+      
       if (error) throw error;
       
-      // Update localStorage for mock persistence
-      const currentUser = localStorage.getItem('mock-user');
-      if (currentUser) {
-        const user = JSON.parse(currentUser);
-        const updatedUser = { ...user, ...updates };
-        localStorage.setItem('mock-user', JSON.stringify(updatedUser));
-        return updatedUser;
+      if (!data.session || !data.session.user) {
+        return { user: null, session: null };
       }
+
+      // Get user profile
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', data.session.user.id)
+        .single();
+
+      if (profileError) {
+        console.error('Error fetching user profile:', profileError);
+        return { user: null, session: null };
+      }
+
+      const user: User = {
+        id: data.session.user.id,
+        email: data.session.user.email || '',
+        full_name: profile.full_name,
+        role: profile.role,
+        phone: profile.phone,
+        is_active: profile.is_active,
+        created_at: profile.created_at,
+        updated_at: profile.updated_at
+      };
+
+      return { user, session: data.session };
+    } catch (error) {
+      console.error('Error getting current session:', error);
+      return { user: null, session: null };
+    }
+  }
+
+  /**
+   * Update user password
+   */
+  static async updatePassword(newPassword: string): Promise<void> {
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword
+      });
       
-      return data || (currentUser ? JSON.parse(currentUser) : null);
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error updating password:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Reset password for email
+   */
+  static async resetPassword(email: string): Promise<void> {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`
+      });
+      
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error resetting password:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all users (admin only)
+   */
+  static async getAllUsers(): Promise<User[]> {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      return data.map((profile: any) => ({
+        id: profile.id,
+        email: profile.email,
+        full_name: profile.full_name,
+        role: profile.role,
+        phone: profile.phone,
+        is_active: profile.is_active,
+        created_at: profile.created_at,
+        updated_at: profile.updated_at
+      }));
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update user profile (alias for updateUserProfile)
+   */
+  static async updateProfile(userId: string, updates: Partial<User>): Promise<User> {
+    return this.updateUserProfile(userId, updates);
+  }
+
+  /**
+   * Update user profile
+   */
+  static async updateUserProfile(userId: string, updates: Partial<User>): Promise<User> {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .update({
+          full_name: updates.full_name,
+          role: updates.role,
+          phone: updates.phone,
+          is_active: updates.is_active,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', userId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return {
+        id: data.id,
+        email: data.email,
+        full_name: data.full_name,
+        role: data.role,
+        phone: data.phone,
+        is_active: data.is_active,
+        created_at: data.created_at,
+        updated_at: data.updated_at
+      };
     } catch (error) {
       console.error('Error updating user profile:', error);
       throw error;
     }
   }
 
-  static async changePassword(newPassword: string): Promise<any> {
+  /**
+   * Delete user
+   */
+  static async deleteUser(userId: string): Promise<void> {
     try {
-      const { data, error } = await supabase.auth.updateUser({
-        password: newPassword
-      });
+      // Delete from user_profiles first (this will cascade to auth.users)
+      const { error } = await supabase
+        .from('user_profiles')
+        .delete()
+        .eq('id', userId);
 
       if (error) throw error;
-      return data;
     } catch (error) {
-      console.error('Error changing password:', error);
-      throw error;
-    }
-  }
-
-  static async resetPassword(email: string): Promise<any> {
-    try {
-      const { data, error } = await supabase.auth.resetPasswordForEmail(email);
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error resetting password:', error);
+      console.error('Error deleting user:', error);
       throw error;
     }
   }

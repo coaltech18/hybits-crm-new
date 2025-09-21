@@ -150,22 +150,26 @@ const InventoryPage: React.FC = () => {
   const [selectedCondition, setSelectedCondition] = useState<ItemCondition | ''>('');
 
   // Load inventory items from database
-  useEffect(() => {
-    const loadItems = async () => {
-      try {
-        setLoading(true);
-        const inventoryItems = await InventoryService.getInventoryItems();
-        setItems(inventoryItems);
-      } catch (err: any) {
-        console.error('Error loading inventory items:', err);
-        setError(err.message || 'Failed to load inventory items');
-        // Fallback to mock data if database fails
-        setItems(mockInventoryItems);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const loadItems = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      console.log('Loading inventory items...');
+      const inventoryItems = await InventoryService.getInventoryItems();
+      console.log('Loaded items:', inventoryItems);
+      setItems(inventoryItems);
+    } catch (err: any) {
+      console.error('Error loading inventory items:', err);
+      setError(err.message || 'Failed to load inventory items');
+      // Fallback to mock data if database fails
+      console.log('Falling back to mock data');
+      setItems(mockInventoryItems);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     loadItems();
   }, []);
 
@@ -248,10 +252,16 @@ const InventoryPage: React.FC = () => {
             Manage your rental inventory items and track stock levels
           </p>
         </div>
-        <Button onClick={() => navigate('/inventory/new')}>
-          <Icon name="plus" size={20} className="mr-2" />
-          Add Item
-        </Button>
+        <div className="flex space-x-2">
+          <Button variant="outline" onClick={loadItems} disabled={loading}>
+            <Icon name="refresh-cw" size={20} className="mr-2" />
+            Refresh
+          </Button>
+          <Button onClick={() => navigate('/inventory/new')}>
+            <Icon name="plus" size={20} className="mr-2" />
+            Add Item
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}

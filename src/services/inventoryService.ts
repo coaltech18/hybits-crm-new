@@ -12,6 +12,7 @@ class InventoryService {
    */
   async getInventoryItems(): Promise<InventoryItem[]> {
     try {
+      console.log('Fetching inventory items from database...');
       const { data, error } = await supabase
         .from('inventory_items')
         .select('*')
@@ -22,8 +23,11 @@ class InventoryService {
         throw new Error(error.message);
       }
 
+      console.log('Raw data from database:', data);
+      console.log('Number of items found:', data?.length || 0);
+
       // Map database fields to interface fields
-      return (data || []).map((item: any) => ({
+      const mappedItems = (data || []).map((item: any) => ({
         ...item,
         code: item.item_code,
         unit_price: item.rental_price_per_day || item.unit_cost || 0,
@@ -31,6 +35,9 @@ class InventoryService {
         condition: item.condition || 'good',
         last_movement: item.updated_at
       }));
+
+      console.log('Mapped items:', mappedItems);
+      return mappedItems;
     } catch (error: any) {
       console.error('Error in getInventoryItems:', error);
       throw new Error(error.message || 'Failed to fetch inventory items');
@@ -75,8 +82,11 @@ class InventoryService {
    */
   async createInventoryItem(itemData: InventoryItemFormData): Promise<InventoryItem> {
     try {
+      console.log('Creating inventory item with data:', itemData);
+      
       // Generate item code automatically
       const itemCode = await CodeGeneratorService.generateCode('inventory_item');
+      console.log('Generated item code:', itemCode);
 
       // Only insert fields that exist in the database schema
       const insertData: any = {
@@ -105,6 +115,8 @@ class InventoryService {
         insertData.image_alt_text = itemData.image_alt_text;
       }
 
+      console.log('Insert data prepared:', insertData);
+
       const { data, error } = await supabase
         .from('inventory_items')
         .insert(insertData)
@@ -116,8 +128,10 @@ class InventoryService {
         throw new Error(error.message);
       }
 
+      console.log('Item created successfully:', data);
+
       // Map the response to match our interface
-      return {
+      const mappedItem = {
         ...data,
         code: data.item_code,
         unit_price: data.rental_price_per_day || data.unit_cost || 0,
@@ -125,6 +139,9 @@ class InventoryService {
         condition: data.condition || 'good',
         last_movement: data.updated_at
       };
+
+      console.log('Mapped item for return:', mappedItem);
+      return mappedItem;
     } catch (error: any) {
       console.error('Error in createInventoryItem:', error);
       throw new Error(error.message || 'Failed to create inventory item');

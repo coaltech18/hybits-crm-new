@@ -7,8 +7,6 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useForm } from '@/hooks/useForm';
 import { commonValidationRules } from '@/utils/validation';
-import Button from '@/components/ui/Button';
-import Input from '@/components/ui/Input';
 
 interface LoginFormData {
   email: string;
@@ -49,60 +47,73 @@ const LoginPage: React.FC = () => {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div className="text-center">
-        <h2 className="text-2xl font-bold text-foreground">Welcome back</h2>
-        <p className="text-muted-foreground mt-2">
+        <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome back</h2>
+        <p className="text-gray-600">
           Sign in to your account to continue
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <Input
-          type="email"
-          label="Email"
-          placeholder="Enter your email"
-          value={data.email}
-          onChange={handleChange('email')}
-          error={errors.email}
-          required
-          disabled={isLoading}
-        />
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="space-y-1">
+          <label htmlFor="email" className="block text-sm font-medium text-gray-600">
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            placeholder="Enter your email"
+            value={data.email}
+            onChange={handleChange('email')}
+            disabled={isLoading}
+            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors disabled:bg-gray-50 disabled:cursor-not-allowed"
+          />
+          {errors.email && (
+            <p className="text-sm text-red-600 mt-1">{errors.email}</p>
+          )}
+        </div>
 
-        <Input
-          type="password"
-          label="Password"
-          placeholder="Enter your password"
-          value={data.password}
-          onChange={handleChange('password')}
-          error={errors.password}
-          required
-          disabled={isLoading}
-        />
+        <div className="space-y-1">
+          <label htmlFor="password" className="block text-sm font-medium text-gray-600">
+            Password
+          </label>
+          <input
+            id="password"
+            type="password"
+            placeholder="Enter your password"
+            value={data.password}
+            onChange={handleChange('password')}
+            disabled={isLoading}
+            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors disabled:bg-gray-50 disabled:cursor-not-allowed"
+          />
+          {errors.password && (
+            <p className="text-sm text-red-600 mt-1">{errors.password}</p>
+          )}
+        </div>
 
-        <Button
+        <button
           type="submit"
-          className="w-full"
-          loading={isLoading}
           disabled={isLoading}
+          className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-3 px-4 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? 'Signing in...' : 'Sign in'}
-        </Button>
+        </button>
       </form>
 
       <div className="text-center">
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-gray-500">
           Demo credentials: admin@hybits.com / admin123
         </p>
       </div>
 
-      <div className="border-t border-border pt-6">
+      <div className="border-t border-gray-200 pt-6">
         <div className="text-center">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-gray-600">
             Don't have an account?{' '}
             <button
               type="button"
-              className="text-primary hover:text-primary/80 font-medium"
+              className="text-green-600 hover:underline font-medium"
               onClick={() => {
                 // TODO: Implement registration flow
                 console.log('Navigate to registration');

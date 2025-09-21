@@ -177,7 +177,7 @@ export interface Order {
 
 export type EventType = 'wedding' | 'corporate' | 'birthday' | 'anniversary' | 'other';
 export type LocationType = 'indoor' | 'outdoor' | 'both';
-export type OrderStatus = 'draft' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+export type OrderStatus = 'pending' | 'confirmed' | 'items_dispatched' | 'items_returned' | 'completed' | 'cancelled';
 export type PaymentStatus = 'pending' | 'partial' | 'paid' | 'overdue';
 
 export interface OrderItem {
@@ -273,6 +273,7 @@ export interface InputProps {
   value?: string | number;
   onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
+  onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void;
   className?: string;
   disabled?: boolean;
   required?: boolean;

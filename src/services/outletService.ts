@@ -12,14 +12,21 @@ class OutletService {
    */
   static async getAllOutlets(): Promise<Outlet[]> {
     try {
+      console.log('Fetching outlets from locations table...');
       const { data, error } = await supabase
         .from('locations')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error fetching outlets:', error);
+        throw error;
+      }
 
-      return data.map((location: any) => ({
+      console.log('Raw locations data:', data);
+      console.log('Number of locations found:', data?.length || 0);
+
+      const mappedOutlets = data.map((location: any) => ({
         id: location.id,
         code: location.location_code,
         name: location.name,
@@ -38,6 +45,9 @@ class OutletService {
         created_at: location.created_at,
         updated_at: location.updated_at
       }));
+
+      console.log('Mapped outlets:', mappedOutlets);
+      return mappedOutlets;
     } catch (error) {
       console.error('Error fetching outlets:', error);
       throw error;

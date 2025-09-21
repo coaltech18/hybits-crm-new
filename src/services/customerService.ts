@@ -23,25 +23,29 @@ export class CustomerService {
       }
 
       // Map database fields to our interface
-      return (data || []).map((customer: any) => ({
-        id: customer.id,
-        code: customer.customer_code || customer.code,
-        name: customer.contact_person || customer.name,
-        email: customer.email,
-        phone: customer.phone,
-        company: customer.company_name || customer.company,
-        address: {
-          street: customer.address || customer.street || '',
-          city: customer.city || '',
-          state: customer.state || '',
-          pincode: customer.pincode || '',
-          country: customer.country || 'India'
-        },
-        gstin: customer.gstin || '',
-        status: customer.is_active ? 'active' : 'inactive',
-        created_at: customer.created_at,
-        updated_at: customer.updated_at
-      }));
+      return (data || []).map((customer: any) => {
+        // Parse the address string into components
+        const addressParts = (customer.address || '').split(', ');
+        return {
+          id: customer.id,
+          code: customer.customer_code || customer.code,
+          name: customer.contact_person || customer.name,
+          email: customer.email,
+          phone: customer.phone,
+          company: customer.company_name || customer.company,
+          address: {
+            street: addressParts[0] || '',
+            city: addressParts[1] || '',
+            state: addressParts[2] || '',
+            pincode: addressParts[3] || '',
+            country: addressParts[4] || 'India'
+          },
+          gstin: customer.gstin || '',
+          status: customer.is_active ? 'active' : 'inactive',
+          created_at: customer.created_at,
+          updated_at: customer.updated_at
+        };
+      });
     } catch (error: any) {
       console.error('Error in getCustomers:', error);
       throw new Error(error.message || 'Failed to fetch customers');
@@ -65,6 +69,8 @@ export class CustomerService {
       }
 
       // Map database fields to our interface
+      // Parse the address string into components
+      const addressParts = (data.address || '').split(', ');
       return {
         id: data.id,
         code: data.customer_code || data.code,
@@ -73,11 +79,11 @@ export class CustomerService {
         phone: data.phone,
         company: data.company_name || data.company,
         address: {
-          street: data.address || data.street || '',
-          city: data.city || '',
-          state: data.state || '',
-          pincode: data.pincode || '',
-          country: data.country || 'India'
+          street: addressParts[0] || '',
+          city: addressParts[1] || '',
+          state: addressParts[2] || '',
+          pincode: addressParts[3] || '',
+          country: addressParts[4] || 'India'
         },
         gstin: data.gstin || '',
         status: data.is_active ? 'active' : 'inactive',
@@ -99,17 +105,22 @@ export class CustomerService {
       const customerCode = await CodeGeneratorService.generateCode('customer');
 
       // Map form data to database fields
+      // Combine address fields into a single address string
+      const fullAddress = [
+        customerData.address.street,
+        customerData.address.city,
+        customerData.address.state,
+        customerData.address.pincode,
+        customerData.address.country
+      ].filter(Boolean).join(', ');
+
       const insertData = {
         customer_code: customerCode,
         contact_person: customerData.name,
         email: customerData.email,
         phone: customerData.phone,
         company_name: customerData.company || null,
-        address: customerData.address.street,
-        city: customerData.address.city,
-        state: customerData.address.state,
-        pincode: customerData.address.pincode,
-        country: customerData.address.country,
+        address: fullAddress,
         gstin: customerData.gstin || null,
         customer_type: 'individual', // Default type
         is_active: customerData.status === 'active',
@@ -128,6 +139,8 @@ export class CustomerService {
       }
 
       // Map response to our interface
+      // Parse the address string back into components (for display purposes)
+      const addressParts = (data.address || '').split(', ');
       return {
         id: data.id,
         code: data.customer_code,
@@ -136,11 +149,11 @@ export class CustomerService {
         phone: data.phone,
         company: data.company_name,
         address: {
-          street: data.address || '',
-          city: data.city || '',
-          state: data.state || '',
-          pincode: data.pincode || '',
-          country: data.country || 'India'
+          street: addressParts[0] || '',
+          city: addressParts[1] || '',
+          state: addressParts[2] || '',
+          pincode: addressParts[3] || '',
+          country: addressParts[4] || 'India'
         },
         gstin: data.gstin || '',
         status: data.is_active ? 'active' : 'inactive',
@@ -164,11 +177,17 @@ export class CustomerService {
       if (customerData.email) updateData.email = customerData.email;
       if (customerData.phone) updateData.phone = customerData.phone;
       if (customerData.company !== undefined) updateData.company_name = customerData.company;
-      if (customerData.address?.street) updateData.address = customerData.address.street;
-      if (customerData.address?.city) updateData.city = customerData.address.city;
-      if (customerData.address?.state) updateData.state = customerData.address.state;
-      if (customerData.address?.pincode) updateData.pincode = customerData.address.pincode;
-      if (customerData.address?.country) updateData.country = customerData.address.country;
+      if (customerData.address) {
+        // Combine address fields into a single address string
+        const fullAddress = [
+          customerData.address.street,
+          customerData.address.city,
+          customerData.address.state,
+          customerData.address.pincode,
+          customerData.address.country
+        ].filter(Boolean).join(', ');
+        updateData.address = fullAddress;
+      }
       if (customerData.gstin !== undefined) updateData.gstin = customerData.gstin;
       if (customerData.status) updateData.is_active = customerData.status === 'active';
 
@@ -185,6 +204,8 @@ export class CustomerService {
       }
 
       // Map response to our interface
+      // Parse the address string back into components (for display purposes)
+      const addressParts = (data.address || '').split(', ');
       return {
         id: data.id,
         code: data.customer_code,
@@ -193,11 +214,11 @@ export class CustomerService {
         phone: data.phone,
         company: data.company_name,
         address: {
-          street: data.address || '',
-          city: data.city || '',
-          state: data.state || '',
-          pincode: data.pincode || '',
-          country: data.country || 'India'
+          street: addressParts[0] || '',
+          city: addressParts[1] || '',
+          state: addressParts[2] || '',
+          pincode: addressParts[3] || '',
+          country: addressParts[4] || 'India'
         },
         gstin: data.gstin || '',
         status: data.is_active ? 'active' : 'inactive',

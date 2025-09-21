@@ -92,7 +92,7 @@ export interface OrderFormData {
   guest_count: number;
   location_type: 'indoor' | 'outdoor' | 'both';
   items: OrderItemFormData[];
-  status: 'draft' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'items_dispatched' | 'items_returned' | 'completed' | 'cancelled';
   notes?: string;
 }
 

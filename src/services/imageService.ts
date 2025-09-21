@@ -97,6 +97,7 @@ class ImageService {
     }
   }
 
+
   /**
    * Generate a thumbnail version of an image
    */

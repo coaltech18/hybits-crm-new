@@ -37,6 +37,48 @@ export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOpt
 }
 
 /**
+ * Formats a date in Indian format (DD-MM-YYYY)
+ */
+export function formatIndianDate(date: string | Date): string {
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  
+  const day = dateObj.getDate().toString().padStart(2, '0');
+  const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+  const year = dateObj.getFullYear();
+  
+  return `${day}-${month}-${year}`;
+}
+
+/**
+ * Parses a date from Indian format (DD-MM-YYYY) to Date object
+ */
+export function parseIndianDate(dateString: string): Date | null {
+  const parts = dateString.split('-');
+  if (parts.length !== 3) return null;
+  
+  const dayStr = parts[0];
+  const monthStr = parts[1];
+  const yearStr = parts[2];
+  
+  if (!dayStr || !monthStr || !yearStr) return null;
+  
+  const day = parseInt(dayStr, 10);
+  const month = parseInt(monthStr, 10) - 1; // Month is 0-indexed
+  const year = parseInt(yearStr, 10);
+  
+  if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+  
+  const date = new Date(year, month, day);
+  
+  // Check if the date is valid
+  if (date.getDate() !== day || date.getMonth() !== month || date.getFullYear() !== year) {
+    return null;
+  }
+  
+  return date;
+}
+
+/**
  * Formats a date and time
  */
 export function formatDateTime(date: string | Date): string {

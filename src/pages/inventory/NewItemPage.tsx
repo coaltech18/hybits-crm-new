@@ -113,10 +113,27 @@ const NewItemPage: React.FC = () => {
     { value: 'out_of_service', label: 'Out of Service' },
   ];
 
-  const locationOptions = availableOutlets.map(outlet => ({
-    value: outlet.id,
-    label: outlet.name
-  }));
+  // Default location options if outlets are not loaded
+  const defaultLocationOptions = [
+    { value: 'main-warehouse', label: 'Main Warehouse' },
+    { value: 'storage-room-1', label: 'Storage Room 1' },
+    { value: 'storage-room-2', label: 'Storage Room 2' },
+    { value: 'showroom', label: 'Showroom' },
+    { value: 'delivery-vehicle', label: 'Delivery Vehicle' }
+  ];
+
+  // Debug logging
+  console.log('Available outlets:', availableOutlets);
+  console.log('Available outlets length:', availableOutlets.length);
+
+  const locationOptions = availableOutlets.length > 0 
+    ? availableOutlets.map(outlet => ({
+        value: outlet.id,
+        label: outlet.name
+      }))
+    : defaultLocationOptions;
+
+  console.log('Location options:', locationOptions);
 
   if (!user || !hasPermission(user.role, 'inventory', 'create')) {
     return (

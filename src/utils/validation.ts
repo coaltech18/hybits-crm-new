@@ -142,3 +142,32 @@ export const pincodeValidation = commonValidationRules.pattern(
   /^[1-9][0-9]{5}$/,
   'Please enter a valid 6-digit PIN code'
 );
+
+/**
+ * Indian date format validation (DD-MM-YYYY)
+ */
+export const indianDateValidation = commonValidationRules.custom(
+  (value: string) => {
+    if (!value) return true; // Let required validation handle empty values
+    
+    const parts = value.split('-');
+    if (parts.length !== 3) return false;
+    
+    const day = parseInt(parts[0] || '0', 10);
+    const month = parseInt(parts[1] || '0', 10);
+    const year = parseInt(parts[2] || '0', 10);
+    
+    // Check if all parts are valid numbers
+    if (isNaN(day) || isNaN(month) || isNaN(year)) return false;
+    
+    // Check ranges
+    if (day < 1 || day > 31) return false;
+    if (month < 1 || month > 12) return false;
+    if (year < 1900 || year > 2100) return false;
+    
+    // Check if the date is valid
+    const date = new Date(year, month - 1, day);
+    return date.getDate() === day && date.getMonth() === month - 1 && date.getFullYear() === year;
+  },
+  'Please enter a valid date in DD-MM-YYYY format'
+);

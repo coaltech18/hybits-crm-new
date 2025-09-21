@@ -2,13 +2,16 @@
 // ORDERS PAGE
 // ============================================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Icon from '@/components/AppIcon';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import { Order, OrderStatus, PaymentStatus, EventType } from '@/types';
+import { OrderService } from '@/services/orderService';
+import OrderDetailsModal from '@/components/ui/OrderDetailsModal';
+import EditOrderModal from '@/components/ui/EditOrderModal';
 
 // Mock data
 const mockOrders: Order[] = [
@@ -17,7 +20,7 @@ const mockOrders: Order[] = [
     order_number: 'ORD-001',
     customer_id: '1',
     customer_name: 'John Doe',
-    event_date: '2024-02-15',
+    event_date: '15-02-2024',
     event_type: 'wedding',
     event_duration: 8,
     guest_count: 150,
@@ -38,7 +41,7 @@ const mockOrders: Order[] = [
     order_number: 'ORD-002',
     customer_id: '2',
     customer_name: 'Jane Smith',
-    event_date: '2024-02-20',
+    event_date: '20-02-2024',
     event_type: 'corporate',
     event_duration: 4,
     guest_count: 50,
@@ -46,7 +49,7 @@ const mockOrders: Order[] = [
     items: [
       { id: '3', item_id: '3', item_name: 'Party Tent', quantity: 1, rate: 15000, amount: 15000 }
     ],
-    status: 'in_progress',
+    status: 'items_dispatched',
     payment_status: 'paid',
     total_amount: 15000,
     notes: 'Corporate event',
@@ -58,7 +61,7 @@ const mockOrders: Order[] = [
     order_number: 'ORD-003',
     customer_id: '3',
     customer_name: 'Mike Johnson',
-    event_date: '2024-02-25',
+    event_date: '25-02-2024',
     event_type: 'birthday',
     event_duration: 6,
     guest_count: 75,
@@ -66,7 +69,7 @@ const mockOrders: Order[] = [
     items: [
       { id: '4', item_id: '1', item_name: 'Plastic Chair', quantity: 75, rate: 150, amount: 11250 }
     ],
-    status: 'draft',
+    status: 'pending',
     payment_status: 'pending',
     total_amount: 11250,
     notes: 'Birthday party',
@@ -77,16 +80,72 @@ const mockOrders: Order[] = [
 
 const OrdersPage: React.FC = () => {
   const navigate = useNavigate();
-  const [orders] = useState<Order[]>(mockOrders);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<OrderStatus | ''>('');
   const [selectedPaymentStatus, setSelectedPaymentStatus] = useState<PaymentStatus | ''>('');
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [showOrderDetails, setShowOrderDetails] = useState(false);
+  const [showEditOrder, setShowEditOrder] = useState(false);
+
+  // Load orders from database
+  const loadOrders = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      console.log('Loading orders from database...');
+      const ordersData = await OrderService.getOrders();
+      console.log('Loaded orders:', ordersData);
+      setOrders(ordersData);
+    } catch (err: any) {
+      console.error('Error loading orders:', err);
+      setError(err.message || 'Failed to load orders');
+      console.log('Falling back to mock data');
+      setOrders(mockOrders);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadOrders();
+  }, []);
+
+  const handleViewOrder = (order: Order) => {
+    setSelectedOrder(order);
+    setShowOrderDetails(true);
+  };
+
+  const handleEditOrder = (order: Order) => {
+    setSelectedOrder(order);
+    setShowEditOrder(true);
+  };
+
+  const handleOrderUpdated = (updatedOrder: Order) => {
+    // Update the order in the local state
+    setOrders(prevOrders => 
+      prevOrders.map(order => 
+        order.id === updatedOrder.id ? updatedOrder : order
+      )
+    );
+    setShowEditOrder(false);
+    setSelectedOrder(null);
+  };
+
+  const handleCloseModals = () => {
+    setShowOrderDetails(false);
+    setShowEditOrder(false);
+    setSelectedOrder(null);
+  };
 
   const statusOptions = [
     { value: '', label: 'All Status' },
-    { value: 'draft', label: 'Draft' },
+    { value: 'pending', label: 'Pending' },
     { value: 'confirmed', label: 'Confirmed' },
-    { value: 'in_progress', label: 'In Progress' },
+    { value: 'items_dispatched', label: 'Items Dispatched' },
+    { value: 'items_returned', label: 'Items Returned' },
     { value: 'completed', label: 'Completed' },
     { value: 'cancelled', label: 'Cancelled' }
   ];
@@ -112,8 +171,9 @@ const OrdersPage: React.FC = () => {
     switch (status) {
       case 'completed': return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400';
       case 'confirmed': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400';
-      case 'in_progress': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
-      case 'draft': return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+      case 'items_dispatched': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
+      case 'items_returned': return 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400';
+      case 'pending': return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
       case 'cancelled': return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
       default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
     }
@@ -126,6 +186,185 @@ const OrdersPage: React.FC = () => {
       case 'pending': return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
       case 'overdue': return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
       default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+    }
+  };
+
+  const getStatusActionButton = (order: Order) => {
+    const handleStatusUpdate = async (newStatus: OrderStatus) => {
+      try {
+        await OrderService.updateOrderStatus(order.id, newStatus);
+        // Reload orders to reflect the change
+        loadOrders();
+      } catch (error: any) {
+        console.error('Error updating order status:', error);
+        alert('Error updating order status: ' + (error.message || 'Unknown error'));
+      }
+    };
+
+    const handleCancelOrder = async () => {
+      if (confirm('Are you sure you want to cancel this order? This action cannot be undone.')) {
+        await handleStatusUpdate('cancelled');
+      }
+    };
+
+    switch (order.status) {
+      case 'pending':
+        return (
+          <div className="flex space-x-2">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleStatusUpdate('confirmed')}
+              className="bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+            >
+              <Icon name="check-circle" size={16} className="mr-2" />
+              Confirm
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={handleCancelOrder}
+              className="bg-red-50 border-red-200 text-red-700 hover:bg-red-100"
+            >
+              <Icon name="x" size={16} className="mr-2" />
+              Cancel
+            </Button>
+          </div>
+        );
+      case 'confirmed':
+        return (
+          <div className="flex space-x-2">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleStatusUpdate('items_dispatched')}
+              className="bg-yellow-50 border-yellow-200 text-yellow-700 hover:bg-yellow-100"
+            >
+              <Icon name="truck" size={16} className="mr-2" />
+              Dispatch
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleStatusUpdate('pending')}
+              className="bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+            >
+              <Icon name="arrow-left" size={16} className="mr-2" />
+              Back to Pending
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={handleCancelOrder}
+              className="bg-red-50 border-red-200 text-red-700 hover:bg-red-100"
+            >
+              <Icon name="x" size={16} className="mr-2" />
+              Cancel
+            </Button>
+          </div>
+        );
+      case 'items_dispatched':
+        return (
+          <div className="flex space-x-2">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleStatusUpdate('items_returned')}
+              className="bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100"
+            >
+              <Icon name="package" size={16} className="mr-2" />
+              Return
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleStatusUpdate('confirmed')}
+              className="bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+            >
+              <Icon name="arrow-left" size={16} className="mr-2" />
+              Back to Confirmed
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={handleCancelOrder}
+              className="bg-red-50 border-red-200 text-red-700 hover:bg-red-100"
+            >
+              <Icon name="x" size={16} className="mr-2" />
+              Cancel
+            </Button>
+          </div>
+        );
+      case 'items_returned':
+        return (
+          <div className="flex space-x-2">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleStatusUpdate('completed')}
+              className="bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
+            >
+              <Icon name="check-circle" size={16} className="mr-2" />
+              Complete
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleStatusUpdate('items_dispatched')}
+              className="bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+            >
+              <Icon name="arrow-left" size={16} className="mr-2" />
+              Back to Dispatched
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={handleCancelOrder}
+              className="bg-red-50 border-red-200 text-red-700 hover:bg-red-100"
+            >
+              <Icon name="x" size={16} className="mr-2" />
+              Cancel
+            </Button>
+          </div>
+        );
+      case 'completed':
+        return (
+          <div className="flex space-x-2">
+            <span className="text-sm text-green-600 font-medium">
+              <Icon name="check-circle" size={16} className="mr-1" />
+              Completed
+            </span>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleStatusUpdate('items_returned')}
+              className="bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+            >
+              <Icon name="arrow-left" size={16} className="mr-2" />
+              Mark Incomplete
+            </Button>
+          </div>
+        );
+      case 'cancelled':
+        return (
+          <div className="flex space-x-2">
+            <span className="text-sm text-red-600 font-medium">
+              <Icon name="x-circle" size={16} className="mr-1" />
+              Cancelled
+            </span>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => handleStatusUpdate('pending')}
+              className="bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+            >
+              <Icon name="refresh-cw" size={16} className="mr-2" />
+              Reactivate
+            </Button>
+          </div>
+        );
+      default:
+        return null;
     }
   };
 
@@ -149,11 +388,27 @@ const OrdersPage: React.FC = () => {
             Manage rental orders and track their progress
           </p>
         </div>
-        <Button onClick={() => navigate('/orders/new')}>
-          <Icon name="plus" size={20} className="mr-2" />
-          New Order
-        </Button>
+        <div className="flex space-x-2">
+          <Button variant="outline" onClick={loadOrders} disabled={loading}>
+            <Icon name="refresh-cw" size={20} className="mr-2" />
+            Refresh
+          </Button>
+          <Button onClick={() => navigate('/orders/new')}>
+            <Icon name="plus" size={20} className="mr-2" />
+            New Order
+          </Button>
+        </div>
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
+          <div className="flex items-center">
+            <Icon name="alert-triangle" size={20} className="text-destructive mr-2" />
+            <p className="text-destructive font-medium">{error}</p>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-card border border-border rounded-lg p-6">
@@ -197,7 +452,32 @@ const OrdersPage: React.FC = () => {
 
       {/* Orders List */}
       <div className="space-y-4">
-        {filteredOrders.map((order) => (
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <Icon name="loader-2" size={48} className="animate-spin mx-auto text-muted-foreground mb-4" />
+              <p className="text-muted-foreground">Loading orders...</p>
+            </div>
+          </div>
+        ) : filteredOrders.length === 0 ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <Icon name="package" size={48} className="mx-auto text-muted-foreground mb-4" />
+              <h3 className="text-lg font-medium text-foreground mb-2">No orders found</h3>
+              <p className="text-muted-foreground mb-4">
+                {searchTerm || selectedStatus || selectedPaymentStatus
+                  ? 'No orders match your current filters.'
+                  : 'Get started by creating your first order.'
+                }
+              </p>
+              <Button onClick={() => navigate('/orders/new')}>
+                <Icon name="plus" size={20} className="mr-2" />
+                Create New Order
+              </Button>
+            </div>
+          </div>
+        ) : (
+          filteredOrders.map((order) => (
           <div key={order.id} className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center space-x-4">
@@ -223,7 +503,7 @@ const OrdersPage: React.FC = () => {
               <div>
                 <p className="text-sm text-muted-foreground">Event Date</p>
                 <p className="font-medium text-foreground">
-                  {new Date(order.event_date).toLocaleDateString()}
+                  {order.event_date}
                 </p>
               </div>
               <div>
@@ -246,14 +526,23 @@ const OrdersPage: React.FC = () => {
                 {order.notes && <p className="mt-1">Note: {order.notes}</p>}
               </div>
               <div className="flex space-x-2">
-                <Button variant="outline" size="sm">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => handleViewOrder(order)}
+                >
                   <Icon name="eye" size={16} className="mr-2" />
                   View
                 </Button>
-                <Button variant="outline" size="sm">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => handleEditOrder(order)}
+                >
                   <Icon name="edit" size={16} className="mr-2" />
                   Edit
                 </Button>
+                {getStatusActionButton(order)}
                 <Button variant="outline" size="sm">
                   <Icon name="file-text" size={16} className="mr-2" />
                   Invoice
@@ -261,22 +550,24 @@ const OrdersPage: React.FC = () => {
               </div>
             </div>
           </div>
-        ))}
+          ))
+        )}
       </div>
 
-      {filteredOrders.length === 0 && (
-        <div className="text-center py-12">
-          <Icon name="shopping-cart" size={48} className="mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-lg font-semibold text-foreground mb-2">No orders found</h3>
-          <p className="text-muted-foreground mb-4">
-            Try adjusting your search criteria or create new orders.
-          </p>
-          <Button>
-            <Icon name="plus" size={20} className="mr-2" />
-            Create First Order
-          </Button>
-        </div>
-      )}
+      {/* Order Details Modal */}
+      <OrderDetailsModal
+        isOpen={showOrderDetails}
+        onClose={handleCloseModals}
+        order={selectedOrder}
+      />
+
+      {/* Edit Order Modal */}
+      <EditOrderModal
+        isOpen={showEditOrder}
+        onClose={handleCloseModals}
+        order={selectedOrder}
+        onOrderUpdated={handleOrderUpdated}
+      />
     </div>
   );
 };

@@ -3,7 +3,6 @@
 // ============================================================================
 
 import React from 'react';
-import Icon from '../AppIcon';
 
 interface AuthLayoutProps {
   children: React.ReactNode;
@@ -11,68 +10,45 @@ interface AuthLayoutProps {
 
 const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/10 via-background to-secondary/10">
+    <div className="min-h-screen bg-white">
       <div className="flex min-h-screen">
         {/* Left side - Branding */}
-        <div className="hidden lg:flex lg:w-1/2 bg-primary text-primary-foreground relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary to-primary/80" />
-          <div className="relative z-10 flex flex-col justify-center items-center p-12 text-center">
-            <div className="mb-8">
-              <div className="w-16 h-16 bg-primary-foreground/20 rounded-2xl flex items-center justify-center mb-4 mx-auto">
-                <Icon name="package" size={32} className="text-primary-foreground" />
-              </div>
-              <h1 className="text-4xl font-bold mb-2">Hybits CRM</h1>
-              <p className="text-primary-foreground/80 text-lg">
-                Complete Rental Management Solution
-              </p>
-            </div>
-            
-            <div className="space-y-4 text-left max-w-md">
-              <div className="flex items-center space-x-3">
-                <Icon name="check-circle" size={20} className="text-green-400 flex-shrink-0" />
-                <span>Inventory Management</span>
-              </div>
-              <div className="flex items-center space-x-3">
-                <Icon name="check-circle" size={20} className="text-green-400 flex-shrink-0" />
-                <span>Customer Relationship Management</span>
-              </div>
-              <div className="flex items-center space-x-3">
-                <Icon name="check-circle" size={20} className="text-green-400 flex-shrink-0" />
-                <span>Order & Billing Management</span>
-              </div>
-              <div className="flex items-center space-x-3">
-                <Icon name="check-circle" size={20} className="text-green-400 flex-shrink-0" />
-                <span>Delivery Scheduling</span>
-              </div>
-              <div className="flex items-center space-x-3">
-                <Icon name="check-circle" size={20} className="text-green-400 flex-shrink-0" />
-                <span>Multi-location Support</span>
+        <div className="hidden lg:flex lg:w-1/2 bg-white text-gray-900 relative">
+          <div className="flex flex-col justify-center items-center w-full p-16 text-center">
+            <div className="max-w-sm">
+              {/* Logo */}
+              <div className="mb-8">
+                <div className="mb-8">
+                  <img 
+                    src="/assets/LOGO.png" 
+                    alt="Hybits Logo" 
+                    className="h-20 w-auto mx-auto object-contain"
+                  />
+                </div>
               </div>
             </div>
           </div>
-          
-          {/* Decorative elements */}
-          <div className="absolute top-10 right-10 w-32 h-32 bg-primary-foreground/10 rounded-full" />
-          <div className="absolute bottom-10 left-10 w-24 h-24 bg-primary-foreground/10 rounded-full" />
-          <div className="absolute top-1/2 left-1/4 w-16 h-16 bg-primary-foreground/10 rounded-full" />
         </div>
 
         {/* Right side - Auth form */}
-        <div className="flex-1 flex items-center justify-center p-8">
+        <div className="flex-1 flex items-center justify-center p-8 bg-[#1A8754]">
           <div className="w-full max-w-md">
             <div className="lg:hidden mb-8 text-center">
-              <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center mb-4 mx-auto">
-                <Icon name="package" size={24} className="text-primary-foreground" />
+              <div className="mb-6">
+                <img 
+                  src="/assets/LOGO.png" 
+                  alt="Hybits Logo" 
+                  className="h-16 w-auto mx-auto object-contain filter brightness-0 invert"
+                />
               </div>
-              <h1 className="text-2xl font-bold text-foreground">Hybits CRM</h1>
             </div>
             
-            <div className="bg-card border border-border rounded-lg shadow-lg p-8">
+            <div className="bg-white rounded-2xl shadow-lg p-8 sm:p-10">
               {children}
             </div>
             
-            <div className="mt-6 text-center text-sm text-muted-foreground">
-              <p>© 2024 Hybits. All rights reserved.</p>
+            <div className="mt-6 text-center text-sm text-white/60">
+              <p>© 2024 Hybits Suite. All rights reserved.</p>
             </div>
           </div>
         </div>

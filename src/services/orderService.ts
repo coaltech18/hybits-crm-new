@@ -4,6 +4,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { CodeGeneratorService } from './codeGeneratorService';
+import { Order, OrderStatus } from '@/types';
 
 export interface OrderFormData {
   customer_id: string;
@@ -13,7 +14,7 @@ export interface OrderFormData {
   guest_count: number;
   location_type: 'indoor' | 'outdoor' | 'both';
   items: OrderItemFormData[];
-  status: 'draft' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'items_dispatched' | 'items_returned' | 'completed' | 'cancelled';
   notes?: string;
 }
 
@@ -23,23 +24,6 @@ export interface OrderItemFormData {
   rate: number;
 }
 
-export interface Order {
-  id: string;
-  order_number: string;
-  customer_id: string;
-  customer_name?: string;
-  event_date: string;
-  event_type: string;
-  event_duration: number;
-  guest_count: number;
-  location_type: string;
-  status: string;
-  total_amount: number;
-  notes?: string;
-  created_at: string;
-  updated_at: string;
-  items: OrderItemFormData[];
-}
 
 export class OrderService {
   /**
@@ -54,12 +38,13 @@ export class OrderService {
         order_number: orderNumber,
         customer_id: orderData.customer_id,
         event_date: orderData.event_date,
-        event_type: orderData.event_type,
-        event_duration: orderData.event_duration,
-        guest_count: orderData.guest_count,
-        location_type: orderData.location_type,
-        status: orderData.status,
+        delivery_date: orderData.event_date, // Use event_date as delivery_date for now
+        return_date: orderData.event_date, // Use event_date as return_date for now
+        delivery_address: 'TBD', // TODO: Get from customer or form
         total_amount: orderData.items.reduce((sum, item) => sum + (item.quantity * item.rate), 0),
+        security_deposit: 0,
+        gst_amount: 0,
+        status: orderData.status,
         notes: orderData.notes || null,
         created_by: (await supabase.auth.getUser()).data.user?.id
       };
@@ -96,8 +81,29 @@ export class OrderService {
       }
 
       return {
-        ...data,
-        items: orderData.items
+        id: data.id,
+        order_number: data.order_number,
+        customer_id: data.customer_id,
+        customer_name: '', // Will be populated when fetching with joins
+        event_date: data.event_date,
+        event_type: data.event_type || 'other', // Default value if column doesn't exist
+        event_duration: data.event_duration || 0, // Default value if column doesn't exist
+        guest_count: data.guest_count || 0, // Default value if column doesn't exist
+        location_type: data.location_type || 'indoor', // Default value if column doesn't exist
+        status: data.status,
+        payment_status: data.payment_status || 'pending',
+        total_amount: data.total_amount || 0,
+        notes: data.notes,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        items: orderData.items.map((item, index) => ({
+          id: `temp-${index}`,
+          item_id: item.item_id,
+          item_name: 'Unknown Item', // Will be populated when fetching with joins
+          quantity: item.quantity,
+          rate: item.rate,
+          amount: item.quantity * item.rate
+        }))
       };
     } catch (error: any) {
       console.error('Error in createOrder:', error);
@@ -131,18 +137,26 @@ export class OrderService {
         id: order.id,
         order_number: order.order_number,
         customer_id: order.customer_id,
-        customer_name: order.customers?.contact_person,
+        customer_name: order.customers?.contact_person || '',
         event_date: order.event_date,
-        event_type: order.event_type,
-        event_duration: order.event_duration,
-        guest_count: order.guest_count,
-        location_type: order.location_type,
+        event_type: order.event_type || 'other', // Default value if column doesn't exist
+        event_duration: order.event_duration || 0, // Default value if column doesn't exist
+        guest_count: order.guest_count || 0, // Default value if column doesn't exist
+        location_type: order.location_type || 'indoor', // Default value if column doesn't exist
         status: order.status,
-        total_amount: order.total_amount,
+        payment_status: order.payment_status || 'pending',
+        total_amount: order.total_amount || 0,
         notes: order.notes,
         created_at: order.created_at,
         updated_at: order.updated_at,
-        items: order.rental_order_items || []
+        items: (order.rental_order_items || []).map((item: any) => ({
+          id: item.id,
+          item_id: item.item_id,
+          item_name: item.inventory_items?.name || 'Unknown Item',
+          quantity: item.quantity,
+          rate: item.rate,
+          amount: item.quantity * item.rate
+        }))
       }));
     } catch (error: any) {
       console.error('Error in getOrders:', error);
@@ -177,22 +191,138 @@ export class OrderService {
         id: data.id,
         order_number: data.order_number,
         customer_id: data.customer_id,
-        customer_name: data.customers?.contact_person,
+        customer_name: data.customers?.contact_person || '',
         event_date: data.event_date,
-        event_type: data.event_type,
-        event_duration: data.event_duration,
-        guest_count: data.guest_count,
-        location_type: data.location_type,
+        event_type: data.event_type || 'other', // Default value if column doesn't exist
+        event_duration: data.event_duration || 0, // Default value if column doesn't exist
+        guest_count: data.guest_count || 0, // Default value if column doesn't exist
+        location_type: data.location_type || 'indoor', // Default value if column doesn't exist
         status: data.status,
-        total_amount: data.total_amount,
+        payment_status: data.payment_status || 'pending',
+        total_amount: data.total_amount || 0,
         notes: data.notes,
         created_at: data.created_at,
         updated_at: data.updated_at,
-        items: data.rental_order_items || []
+        items: (data.rental_order_items || []).map((item: any) => ({
+          id: item.id,
+          item_id: item.item_id,
+          item_name: item.inventory_items?.name || 'Unknown Item',
+          quantity: item.quantity,
+          rate: item.rate,
+          amount: item.quantity * item.rate
+        }))
       };
     } catch (error: any) {
       console.error('Error in getOrder:', error);
       throw new Error(error.message || 'Failed to fetch order');
+    }
+  }
+
+  /**
+   * Update order status
+   */
+  static async updateOrderStatus(id: string, status: OrderStatus): Promise<Order> {
+    try {
+      console.log(`Updating order ${id} status to ${status}`);
+      
+      const { data, error } = await supabase
+        .from('rental_orders')
+        .update({ 
+          status,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select(`
+          *,
+          customers:customer_id (
+            contact_person,
+            email,
+            phone
+          ),
+          rental_order_items (
+            *,
+            inventory_items:item_id (
+              name,
+              rental_price_per_day
+            )
+          )
+        `)
+        .single();
+
+      if (error) {
+        console.error('Error updating order status:', error);
+        throw new Error(error.message);
+      }
+
+      return {
+        id: data.id,
+        order_number: data.order_number,
+        customer_id: data.customer_id,
+        customer_name: data.customers?.contact_person || '',
+        event_date: data.event_date,
+        event_type: data.event_type || 'other',
+        event_duration: data.event_duration || 0,
+        guest_count: data.guest_count || 0,
+        location_type: data.location_type || 'indoor',
+        status: data.status,
+        payment_status: data.payment_status || 'pending',
+        total_amount: data.total_amount || 0,
+        notes: data.notes,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        items: (data.rental_order_items || []).map((item: any) => ({
+          id: item.id,
+          item_id: item.item_id,
+          item_name: item.inventory_items?.name || 'Unknown Item',
+          quantity: item.quantity,
+          rate: item.rate,
+          amount: item.quantity * item.rate
+        }))
+      };
+    } catch (error: any) {
+      console.error('Error in updateOrderStatus:', error);
+      throw new Error(error.message || 'Failed to update order status');
+    }
+  }
+
+  /**
+   * Add items to an order
+   */
+  static async addOrderItems(orderId: string, items: OrderItemFormData[]): Promise<void> {
+    try {
+      console.log(`Adding ${items.length} items to order ${orderId}`);
+      
+      const orderItems = items.map(item => ({
+        order_id: orderId,
+        item_id: item.item_id,
+        quantity: item.quantity,
+        rate: item.rate,
+        rental_days: 1, // Default to 1 day, can be calculated based on event duration
+        total_price: item.quantity * item.rate
+      }));
+
+      const { error } = await supabase
+        .from('rental_order_items')
+        .insert(orderItems);
+
+      if (error) {
+        console.error('Error adding order items:', error);
+        throw new Error(error.message);
+      }
+
+      // Update total amount
+      const totalAmount = items.reduce((sum, item) => sum + (item.quantity * item.rate), 0);
+      await supabase
+        .from('rental_orders')
+        .update({ 
+          total_amount: totalAmount,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId);
+
+    } catch (error: any) {
+      console.error('Error in addOrderItems:', error);
+      throw new Error(error.message || 'Failed to add order items');
     }
   }
 }

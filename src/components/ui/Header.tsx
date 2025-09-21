@@ -12,9 +12,10 @@ import { User } from '@/types';
 
 interface HeaderProps {
   user?: User | null;
+  onToggleSidebar?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ user }) => {
+const Header: React.FC<HeaderProps> = ({ user, onToggleSidebar }) => {
   const { logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -32,6 +33,23 @@ const Header: React.FC<HeaderProps> = ({ user }) => {
       <div className="flex items-center justify-between">
         {/* Left side */}
         <div className="flex items-center space-x-4">
+          {/* Desktop sidebar toggle */}
+          <button
+            onClick={onToggleSidebar}
+            className="hidden lg:flex p-2 rounded-lg hover:bg-muted/50 transition-colors"
+            title="Toggle sidebar"
+          >
+            <Icon name="menu" size={20} />
+          </button>
+          
+          {/* Mobile menu toggle */}
+          <button
+            onClick={onToggleSidebar}
+            className="lg:hidden p-2 rounded-lg hover:bg-muted/50 transition-colors"
+          >
+            <Icon name="menu" size={20} />
+          </button>
+          
           <div className="hidden md:block">
             <div className="flex items-center space-x-3">
               <div className="w-8 h-8 bg-gradient-to-br from-primary to-primary/80 rounded-lg flex items-center justify-center">

@@ -5,6 +5,7 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { hasPermission } from '@/utils/permissions';
 
 // Layout Components
 import MainLayout from '@/components/layouts/MainLayout';
@@ -21,6 +22,10 @@ import OrdersPage from '@/pages/orders/OrdersPage';
 import NewOrderPage from '@/pages/orders/NewOrderPage';
 import BillingPage from '@/pages/billing/BillingPage';
 import NewInvoicePage from '@/pages/billing/NewInvoicePage';
+import InvoicesPage from '@/pages/billing/InvoicesPage';
+import SubscriptionsPage from '@/pages/SubscriptionsPage';
+import AccountingPage from '@/pages/AccountingPage';
+import SubscriptionEntryPage from '@/pages/subscriptions/SubscriptionEntryPage';
 import LocationsPage from '@/pages/locations/LocationsPage';
 import OutletsPage from '@/pages/outlets/OutletsPage';
 import AddOutletPage from '@/pages/outlets/AddOutletPage';
@@ -30,7 +35,10 @@ import SettingsPage from '@/pages/settings/SettingsPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 
 // Protected Route Component
-const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean }> = ({ 
+  children, 
+  requireAdmin = false 
+}) => {
   const { user, loading } = useAuth();
 
   if (loading) {
@@ -43,6 +51,10 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (requireAdmin && !hasPermission(user.role, 'settings', 'read')) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;
@@ -101,12 +113,19 @@ const AppRoutes: React.FC = () => {
         <Route path="orders/new" element={<NewOrderPage />} />
         <Route path="billing" element={<BillingPage />} />
         <Route path="billing/invoice/new" element={<NewInvoicePage />} />
+        <Route path="subscriptions" element={<SubscriptionsPage />} />
+        <Route path="subscriptions/new" element={<SubscriptionEntryPage />} />
+        <Route path="accounting" element={<AccountingPage />} />
+        <Route path="accounting/invoices" element={<InvoicesPage />} />
+        <Route path="accounting/invoice/new" element={<NewInvoicePage />} />
         <Route path="locations" element={<LocationsPage />} />
         <Route path="outlets" element={<OutletsPage />} />
         <Route path="outlets/new" element={<AddOutletPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="users/new" element={<AddUserPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        
+        {/* Admin Routes */}
       </Route>
 
       {/* Legacy Routes (for backward compatibility) */}

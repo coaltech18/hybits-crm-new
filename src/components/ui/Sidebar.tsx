@@ -43,9 +43,15 @@ const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }
       roles: ['admin', 'manager']
     },
     {
-      name: 'Billing',
-      href: '/billing',
-      icon: 'file-text',
+      name: 'Subscriptions',
+      href: '/subscriptions',
+      icon: 'credit-card',
+      roles: ['admin', 'manager']
+    },
+    {
+      name: 'Accounting',
+      href: '/accounting',
+      icon: 'dollar-sign',
       roles: ['admin', 'manager']
     },
     {
@@ -103,32 +109,30 @@ const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }
 
           {/* Navigation */}
           <nav className="flex-1 p-4 space-y-1">
-            {filteredNavItems.map((item) => {
-              return (
-                <NavLink
-                  key={item.name}
-                  to={item.href}
-                  className={({ isActive }) => `
-                    flex items-center ${isCollapsed ? 'justify-center px-2' : 'space-x-3 px-4'} py-3 rounded-lg text-sm font-medium transition-all duration-200 group relative
-                    ${isActive 
-                      ? 'bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-sm' 
-                      : 'text-muted-foreground hover:text-foreground hover:bg-gradient-to-r hover:from-muted/50 hover:to-muted/30 hover:shadow-sm'
-                    }
-                  `}
-                  title={isCollapsed ? item.name : undefined}
-                >
-                  <Icon name={item.icon} size={isCollapsed ? 20 : 20} />
-                  {!isCollapsed && <span className="transition-opacity duration-200">{item.name}</span>}
-                  
-                  {/* Tooltip for collapsed state */}
-                  {isCollapsed && (
-                    <div className="absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
-                      {item.name}
-                    </div>
-                  )}
-                </NavLink>
-              );
-            })}
+            {filteredNavItems.map((item) => (
+              <NavLink
+                key={item.name}
+                to={item.href}
+                className={({ isActive }) => `
+                  flex items-center ${isCollapsed ? 'justify-center px-2' : 'space-x-3 px-4'} py-3 rounded-lg text-sm font-medium transition-all duration-200 group relative
+                  ${isActive 
+                    ? 'bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-sm' 
+                    : 'text-muted-foreground hover:text-foreground hover:bg-gradient-to-r hover:from-muted/50 hover:to-muted/30 hover:shadow-sm'
+                  }
+                `}
+                title={isCollapsed ? item.name : undefined}
+              >
+                <Icon name={item.icon} size={isCollapsed ? 20 : 20} />
+                {!isCollapsed && <span className="transition-opacity duration-200">{item.name}</span>}
+                
+                {/* Tooltip for collapsed state */}
+                {isCollapsed && (
+                  <div className="absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
+                    {item.name}
+                  </div>
+                )}
+              </NavLink>
+            ))}
           </nav>
 
           {/* User info */}

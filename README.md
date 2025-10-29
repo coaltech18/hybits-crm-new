@@ -80,7 +80,6 @@ Hybits CRM is a full-featured internal software solution designed to manage all 
 - **ESLint**: Code linting and quality assurance with TypeScript support
 - **Prettier**: Code formatting and consistency
 - **Git**: Version control and collaboration
-- **Rocket.new**: Rapid development and deployment platform
 
 ## 📁 Project Structure
 
@@ -255,8 +254,7 @@ npm run build
 
 ## 🙏 Acknowledgments
 
-- Built with [Rocket.new](https://rocket.new)
 - Powered by React and Vite
 - Styled with Tailwind CSS
 
-Built with ❤️ on Rocket.new
+Built with ❤️ for Hybits

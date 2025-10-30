@@ -128,7 +128,6 @@ const InvoiceRow: React.FC<InvoiceRowProps> = ({
             variant="ghost"
             size="sm"
             onClick={handleView}
-            title="View Invoice"
           >
             <Icon name="eye" size={16} />
           </Button>
@@ -136,7 +135,6 @@ const InvoiceRow: React.FC<InvoiceRowProps> = ({
             variant="ghost"
             size="sm"
             onClick={handleDownload}
-            title="Download Invoice"
           >
             <Icon name="download" size={16} />
           </Button>
@@ -144,7 +142,6 @@ const InvoiceRow: React.FC<InvoiceRowProps> = ({
             <Button
               variant="ghost"
               size="sm"
-              title="Mark as Paid"
             >
               <Icon name="check" size={16} />
             </Button>

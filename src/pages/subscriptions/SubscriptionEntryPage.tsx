@@ -48,21 +48,19 @@ const SubscriptionEntryPage: React.FC = () => {
   const [formData, setFormData] = useState<SubscriptionEntryFormData>({
     vendor_id: '',
     plan_type: '30k',
-    subscription_start: new Date().toISOString().split('T')[0],
+    subscription_start: new Date().toISOString().split('T')[0] || '',
     items: [{
       name: '',
       size: '',
       price_per_piece: 0,
       quantity: 0
-    }],
-    deposit_manual: undefined
+    }]
   });
 
   const [items, setItems] = useState<SubscriptionItem[]>([]);
   const [calculation, setCalculation] = useState<SubscriptionCalculation>({
     total_dish_value: 0,
     deposit_auto: 0,
-    deposit_manual: undefined,
     final_deposit: 0,
     monthly_fee: 30000
   });
@@ -97,14 +95,13 @@ const SubscriptionEntryPage: React.FC = () => {
     setCalculation({
       total_dish_value: totalDishValue,
       deposit_auto: depositAuto,
-      deposit_manual: formData.deposit_manual,
+      ...(formData.deposit_manual !== undefined && { deposit_manual: formData.deposit_manual }),
       final_deposit: finalDeposit,
       monthly_fee: monthlyFees[formData.plan_type]
     });
   }, [items, formData.deposit_manual, formData.plan_type]);
 
   const handleVendorChange = (vendorId: string) => {
-    const vendor = vendors.find(v => v.id === vendorId);
     setFormData(prev => ({
       ...prev,
       vendor_id: vendorId
@@ -136,14 +133,15 @@ const SubscriptionEntryPage: React.FC = () => {
   };
 
   const handleTotalChange = (total: number) => {
-    // This is handled by the useEffect above
+    // Mark parameter as intentionally unused to satisfy noUnusedParameters
+    void total;
   };
 
   const handleManualDepositChange = (value: string) => {
     const depositValue = value === '' ? undefined : Number(value);
     setFormData(prev => ({
       ...prev,
-      deposit_manual: depositValue
+      ...(depositValue !== undefined ? { deposit_manual: depositValue } : {})
     }));
   };
 
@@ -343,8 +341,8 @@ const SubscriptionEntryPage: React.FC = () => {
                   value={formData.deposit_manual || ''}
                   onChange={(e) => handleManualDepositChange(e.target.value)}
                   placeholder="Enter custom deposit amount"
-                  min="0"
-                  step="0.01"
+                  min={0}
+                  step={0.01}
                 />
               </div>
             </div>

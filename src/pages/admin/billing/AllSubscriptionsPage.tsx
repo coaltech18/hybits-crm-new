@@ -410,10 +410,10 @@ const AllSubscriptionsPage: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex space-x-2">
-                          <Button variant="ghost" size="sm" title="View Details">
+                          <Button variant="ghost" size="sm">
                             <Icon name="eye" size={16} />
                           </Button>
-                          <Button variant="ghost" size="sm" title="Send Email">
+                          <Button variant="ghost" size="sm">
                             <Icon name="mail" size={16} />
                           </Button>
                         </div>
@@ -506,14 +506,14 @@ const AllSubscriptionsPage: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex space-x-2">
-                          <Button variant="ghost" size="sm" title="View Invoice">
+                          <Button variant="ghost" size="sm">
                             <Icon name="eye" size={16} />
                           </Button>
-                          <Button variant="ghost" size="sm" title="Download">
+                          <Button variant="ghost" size="sm">
                             <Icon name="download" size={16} />
                           </Button>
                           {invoice.status === 'pending' && (
-                            <Button variant="ghost" size="sm" title="Mark as Paid">
+                            <Button variant="ghost" size="sm">
                               <Icon name="check" size={16} />
                             </Button>
                           )}

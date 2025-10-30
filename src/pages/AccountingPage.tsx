@@ -7,7 +7,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Invoice } from '@/types/billing';
 import { BillingService } from '@/services/billingService';
-import { hasPermission } from '@/utils/permissions';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/AppIcon';
 
@@ -17,8 +16,6 @@ const AccountingPage: React.FC = () => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const isAdmin = user && hasPermission(user.role, 'settings', 'read');
 
   useEffect(() => {
     loadInvoices();

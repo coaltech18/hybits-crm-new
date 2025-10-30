@@ -7,7 +7,6 @@ import {
   Subscription, 
   Invoice, 
   PlanFormData, 
-  SubscriptionFormData, 
   BillingStats,
   Vendor,
   VendorSubscription,
@@ -98,13 +97,18 @@ export class BillingService {
         throw new Error('Plan not found');
       }
       
+      const plan = mockPlans[planIndex];
+      if (!plan) {
+        throw new Error('Plan not found');
+      }
+      
       mockPlans[planIndex] = {
-        ...mockPlans[planIndex],
+        ...plan,
         ...planData,
         updated_at: new Date().toISOString()
       };
       
-      return mockPlans[planIndex];
+      return mockPlans[planIndex]!;
     } catch (error: any) {
       console.error('Error in updatePlan:', error);
       throw new Error(error.message || 'Failed to update plan');
@@ -123,8 +127,13 @@ export class BillingService {
         throw new Error('Plan not found');
       }
       
-      mockPlans[planIndex].active = false;
-      mockPlans[planIndex].updated_at = new Date().toISOString();
+      const plan = mockPlans[planIndex];
+      if (!plan) {
+        throw new Error('Plan not found');
+      }
+      
+      plan.active = false;
+      plan.updated_at = new Date().toISOString();
     } catch (error: any) {
       console.error('Error in deletePlan:', error);
       throw new Error(error.message || 'Failed to delete plan');
@@ -157,8 +166,8 @@ export class BillingService {
         const user = mockUsers.find(u => u.id === subscription.user_id);
         return {
           ...subscription,
-          user_name: user?.name,
-          user_email: user?.email
+          ...(user?.name && { user_name: user.name }),
+          ...(user?.email && { user_email: user.email })
         };
       });
     } catch (error: any) {
@@ -182,8 +191,11 @@ export class BillingService {
       // Cancel existing active subscription
       const existingIndex = mockSubscriptions.findIndex(s => s.user_id === userId && s.status === 'active');
       if (existingIndex !== -1) {
-        mockSubscriptions[existingIndex].status = 'canceled';
-        mockSubscriptions[existingIndex].updated_at = new Date().toISOString();
+        const existingSubscription = mockSubscriptions[existingIndex];
+        if (existingSubscription) {
+          existingSubscription.status = 'canceled';
+          existingSubscription.updated_at = new Date().toISOString();
+        }
       }
       
       const startDate = new Date();
@@ -223,8 +235,13 @@ export class BillingService {
         throw new Error('Subscription not found');
       }
       
-      mockSubscriptions[subscriptionIndex].status = 'canceled';
-      mockSubscriptions[subscriptionIndex].updated_at = new Date().toISOString();
+      const subscription = mockSubscriptions[subscriptionIndex];
+      if (!subscription) {
+        throw new Error('Subscription not found');
+      }
+      
+      subscription.status = 'canceled';
+      subscription.updated_at = new Date().toISOString();
     } catch (error: any) {
       console.error('Error in cancelSubscription:', error);
       throw new Error(error.message || 'Failed to cancel subscription');
@@ -263,8 +280,8 @@ export class BillingService {
         
         return {
           ...invoice,
-          user_name: user?.name,
-          user_email: user?.email
+          ...(user?.name && { user_name: user.name }),
+          ...(user?.email && { user_email: user.email })
         };
       }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     } catch (error: any) {
@@ -376,7 +393,7 @@ export class BillingService {
     return {
       total_dish_value: totalDishValue,
       deposit_auto: depositAuto,
-      deposit_manual: manualDeposit,
+      ...(manualDeposit !== undefined && { deposit_manual: manualDeposit }),
       final_deposit: finalDeposit,
       monthly_fee: monthlyFees[planType]
     };
@@ -417,7 +434,7 @@ export class BillingService {
         items: subscriptionItems,
         total_dish_value: calculation.total_dish_value,
         deposit_auto: calculation.deposit_auto,
-        deposit_manual: calculation.deposit_manual,
+        ...(calculation.deposit_manual !== undefined && { deposit_manual: calculation.deposit_manual }),
         final_deposit: calculation.final_deposit,
         monthly_fee: calculation.monthly_fee,
         status: 'active',

@@ -157,7 +157,7 @@ const PlanFormModal: React.FC<PlanFormModalProps> = ({
                 label="Price (₹)"
                 type="number"
                 required
-                min="1"
+                min={1}
                 value={formData.price}
                 onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })}
                 error={errors.price}
@@ -184,7 +184,7 @@ const PlanFormModal: React.FC<PlanFormModalProps> = ({
               label="Description"
               multiline
               rows={3}
-              value={formData.description}
+              value={formData.description || ''}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               placeholder="Brief description of the plan..."
             />

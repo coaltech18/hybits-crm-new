@@ -69,7 +69,7 @@ const MySubscriptionPage: React.FC = () => {
     }
   };
 
-  const handleRenewSubscription = async (subscriptionId: string) => {
+  const handleRenewSubscription = async () => {
     if (!user || !subscription) return;
 
     try {
@@ -151,7 +151,7 @@ const MySubscriptionPage: React.FC = () => {
             <h2 className="text-xl font-semibold text-foreground mb-4">Current Subscription</h2>
             <SubscriptionCard
               subscription={subscription}
-              plan={plan}
+              {...(plan && { plan })}
               onCancel={handleCancelSubscription}
               onRenew={handleRenewSubscription}
               loading={actionLoading}

@@ -49,6 +49,12 @@ const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }
       roles: ['admin', 'manager']
     },
     {
+      name: 'Vendors',
+      href: '/vendors',
+      icon: 'truck',
+      roles: ['admin', 'manager']
+    },
+    {
       name: 'Accounting',
       href: '/accounting',
       icon: 'dollar-sign',

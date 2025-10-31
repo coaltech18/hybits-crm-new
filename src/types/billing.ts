@@ -71,11 +71,14 @@ export interface BillingStats {
 export interface Vendor {
   id: string;
   name: string;
-  contact_person: string;
-  email: string;
+  contact_person?: string;
   phone: string;
-  address: string;
-  gstin?: string;
+  email?: string;
+  address?: string;
+  gst_number?: string;
+  status: 'active' | 'paused' | 'terminated';
+  notes?: string;
+  created_by?: string;
   created_at: string;
   updated_at: string;
 }
@@ -83,25 +86,27 @@ export interface Vendor {
 export interface SubscriptionItem {
   id: string;
   name: string;
-  size: string;
+  size?: string;
   price_per_piece: number;
   quantity: number;
   total: number;
+  status?: 'issued' | 'returned' | 'damaged' | 'lost';
 }
 
 export interface VendorSubscription {
   id: string;
   vendor_id: string;
-  vendor_name: string;
+  vendor_name?: string;
   plan_type: '30k' | '40k' | '60k' | 'custom';
   subscription_start: string;
-  items: SubscriptionItem[];
+  subscription_end?: string;
+  items?: SubscriptionItem[];
   total_dish_value: number;
-  deposit_auto: number;
-  deposit_manual?: number;
-  final_deposit: number;
+  security_deposit_amount: number;
   monthly_fee: number;
   status: 'active' | 'suspended' | 'cancelled';
+  notes?: string;
+  created_by?: string;
   created_at: string;
   updated_at: string;
 }
@@ -111,13 +116,54 @@ export interface SubscriptionEntryFormData {
   plan_type: '30k' | '40k' | '60k' | 'custom';
   subscription_start: string;
   items: Omit<SubscriptionItem, 'id' | 'total'>[];
-  deposit_manual?: number;
+  security_deposit_amount: number;
+  monthly_fee?: number; // Required when plan_type is 'custom'
 }
 
 export interface SubscriptionCalculation {
   total_dish_value: number;
-  deposit_auto: number;
-  deposit_manual?: number;
-  final_deposit: number;
   monthly_fee: number;
+}
+
+export interface VendorPayment {
+  id: string;
+  subscription_id?: string;
+  amount: number;
+  payment_type?: 'subscription' | 'deposit' | 'refund' | 'damage';
+  payment_mode?: 'cash' | 'upi' | 'bank_transfer' | 'cheque' | 'other';
+  transaction_ref?: string;
+  notes?: string;
+  created_by?: string;
+  created_at: string;
+}
+
+export interface VendorDepositLedgerEntry {
+  id: string;
+  vendor_id: string;
+  subscription_id?: string;
+  entry_type: 'collect' | 'adjust' | 'refund';
+  amount: number;
+  reason?: string;
+  created_by?: string;
+  created_at: string;
+}
+
+export interface VendorFormData {
+  name: string;
+  contact_person?: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  gst_number?: string;
+  status?: 'active' | 'paused' | 'terminated';
+  notes?: string;
+}
+
+export interface VendorPaymentFormData {
+  subscription_id?: string;
+  amount: number;
+  payment_type: 'subscription' | 'deposit' | 'refund' | 'damage';
+  payment_mode: 'cash' | 'upi' | 'bank_transfer' | 'cheque' | 'other';
+  transaction_ref?: string;
+  notes?: string;
 }

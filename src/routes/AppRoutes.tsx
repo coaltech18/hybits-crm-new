@@ -26,6 +26,9 @@ import InvoicesPage from '@/pages/billing/InvoicesPage';
 import SubscriptionsPage from '@/pages/SubscriptionsPage';
 import AccountingPage from '@/pages/AccountingPage';
 import SubscriptionEntryPage from '@/pages/subscriptions/SubscriptionEntryPage';
+import VendorsPage from '@/pages/vendors/VendorsPage';
+import VendorFormPage from '@/pages/vendors/VendorFormPage';
+import VendorProfilePage from '@/pages/vendors/VendorProfilePage';
 import LocationsPage from '@/pages/locations/LocationsPage';
 import OutletsPage from '@/pages/outlets/OutletsPage';
 import AddOutletPage from '@/pages/outlets/AddOutletPage';
@@ -115,6 +118,10 @@ const AppRoutes: React.FC = () => {
         <Route path="billing/invoice/new" element={<NewInvoicePage />} />
         <Route path="subscriptions" element={<SubscriptionsPage />} />
         <Route path="subscriptions/new" element={<SubscriptionEntryPage />} />
+        <Route path="vendors" element={<VendorsPage />} />
+        <Route path="vendors/new" element={<VendorFormPage />} />
+        <Route path="vendors/:id/edit" element={<VendorFormPage />} />
+        <Route path="vendors/:id" element={<VendorProfilePage />} />
         <Route path="accounting" element={<AccountingPage />} />
         <Route path="accounting/invoices" element={<InvoicesPage />} />
         <Route path="accounting/invoice/new" element={<NewInvoicePage />} />

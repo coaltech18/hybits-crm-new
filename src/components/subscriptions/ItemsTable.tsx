@@ -6,6 +6,7 @@ import React from 'react';
 import { SubscriptionItem } from '@/types/billing';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
+import MoneyInput from '@/components/ui/MoneyInput';
 import Icon from '@/components/AppIcon';
 
 interface ItemsTableProps {
@@ -117,21 +118,16 @@ const ItemsTable: React.FC<ItemsTableProps> = ({
                   </td>
                   <td className="px-4 py-3">
                     <Input
-                      value={item.size}
+                      value={item.size ?? ''}
                       onChange={(e) => updateItem(item.id, 'size', e.target.value)}
                       placeholder="e.g., 6.5"
                       className="w-full"
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <Input
-                      type="number"
+                    <MoneyInput
                       value={item.price_per_piece}
-                      onChange={(e) => updateItem(item.id, 'price_per_piece', Number(e.target.value))}
-                      placeholder="0"
-                      min={0}
-                      step={0.01}
-                      className="w-full"
+                      onValueChange={(val) => updateItem(item.id, 'price_per_piece', Number(val || 0))}
                     />
                   </td>
                   <td className="px-4 py-3">

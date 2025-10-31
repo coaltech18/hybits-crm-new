@@ -11,9 +11,14 @@ import {
   Vendor,
   VendorSubscription,
   SubscriptionEntryFormData,
-  SubscriptionCalculation
+  SubscriptionCalculation,
+  VendorFormData,
+  VendorPayment,
+  VendorPaymentFormData,
+  SubscriptionItem
 } from '@/types/billing';
 import { mockPlans, mockSubscriptions, mockInvoices, mockUsers } from './mockBillingData';
+import { supabase } from '@/lib/supabase';
 
 export class BillingService {
   /**
@@ -324,46 +329,14 @@ export class BillingService {
    */
   static async getVendors(): Promise<Vendor[]> {
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Mock vendors data
-      const mockVendors: Vendor[] = [
-        {
-          id: 'vendor1',
-          name: 'Rasoi Ghar',
-          contact_person: 'Rajesh Kumar',
-          email: 'rajesh@rasoighar.com',
-          phone: '+91 98765 43210',
-          address: '123 Main Street, Mumbai',
-          gstin: '27ABCDE1234F1Z5',
-          created_at: '2024-01-01T00:00:00Z',
-          updated_at: '2024-01-01T00:00:00Z'
-        },
-        {
-          id: 'vendor2',
-          name: 'Spice Kitchen',
-          contact_person: 'Priya Sharma',
-          email: 'priya@spicekitchen.com',
-          phone: '+91 87654 32109',
-          address: '456 Park Avenue, Delhi',
-          gstin: '07FGHIJ5678K2L6',
-          created_at: '2024-01-01T00:00:00Z',
-          updated_at: '2024-01-01T00:00:00Z'
-        },
-        {
-          id: 'vendor3',
-          name: 'Royal Caterers',
-          contact_person: 'Amit Singh',
-          email: 'amit@royalcaterers.com',
-          phone: '+91 76543 21098',
-          address: '789 Business District, Bangalore',
-          gstin: '29KLMNO9012P3Q7',
-          created_at: '2024-01-01T00:00:00Z',
-          updated_at: '2024-01-01T00:00:00Z'
-        }
-      ];
-      
-      return mockVendors;
+      const { data, error } = await supabase
+        .from('vendors')
+        .select('*')
+        .order('name', { ascending: true });
+
+      if (error) throw error;
+
+      return (data || []) as Vendor[];
     } catch (error: any) {
       console.error('Error in getVendors:', error);
       throw new Error(error.message || 'Failed to fetch vendors');
@@ -371,16 +344,132 @@ export class BillingService {
   }
 
   /**
+   * Get vendor by ID
+   */
+  static async getVendorById(vendorId: string): Promise<Vendor> {
+    try {
+      const { data, error } = await supabase
+        .from('vendors')
+        .select('*')
+        .eq('id', vendorId)
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error('Vendor not found');
+
+      return data as Vendor;
+    } catch (error: any) {
+      console.error('Error in getVendorById:', error);
+      throw new Error(error.message || 'Failed to fetch vendor');
+    }
+  }
+
+  /**
+   * Create a new vendor
+   */
+  static async createVendor(vendorData: VendorFormData): Promise<Vendor> {
+    try {
+      const { data, error } = await supabase
+        .from('vendors')
+        .insert({
+          ...vendorData,
+          status: vendorData.status || 'active'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as Vendor;
+    } catch (error: any) {
+      console.error('Error in createVendor:', error);
+      throw new Error(error.message || 'Failed to create vendor');
+    }
+  }
+
+  /**
+   * Update vendor
+   */
+  static async updateVendor(vendorId: string, vendorData: Partial<VendorFormData>): Promise<Vendor> {
+    try {
+      const { data, error } = await supabase
+        .from('vendors')
+        .update({
+          ...vendorData,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', vendorId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error('Vendor not found');
+
+      return data as Vendor;
+    } catch (error: any) {
+      console.error('Error in updateVendor:', error);
+      throw new Error(error.message || 'Failed to update vendor');
+    }
+  }
+
+  /**
+   * Delete vendor (soft delete by updating status)
+   */
+  static async deleteVendor(vendorId: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('vendors')
+        .update({ status: 'terminated', updated_at: new Date().toISOString() })
+        .eq('id', vendorId);
+
+      if (error) throw error;
+    } catch (error: any) {
+      console.error('Error in deleteVendor:', error);
+      throw new Error(error.message || 'Failed to delete vendor');
+    }
+  }
+
+  /**
+   * Add a deposit ledger entry for a vendor
+   */
+  static async addVendorDepositEntry(params: {
+    vendorId: string;
+    entryType: 'collect' | 'adjust' | 'refund';
+    amount: number;
+    reason?: string;
+    subscriptionId?: string;
+  }): Promise<void> {
+    const { vendorId, entryType, amount, reason, subscriptionId } = params;
+    const { error } = await supabase.from('vendor_deposit_ledger').insert({
+      vendor_id: vendorId,
+      subscription_id: subscriptionId ?? null,
+      entry_type: entryType,
+      amount,
+      reason: reason ?? null
+    });
+    if (error) throw error;
+  }
+
+  /**
+   * Get deposit ledger for a vendor
+   */
+  static async getVendorDepositLedger(vendorId: string) {
+    const { data, error } = await supabase
+      .from('vendor_deposit_ledger')
+      .select('id, vendor_id, subscription_id, entry_type, amount, reason, created_by, created_at')
+      .eq('vendor_id', vendorId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+
+  /**
    * Calculate subscription values
    */
   static calculateSubscription(
     items: { price_per_piece: number; quantity: number }[],
-    planType: '30k' | '40k' | '60k' | 'custom',
-    manualDeposit?: number
+    planType: '30k' | '40k' | '60k' | 'custom'
   ): SubscriptionCalculation {
     const totalDishValue = items.reduce((sum, item) => sum + (item.price_per_piece * item.quantity), 0);
-    const depositAuto = totalDishValue * 0.5; // 50% of total dish value
-    const finalDeposit = manualDeposit !== undefined ? manualDeposit : depositAuto;
     
     // Set monthly fee based on plan type
     const monthlyFees = {
@@ -392,9 +481,6 @@ export class BillingService {
 
     return {
       total_dish_value: totalDishValue,
-      deposit_auto: depositAuto,
-      ...(manualDeposit !== undefined && { deposit_manual: manualDeposit }),
-      final_deposit: finalDeposit,
       monthly_fee: monthlyFees[planType]
     };
   }
@@ -404,123 +490,246 @@ export class BillingService {
    */
   static async createVendorSubscription(
     formData: SubscriptionEntryFormData,
-    items: { name: string; size: string; price_per_piece: number; quantity: number }[]
+    items: { name: string; size?: string; price_per_piece: number; quantity: number }[]
   ): Promise<VendorSubscription> {
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const vendor = await this.getVendorById(formData.vendor_id);
-      const calculation = this.calculateSubscription(
-        items,
-        formData.plan_type,
-        formData.deposit_manual
-      );
+      // Calculate totals
+      const calculation = this.calculateSubscription(items, formData.plan_type);
 
-      const subscriptionItems = items.map((item, index) => ({
-        id: `item_${Date.now()}_${index}`,
-        name: item.name,
-        size: item.size,
-        price_per_piece: item.price_per_piece,
-        quantity: item.quantity,
-        total: item.price_per_piece * item.quantity
+      // Determine monthly fee - use from formData if custom, otherwise from calculation
+      const monthlyFee = formData.plan_type === 'custom' 
+        ? (formData.monthly_fee || 0)
+        : calculation.monthly_fee;
+
+      // Insert subscription
+      const { data: subInsert, error: subErr } = await supabase
+        .from('vendor_subscriptions')
+        .insert({
+          vendor_id: formData.vendor_id,
+          plan_type: formData.plan_type,
+          subscription_start: formData.subscription_start,
+          monthly_fee: monthlyFee,
+          total_dish_value: calculation.total_dish_value,
+          security_deposit_amount: formData.security_deposit_amount,
+          status: 'active'
+        })
+        .select('id')
+        .single();
+
+      if (subErr) throw subErr;
+      const subscriptionId = subInsert.id as string;
+
+      // Prepare items
+      const itemsRows = items.map((it) => ({
+        subscription_id: subscriptionId,
+        name: it.name,
+        size: it.size,
+        price_per_piece: it.price_per_piece,
+        quantity: it.quantity,
+        total: it.price_per_piece * it.quantity
       }));
 
-      const newSubscription: VendorSubscription = {
-        id: `sub_${Date.now()}`,
+      if (itemsRows.length > 0) {
+        const { error: itemsErr } = await supabase
+          .from('vendor_subscription_items')
+          .insert(itemsRows);
+        if (itemsErr) throw itemsErr;
+      }
+
+      // Record deposit payment if amount > 0
+      if (formData.security_deposit_amount > 0) {
+        const { error: paymentErr } = await supabase
+          .from('vendor_payments')
+          .insert({
+            subscription_id: subscriptionId,
+            amount: formData.security_deposit_amount,
+            payment_type: 'deposit',
+            payment_mode: 'other' // Default, can be updated later
+          });
+        if (paymentErr) console.warn('Failed to record deposit payment:', paymentErr);
+      }
+
+      // Fetch vendor name for return payload
+      const vendor = await this.getVendorById(formData.vendor_id);
+
+      const result: VendorSubscription = {
+        id: subscriptionId,
         vendor_id: formData.vendor_id,
         vendor_name: vendor.name,
         plan_type: formData.plan_type,
         subscription_start: formData.subscription_start,
-        items: subscriptionItems,
+        items: itemsRows.map((r, idx) => ({
+          id: `item_${subscriptionId}_${idx}`,
+          name: r.name,
+          size: r.size ?? '',
+          price_per_piece: r.price_per_piece,
+          quantity: r.quantity,
+          total: r.total,
+          status: 'issued' as const
+        })),
         total_dish_value: calculation.total_dish_value,
-        deposit_auto: calculation.deposit_auto,
-        ...(calculation.deposit_manual !== undefined && { deposit_manual: calculation.deposit_manual }),
-        final_deposit: calculation.final_deposit,
+        security_deposit_amount: formData.security_deposit_amount,
         monthly_fee: calculation.monthly_fee,
         status: 'active',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
 
-      // In a real app, this would save to Supabase
-      console.log('Created vendor subscription:', newSubscription);
-      
-      return newSubscription;
+      return result;
     } catch (error: any) {
       console.error('Error in createVendorSubscription:', error);
       throw new Error(error.message || 'Failed to create vendor subscription');
     }
   }
 
-  /**
-   * Get vendor by ID
-   */
-  static async getVendorById(vendorId: string): Promise<Vendor> {
-    try {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      const vendors = await this.getVendors();
-      const vendor = vendors.find(v => v.id === vendorId);
-      
-      if (!vendor) {
-        throw new Error('Vendor not found');
-      }
-      
-      return vendor;
-    } catch (error: any) {
-      console.error('Error in getVendorById:', error);
-      throw new Error(error.message || 'Failed to fetch vendor');
-    }
-  }
 
   /**
    * Get all vendor subscriptions
    */
   static async getVendorSubscriptions(): Promise<VendorSubscription[]> {
     try {
-      await new Promise(resolve => setTimeout(resolve, 600));
-      
-      // Mock vendor subscriptions data
-      const mockVendorSubscriptions: VendorSubscription[] = [
-        {
-          id: 'vsub1',
-          vendor_id: 'vendor1',
-          vendor_name: 'Rasoi Ghar',
-          plan_type: '30k',
-          subscription_start: '2024-01-01',
-          items: [
-            {
-              id: 'item1',
-              name: 'SS Idly Plate',
-              size: '6.5',
-              price_per_piece: 72,
-              quantity: 100,
-              total: 7200
-            },
-            {
-              id: 'item2',
-              name: 'SS Vade Plate',
-              size: '9',
-              price_per_piece: 67,
-              quantity: 100,
-              total: 6700
-            }
-          ],
-          total_dish_value: 13900,
-          deposit_auto: 6950,
-          deposit_manual: 5000,
-          final_deposit: 5000,
-          monthly_fee: 30000,
-          status: 'active',
-          created_at: '2024-01-01T00:00:00Z',
-          updated_at: '2024-01-01T00:00:00Z'
-        }
-      ];
-      
-      return mockVendorSubscriptions;
+      // Fetch subscriptions
+      const { data: subscriptions, error: subError } = await supabase
+        .from('vendor_subscriptions')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (subError) throw subError;
+
+      // Fetch items and vendor names for each subscription
+      const subscriptionsWithItems = await Promise.all(
+        (subscriptions || []).map(async (sub: any) => {
+          // Fetch items
+          const { data: items } = await supabase
+            .from('vendor_subscription_items')
+            .select('*')
+            .eq('subscription_id', sub.id)
+            .order('created_at', { ascending: true });
+
+          // Fetch vendor name
+          const { data: vendor } = await supabase
+            .from('vendors')
+            .select('name')
+            .eq('id', sub.vendor_id)
+            .single();
+
+          return {
+            ...sub,
+            vendor_name: vendor?.name,
+            items: (items || []) as SubscriptionItem[]
+          } as VendorSubscription;
+        })
+      );
+
+      return subscriptionsWithItems;
     } catch (error: any) {
       console.error('Error in getVendorSubscriptions:', error);
       throw new Error(error.message || 'Failed to fetch vendor subscriptions');
+    }
+  }
+
+  /**
+   * Get vendor subscriptions for a specific vendor
+   */
+  static async getVendorSubscriptionsByVendorId(vendorId: string): Promise<VendorSubscription[]> {
+    try {
+      const { data: subscriptions, error: subError } = await supabase
+        .from('vendor_subscriptions')
+        .select('*')
+        .eq('vendor_id', vendorId)
+        .order('created_at', { ascending: false });
+
+      if (subError) throw subError;
+
+      const subscriptionsWithItems = await Promise.all(
+        (subscriptions || []).map(async (sub: any) => {
+          const { data: items } = await supabase
+            .from('vendor_subscription_items')
+            .select('*')
+            .eq('subscription_id', sub.id);
+
+          return {
+            ...sub,
+            items: (items || []) as SubscriptionItem[]
+          } as VendorSubscription;
+        })
+      );
+
+      return subscriptionsWithItems;
+    } catch (error: any) {
+      console.error('Error in getVendorSubscriptionsByVendorId:', error);
+      throw new Error(error.message || 'Failed to fetch vendor subscriptions');
+    }
+  }
+
+  // ============================================================================
+  // VENDOR PAYMENT METHODS
+  // ============================================================================
+
+  /**
+   * Create a vendor payment
+   */
+  static async createVendorPayment(paymentData: VendorPaymentFormData): Promise<VendorPayment> {
+    try {
+      const { data, error } = await supabase
+        .from('vendor_payments')
+        .insert(paymentData)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as VendorPayment;
+    } catch (error: any) {
+      console.error('Error in createVendorPayment:', error);
+      throw new Error(error.message || 'Failed to create vendor payment');
+    }
+  }
+
+  /**
+   * Get payments for a subscription
+   */
+  static async getSubscriptionPayments(subscriptionId: string): Promise<VendorPayment[]> {
+    try {
+      const { data, error } = await supabase
+        .from('vendor_payments')
+        .select('*')
+        .eq('subscription_id', subscriptionId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return (data || []) as VendorPayment[];
+    } catch (error: any) {
+      console.error('Error in getSubscriptionPayments:', error);
+      throw new Error(error.message || 'Failed to fetch subscription payments');
+    }
+  }
+
+  /**
+   * Get all payments for a vendor (via subscriptions)
+   */
+  static async getVendorPayments(vendorId: string): Promise<VendorPayment[]> {
+    try {
+      // Get all subscription IDs for vendor
+      const { data: subscriptions } = await supabase
+        .from('vendor_subscriptions')
+        .select('id')
+        .eq('vendor_id', vendorId);
+
+      if (!subscriptions || subscriptions.length === 0) return [];
+
+      const subscriptionIds = subscriptions.map(s => s.id);
+
+      const { data, error } = await supabase
+        .from('vendor_payments')
+        .select('*')
+        .in('subscription_id', subscriptionIds)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return (data || []) as VendorPayment[];
+    } catch (error: any) {
+      console.error('Error in getVendorPayments:', error);
+      throw new Error(error.message || 'Failed to fetch vendor payments');
     }
   }
 }

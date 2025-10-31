@@ -179,7 +179,7 @@ const SubscriptionsPage: React.FC = () => {
                     Total Value
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Deposit
+                    Security Deposit
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     Monthly Fee
@@ -211,20 +211,13 @@ const SubscriptionsPage: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
-                      {subscription.items.length} items
+                      {(subscription.items?.length || 0)} items
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-foreground">
                       ₹{subscription.total_dish_value.toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
-                      <div>
-                        <div className="font-medium">₹{subscription.final_deposit.toLocaleString()}</div>
-                        {subscription.deposit_manual && subscription.deposit_manual !== subscription.deposit_auto && (
-                          <div className="text-xs text-muted-foreground">
-                            (Manual: ₹{subscription.deposit_manual.toLocaleString()})
-                          </div>
-                        )}
-                      </div>
+                      <div className="font-medium">₹{subscription.security_deposit_amount.toLocaleString()}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-foreground">
                       ₹{subscription.monthly_fee.toLocaleString()}

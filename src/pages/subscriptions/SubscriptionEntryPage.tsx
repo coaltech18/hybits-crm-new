@@ -3,50 +3,31 @@
 // ============================================================================
 
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   Vendor, 
   SubscriptionItem, 
   SubscriptionEntryFormData, 
   SubscriptionCalculation 
 } from '@/types/billing';
+import { BillingService } from '@/services/billingService';
 import ItemsTable from '@/components/subscriptions/ItemsTable';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
+import MoneyInput from '@/components/ui/MoneyInput';
 import Select from '@/components/ui/Select';
 import Icon from '@/components/AppIcon';
 
 const SubscriptionEntryPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const vendorParam = searchParams.get('vendor');
   
-  // Mock vendors data - in real app, this would come from API
-  const [vendors] = useState<Vendor[]>([
-    {
-      id: 'vendor1',
-      name: 'Rasoi Ghar',
-      contact_person: 'Rajesh Kumar',
-      email: 'rajesh@rasoighar.com',
-      phone: '+91 98765 43210',
-      address: '123 Main Street, Mumbai',
-      gstin: '27ABCDE1234F1Z5',
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-01-01T00:00:00Z'
-    },
-    {
-      id: 'vendor2',
-      name: 'Spice Kitchen',
-      contact_person: 'Priya Sharma',
-      email: 'priya@spicekitchen.com',
-      phone: '+91 87654 32109',
-      address: '456 Park Avenue, Delhi',
-      gstin: '07FGHIJ5678K2L6',
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-01-01T00:00:00Z'
-    }
-  ]);
+  // Vendors list (fetched)
+  const [vendors, setVendors] = useState<Vendor[]>([]);
 
   const [formData, setFormData] = useState<SubscriptionEntryFormData>({
-    vendor_id: '',
+    vendor_id: vendorParam || '',
     plan_type: '30k',
     subscription_start: new Date().toISOString().split('T')[0] || '',
     items: [{
@@ -54,14 +35,28 @@ const SubscriptionEntryPage: React.FC = () => {
       size: '',
       price_per_piece: 0,
       quantity: 0
-    }]
+    }],
+    security_deposit_amount: 0
   });
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const data = await BillingService.getVendors();
+        if (isMounted) {
+          setVendors(data);
+        }
+      } catch (e) {
+        // Ignore for now; page has its own error UI
+      }
+    })();
+    return () => { isMounted = false; };
+  }, []);
 
   const [items, setItems] = useState<SubscriptionItem[]>([]);
   const [calculation, setCalculation] = useState<SubscriptionCalculation>({
     total_dish_value: 0,
-    deposit_auto: 0,
-    final_deposit: 0,
     monthly_fee: 30000
   });
 
@@ -78,28 +73,28 @@ const SubscriptionEntryPage: React.FC = () => {
     setItems(initialItems);
   }, []);
 
-  // Calculate totals when items change
+  // Calculate totals when items or plan change
   useEffect(() => {
     const totalDishValue = items.reduce((sum, item) => sum + item.total, 0);
-    const depositAuto = totalDishValue * 0.5; // 50% of total dish value
-    const finalDeposit = formData.deposit_manual !== undefined ? formData.deposit_manual : depositAuto;
-    
-    // Set monthly fee based on plan type
     const monthlyFees = {
       '30k': 30000,
       '40k': 40000,
       '60k': 60000,
-      'custom': 0
-    };
+      'custom': calculation.monthly_fee
+    } as const;
 
-    setCalculation({
+    setCalculation(prev => ({
       total_dish_value: totalDishValue,
-      deposit_auto: depositAuto,
-      ...(formData.deposit_manual !== undefined && { deposit_manual: formData.deposit_manual }),
-      final_deposit: finalDeposit,
-      monthly_fee: monthlyFees[formData.plan_type]
-    });
-  }, [items, formData.deposit_manual, formData.plan_type]);
+      monthly_fee: formData.plan_type === 'custom' ? prev.monthly_fee : monthlyFees[formData.plan_type]
+    }));
+  }, [items, formData.plan_type]);
+
+  // When switching to custom plan, reset monthly fee to 0
+  useEffect(() => {
+    if (formData.plan_type === 'custom') {
+      setCalculation(prev => ({ ...prev, monthly_fee: 0 }));
+    }
+  }, [formData.plan_type]);
 
   const handleVendorChange = (vendorId: string) => {
     setFormData(prev => ({
@@ -121,7 +116,7 @@ const SubscriptionEntryPage: React.FC = () => {
     // Update form data with new items (without id and total)
     const formItems = newItems.map(item => ({
       name: item.name,
-      size: item.size,
+      ...(item.size !== undefined && { size: item.size }),
       price_per_piece: item.price_per_piece,
       quantity: item.quantity
     }));
@@ -137,13 +132,7 @@ const SubscriptionEntryPage: React.FC = () => {
     void total;
   };
 
-  const handleManualDepositChange = (value: string) => {
-    const depositValue = value === '' ? undefined : Number(value);
-    setFormData(prev => ({
-      ...prev,
-      ...(depositValue !== undefined ? { deposit_manual: depositValue } : {})
-    }));
-  };
+  // security deposit change is handled inline via MoneyInput
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -158,19 +147,33 @@ const SubscriptionEntryPage: React.FC = () => {
       return;
     }
 
+    if (formData.security_deposit_amount <= 0) {
+      setError('Please enter a valid security deposit amount');
+      return;
+    }
+
+    if (formData.plan_type === 'custom' && (calculation.monthly_fee <= 0 || !calculation.monthly_fee)) {
+      setError('Please enter a valid monthly fee for custom plan');
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
 
-      // Here you would call your API to save the subscription
-      console.log('Saving subscription:', {
-        ...formData,
-        items: items,
-        calculation
-      });
-
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Save to Supabase
+      await BillingService.createVendorSubscription(
+        {
+          ...formData,
+          ...(formData.plan_type === 'custom' && { monthly_fee: calculation.monthly_fee })
+        },
+        items.map(i => ({
+          name: i.name,
+          ...(i.size !== undefined && { size: i.size }),
+          price_per_piece: i.price_per_piece,
+          quantity: i.quantity
+        }))
+      );
 
       alert('Subscription created successfully!');
       navigate('/subscriptions');
@@ -248,6 +251,11 @@ const SubscriptionEntryPage: React.FC = () => {
                 onChange={handleVendorChange}
                 placeholder="Select a vendor"
               />
+              <div className="mt-2">
+                <Button type="button" variant="ghost" size="sm" onClick={() => navigate('/vendors/new')}>
+                  <Icon name="plus" size={14} className="mr-1" /> Add Vendor
+                </Button>
+              </div>
             </div>
             
             <div>
@@ -271,12 +279,22 @@ const SubscriptionEntryPage: React.FC = () => {
             </div>
             
             <div>
-              <Input
-                label="Monthly Fee"
-                value={`₹${calculation.monthly_fee.toLocaleString()}`}
-                readOnly
-                className="bg-muted"
-              />
+              {formData.plan_type === 'custom' ? (
+                <MoneyInput
+                  label="Monthly Fee"
+                  value={calculation.monthly_fee}
+                  onValueChange={(val) => setCalculation(prev => ({ ...prev, monthly_fee: val || 0 }))}
+                  placeholder="Enter custom amount"
+                  required
+                />
+              ) : (
+                <Input
+                  label="Monthly Fee"
+                  value={`₹${calculation.monthly_fee.toLocaleString()}`}
+                  readOnly
+                  className="bg-muted"
+                />
+              )}
             </div>
           </div>
 
@@ -299,7 +317,7 @@ const SubscriptionEntryPage: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-muted-foreground">GSTIN:</span>
-                  <span className="ml-2 text-foreground">{selectedVendor.gstin || 'N/A'}</span>
+                  <span className="ml-2 text-foreground">{selectedVendor.gst_number || 'N/A'}</span>
                 </div>
               </div>
             </div>
@@ -317,49 +335,24 @@ const SubscriptionEntryPage: React.FC = () => {
 
         {/* Security Deposit Section */}
         <div className="bg-card border border-border rounded-lg p-6">
-          <h2 className="text-xl font-semibold text-foreground mb-6">Security Deposit</h2>
-          
+          <h2 className="text-xl font-semibold text-foreground mb-6">Security Deposit (for damages/losses)</h2>
+
           <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">
-                  Auto-calculated Deposit (50% of total dish value)
+                  Enter deposit amount
                 </label>
-                <Input
-                  value={`₹${calculation.deposit_auto.toLocaleString()}`}
-                  readOnly
-                  className="bg-muted"
+                <MoneyInput
+                  value={formData.security_deposit_amount}
+                  onValueChange={(val) => setFormData(prev => ({ ...prev, security_deposit_amount: val || 0 }))}
+                  placeholder="0"
+                  required
                 />
+                <p className="text-xs text-muted-foreground mt-2">
+                  This is a refundable amount collected once per vendor.
+                </p>
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Manual Override (if negotiated)
-                </label>
-                <Input
-                  type="number"
-                  value={formData.deposit_manual || ''}
-                  onChange={(e) => handleManualDepositChange(e.target.value)}
-                  placeholder="Enter custom deposit amount"
-                  min={0}
-                  step={0.01}
-                />
-              </div>
-            </div>
-
-            <div className="border-t border-border pt-4">
-              <div className="flex items-center justify-between">
-                <span className="text-lg font-semibold text-foreground">Final Deposit Amount:</span>
-                <span className="text-2xl font-bold text-primary">
-                  ₹{calculation.final_deposit.toLocaleString()}
-                </span>
-              </div>
-              
-              {formData.deposit_manual !== undefined && (
-                <div className="mt-2 text-sm text-muted-foreground">
-                  Manual override applied (Auto: ₹{calculation.deposit_auto.toLocaleString()})
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -378,7 +371,7 @@ const SubscriptionEntryPage: React.FC = () => {
             
             <div className="text-center p-4 bg-muted rounded-lg">
               <div className="text-2xl font-bold text-foreground">
-                ₹{calculation.final_deposit.toLocaleString()}
+                ₹{formData.security_deposit_amount.toLocaleString()}
               </div>
               <div className="text-sm text-muted-foreground">Security Deposit</div>
             </div>

@@ -27,7 +27,6 @@ export const ROLE_PERMISSIONS: RolePermissions = {
     { resource: 'billing', actions: ['read', 'create', 'update'] },
     { resource: 'locations', actions: ['read'] },
     { resource: 'outlets', actions: ['read'] },
-    { resource: 'users', actions: ['read'] },
     { resource: 'settings', actions: ['read'] },
     { resource: 'reports', actions: ['read'] },
     { resource: 'analytics', actions: ['read'] },

@@ -70,7 +70,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }
       name: 'Users',
       href: '/users',
       icon: 'user',
-      roles: ['admin', 'manager']
+      roles: ['admin']
     },
     {
       name: 'Settings',

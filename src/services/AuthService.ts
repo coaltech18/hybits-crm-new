@@ -2,8 +2,52 @@
 // AUTH SERVICE - Updated
 // ============================================================================
 
-import { User, RegisterData } from '@/types';
+import { User, RegisterData, CreateUserInput, UpdateUserInput } from '@/types';
 import { supabase } from '@/lib/supabase';
+
+interface UserProfileRow {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  phone?: string | null;
+  outlet_id?: string | null;
+  outlet_name?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login?: string | null;
+}
+
+const mapProfileToUser = (profile: UserProfileRow, fallbackEmail?: string): User => {
+  const user: User = {
+    id: profile.id,
+    email: profile.email || fallbackEmail || '',
+    full_name: profile.full_name,
+    role: profile.role as User['role'],
+    is_active: profile.is_active,
+    created_at: profile.created_at,
+    updated_at: profile.updated_at,
+  };
+
+  if (profile.phone) {
+    user.phone = profile.phone;
+  }
+
+  if (profile.outlet_id) {
+    user.outlet_id = profile.outlet_id;
+  }
+
+  if (profile.outlet_name) {
+    user.outlet_name = profile.outlet_name;
+  }
+
+  if (profile.last_login) {
+    user.last_login = profile.last_login;
+  }
+
+  return user;
+};
 
 export class AuthService {
   /**
@@ -34,18 +78,8 @@ export class AuthService {
         throw new Error('Failed to fetch user profile');
       }
 
-      // Map Supabase user to our User interface
-      const user: User = {
-        id: data.user.id,
-        email: data.user.email || '',
-        full_name: profile.full_name,
-        role: profile.role,
-        phone: profile.phone,
-        is_active: profile.is_active,
-        created_at: profile.created_at,
-        updated_at: profile.updated_at
-      };
-      
+      const user = mapProfileToUser(profile as UserProfileRow, data.user.email || '');
+
       return { user, session: data.session };
     } catch (error) {
       console.error('Error signing in:', error);
@@ -76,36 +110,19 @@ export class AuthService {
         throw new Error('No user data returned from registration');
       }
 
-      // Create user profile in user_profiles table
+      // Fetch user profile created by trigger
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
-        .insert({
-          id: authData.user.id,
-          email: userData.email,
-          full_name: userData.full_name,
-          role: userData.role,
-          phone: userData.phone,
-          is_active: true
-        })
-        .select()
+        .select('*')
+        .eq('id', authData.user.id)
         .single();
 
       if (profileError) {
-        console.error('Error creating user profile:', profileError);
-        throw new Error('Failed to create user profile');
+        console.error('Error fetching created user profile:', profileError);
+        throw new Error('Failed to load user profile after registration');
       }
 
-      // Map to our User interface
-      const user: User = {
-        id: authData.user.id,
-        email: authData.user.email || '',
-        full_name: profile.full_name,
-        role: profile.role,
-        phone: profile.phone,
-        is_active: profile.is_active,
-        created_at: profile.created_at,
-        updated_at: profile.updated_at
-      };
+      const user = mapProfileToUser(profile as UserProfileRow, authData.user.email || '');
       
       return { user, session: authData.session };
     } catch (error) {
@@ -165,16 +182,7 @@ export class AuthService {
         return { user: null, session: null };
       }
 
-      const user: User = {
-        id: data.session.user.id,
-        email: data.session.user.email || '',
-        full_name: profile.full_name,
-        role: profile.role,
-        phone: profile.phone,
-        is_active: profile.is_active,
-        created_at: profile.created_at,
-        updated_at: profile.updated_at
-      };
+      const user = mapProfileToUser(profile as UserProfileRow, data.session.user.email || '');
 
       return { user, session: data.session };
     } catch (error) {
@@ -227,16 +235,7 @@ export class AuthService {
 
       if (error) throw error;
 
-      return data.map((profile: any) => ({
-        id: profile.id,
-        email: profile.email,
-        full_name: profile.full_name,
-        role: profile.role,
-        phone: profile.phone,
-        is_active: profile.is_active,
-        created_at: profile.created_at,
-        updated_at: profile.updated_at
-      }));
+      return (data as UserProfileRow[]).map((profile) => mapProfileToUser(profile));
     } catch (error) {
       console.error('Error fetching users:', error);
       throw error;
@@ -262,6 +261,8 @@ export class AuthService {
           role: updates.role,
           phone: updates.phone,
           is_active: updates.is_active,
+          outlet_id: updates.outlet_id,
+          outlet_name: updates.outlet_name,
           updated_at: new Date().toISOString()
         })
         .eq('id', userId)
@@ -270,16 +271,7 @@ export class AuthService {
 
       if (error) throw error;
 
-      return {
-        id: data.id,
-        email: data.email,
-        full_name: data.full_name,
-        role: data.role,
-        phone: data.phone,
-        is_active: data.is_active,
-        created_at: data.created_at,
-        updated_at: data.updated_at
-      };
+      return mapProfileToUser(data as UserProfileRow);
     } catch (error) {
       console.error('Error updating user profile:', error);
       throw error;
@@ -287,17 +279,82 @@ export class AuthService {
   }
 
   /**
+   * Admin create user
+   */
+  static async createUser(payload: CreateUserInput): Promise<User> {
+    try {
+      const { data, error } = await supabase.functions.invoke('manage-users', {
+        body: {
+          action: 'createUser',
+          payload
+        }
+      });
+
+      if (error || data?.success === false) {
+        throw new Error(data?.error || error?.message || 'Failed to create user');
+      }
+
+      return data.user as User;
+    } catch (error) {
+      console.error('Error creating user:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Admin update user
+   */
+  static async adminUpdateUser(updates: UpdateUserInput): Promise<User> {
+    try {
+      const { data, error } = await supabase.functions.invoke('manage-users', {
+        body: {
+          action: 'updateUser',
+          payload: {
+            user_id: updates.user_id,
+            updates: {
+              full_name: updates.full_name,
+              role: updates.role,
+              phone: updates.phone,
+              outlet_id: updates.outlet_id,
+              is_active: updates.is_active
+            }
+          }
+        }
+      });
+
+      if (error || data?.success === false) {
+        throw new Error(data?.error || error?.message || 'Failed to update user');
+      }
+
+      return data.user as User;
+    } catch (error) {
+      console.error('Error updating user:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Toggle user active status
+   */
+  static async toggleUserStatus(userId: string, isActive: boolean): Promise<User> {
+    return this.adminUpdateUser({ user_id: userId, is_active: isActive });
+  }
+
+  /**
    * Delete user
    */
   static async deleteUser(userId: string): Promise<void> {
     try {
-      // Delete from user_profiles first (this will cascade to auth.users)
-      const { error } = await supabase
-        .from('user_profiles')
-        .delete()
-        .eq('id', userId);
+      const { data, error } = await supabase.functions.invoke('manage-users', {
+        body: {
+          action: 'deleteUser',
+          payload: { user_id: userId }
+        }
+      });
 
-      if (error) throw error;
+      if (error || data?.success === false) {
+        throw new Error(data?.error || error?.message || 'Failed to delete user');
+      }
     } catch (error) {
       console.error('Error deleting user:', error);
       throw error;

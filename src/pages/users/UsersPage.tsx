@@ -2,49 +2,27 @@
 // USERS PAGE
 // ============================================================================
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Icon from '@/components/AppIcon';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import { User, UserRole } from '@/types';
-
-// Mock data
-const mockUsers: User[] = [
-  {
-    id: '1',
-    email: 'admin@hybits.in',
-    full_name: 'Rajesh Kumar',
-    role: 'admin',
-    phone: '+91 98765 43210',
-    is_active: true,
-    // Admin has no outlet_id - can access all outlets
-    created_at: '2024-01-01',
-    updated_at: '2024-01-15',
-    last_login: '2024-01-15T10:30:00Z'
-  },
-  {
-    id: '2',
-    email: 'manager@hybits.in',
-    full_name: 'Priya Sharma',
-    role: 'manager',
-    phone: '+91 87654 32109',
-    is_active: true,
-    outlet_id: '1',
-    outlet_name: 'Hybits Central Mall',
-    created_at: '2024-01-02',
-    updated_at: '2024-01-14',
-    last_login: '2024-01-14T09:15:00Z'
-  }
-];
+import { AuthService } from '@/services/AuthService';
+import { useAuth } from '@/contexts/AuthContext';
+import { hasPermission } from '@/utils/permissions';
 
 const UsersPage: React.FC = () => {
   const navigate = useNavigate();
-  const [users] = useState<User[]>(mockUsers);
+  const { user: currentUser } = useAuth();
+  const [users, setUsers] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRole, setSelectedRole] = useState<UserRole | ''>('');
   const [selectedStatus, setSelectedStatus] = useState<'active' | 'inactive' | ''>('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const roleOptions = [
     { value: '', label: 'All Roles' },
@@ -58,9 +36,29 @@ const UsersPage: React.FC = () => {
     { value: 'inactive', label: 'Inactive' }
   ];
 
-  const filteredUsers = users.filter(user => {
-    const matchesSearch = user.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         user.email.toLowerCase().includes(searchTerm.toLowerCase());
+  const fetchUsers = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const fetchedUsers = await AuthService.getAllUsers();
+      setUsers(fetchedUsers);
+    } catch (err) {
+      console.error('Failed to load users', err);
+      setError(err instanceof Error ? err.message : 'Failed to load users');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  const filteredUsers = useMemo(() => {
+    return users.filter(user => {
+      const matchesSearch =
+        (user.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
+        (user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false);
     const matchesRole = !selectedRole || user.role === selectedRole;
     const matchesStatus = !selectedStatus || 
       (selectedStatus === 'active' && user.is_active) ||
@@ -68,6 +66,7 @@ const UsersPage: React.FC = () => {
     
     return matchesSearch && matchesRole && matchesStatus;
   });
+  }, [users, searchTerm, selectedRole, selectedStatus]);
 
   const getRoleColor = (role: UserRole) => {
     switch (role) {
@@ -76,6 +75,55 @@ const UsersPage: React.FC = () => {
       default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
     }
   };
+
+  const handleDeleteUser = async (userId: string) => {
+    if (!window.confirm('Delete this user? This cannot be undone.')) return;
+    try {
+      setActionLoading(userId);
+      await AuthService.deleteUser(userId);
+      setUsers(prev => prev.filter(u => u.id !== userId));
+    } catch (err) {
+      console.error('Failed to delete user', err);
+      setError(err instanceof Error ? err.message : 'Failed to delete user');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleToggleStatus = async (targetUser: User) => {
+    try {
+      setActionLoading(targetUser.id);
+      const updated = await AuthService.toggleUserStatus(targetUser.id, !targetUser.is_active);
+      setUsers(prev => prev.map(u => (u.id === updated.id ? updated : u)));
+    } catch (err) {
+      console.error('Failed to update user status', err);
+      setError(err instanceof Error ? err.message : 'Failed to update user status');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleResetPassword = async (targetUser: User) => {
+    try {
+      await AuthService.resetPassword(targetUser.email);
+      alert(`Password reset email sent to ${targetUser.email}`);
+    } catch (err) {
+      console.error('Failed to send reset email', err);
+      setError(err instanceof Error ? err.message : 'Failed to send password reset email');
+    }
+  };
+
+  if (!currentUser || !hasPermission(currentUser.role, 'users', 'read')) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <Icon name="alert-triangle" size={48} className="mx-auto text-muted-foreground mb-4" />
+          <h3 className="text-lg font-medium text-foreground mb-2">Access Denied</h3>
+          <p className="text-muted-foreground">You do not have permission to view users.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -133,6 +181,12 @@ const UsersPage: React.FC = () => {
         </div>
       </div>
 
+      {error && (
+        <div className="bg-destructive/10 text-destructive border border-destructive/20 px-4 py-3 rounded-md">
+          {error}
+        </div>
+      )}
+
       {/* Users List */}
       <div className="bg-card border border-border rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
@@ -149,6 +203,9 @@ const UsersPage: React.FC = () => {
                   Contact
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Outlet
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -160,7 +217,26 @@ const UsersPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filteredUsers.map((user) => (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center space-y-3">
+                      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
+                      <span>Loading users...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center space-y-3">
+                      <Icon name="user" size={32} className="text-muted-foreground" />
+                      <span>No users found. Try adjusting filters.</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredUsers.map((user) => (
                 <tr key={user.id} className="hover:bg-muted/50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
@@ -190,6 +266,11 @@ const UsersPage: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm text-foreground">
+                      {user.outlet_name || (user.role === 'admin' ? 'All Outlets' : 'Not assigned')}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                       user.is_active 
                         ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
@@ -208,29 +289,53 @@ const UsersPage: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <div className="flex space-x-2">
-                      <Button variant="ghost" size="sm">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => navigate(`/users/new?user=${user.id}`)}
+                        disabled={!!actionLoading}
+                      >
                         <Icon name="edit" size={16} />
                       </Button>
-                      <Button variant="ghost" size="sm">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleResetPassword(user)}
+                        disabled={!!actionLoading}
+                      >
                         <Icon name="key" size={16} />
                       </Button>
-                      <Button variant="ghost" size="sm">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleToggleStatus(user)}
+                        disabled={actionLoading === user.id}
+                      >
+                        <Icon name={user.is_active ? 'user-minus' : 'user-plus'} size={16} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => handleDeleteUser(user.id)}
+                        disabled={actionLoading === user.id}
+                      >
                         <Icon name="trash" size={16} />
                       </Button>
                     </div>
                   </td>
                 </tr>
-              ))}
+              )))}
             </tbody>
           </table>
         </div>
       </div>
 
-      {filteredUsers.length === 0 && (
-        <div className="text-center py-12">
-          <Icon name="user" size={48} className="mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-lg font-semibold text-foreground mb-2">No users found</h3>
-          <p className="text-muted-foreground mb-4">
+      {!isLoading && filteredUsers.length === 0 && (
+        <div className="text-center py-12 space-y-3">
+          <Icon name="user" size={48} className="mx-auto text-muted-foreground" />
+          <h3 className="text-lg font-semibold text-foreground">No users found</h3>
+          <p className="text-muted-foreground">
             Try adjusting your search criteria or add new users.
           </p>
           <Button onClick={() => navigate('/users/new')}>

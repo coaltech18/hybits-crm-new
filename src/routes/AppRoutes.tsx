@@ -36,6 +36,7 @@ import UsersPage from '@/pages/users/UsersPage';
 import AddUserPage from '@/pages/users/AddUserPage';
 import SettingsPage from '@/pages/settings/SettingsPage';
 import NotFoundPage from '@/pages/NotFoundPage';
+import GSTReportPage from '@/pages/reports/GSTReportPage';
 
 // Protected Route Component
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean }> = ({ 
@@ -131,6 +132,7 @@ const AppRoutes: React.FC = () => {
         <Route path="users" element={<UsersPage />} />
         <Route path="users/new" element={<AddUserPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="reports/gst" element={<GSTReportPage />} />
         
         {/* Admin Routes */}
       </Route>

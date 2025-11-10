@@ -12,6 +12,9 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Icon from '@/components/AppIcon';
+import PhoneInput from '@/components/ui/PhoneInput';
+import { AuthService } from '@/services/AuthService';
+import { CreateUserInput, UserRole } from '@/types';
 
 interface UserFormData {
   email: string;
@@ -29,7 +32,7 @@ const AddUserPage: React.FC = () => {
   const { user, availableOutlets } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<UserFormData>({
+  const { data, errors, handleChange, handleSubmit, setError, setData, clearError } = useForm<UserFormData>({
     initialData: {
       email: '',
       password: '',
@@ -61,7 +64,7 @@ const AddUserPage: React.FC = () => {
       ],
       phone: [
         commonValidationRules.required('Phone number is required'),
-        commonValidationRules.pattern(/^[0-9+\-\s()]+$/, 'Please enter a valid phone number'),
+        commonValidationRules.pattern(/^\+91\d{10}$/, 'Please enter a valid 10 digit phone number'),
       ],
     },
     onSubmit: async (formData) => {
@@ -73,13 +76,27 @@ const AddUserPage: React.FC = () => {
           setError('confirm_password', 'Passwords do not match');
           return;
         }
-        
-        // TODO: Implement user creation API call
-        console.log('Creating user:', formData);
-        
-        // Simulate API call
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
+
+        if (formData.role === 'manager' && !formData.outlet_id) {
+          setError('outlet_id', 'Outlet is required for managers');
+          return;
+        }
+
+        const payload: CreateUserInput = {
+          email: formData.email,
+          password: formData.password,
+          full_name: formData.full_name,
+          role: formData.role as UserRole,
+          phone: formData.phone,
+          is_active: formData.is_active,
+        };
+
+        if (formData.role === 'manager' && formData.outlet_id) {
+          payload.outlet_id = formData.outlet_id;
+        }
+
+        await AuthService.createUser(payload);
+
         // Redirect to users page
         navigate('/users');
       } catch (error: any) {
@@ -170,20 +187,24 @@ const AddUserPage: React.FC = () => {
                 required
                 disabled={isSubmitting}
               />
-              <Input
-                type="tel"
+              <PhoneInput
                 label="Phone Number"
-                placeholder="Enter phone number"
                 value={data.phone}
-                onChange={handleChange('phone')}
-                error={errors.phone}
+                onChange={(val) => {
+                  setData({ phone: val });
+                  clearError('phone');
+                }}
                 required
                 disabled={isSubmitting}
+                placeholder="9876543210"
               />
               <Select
                 options={roleOptions}
                 value={data.role}
-                onChange={(value) => setData({ role: value })}
+                onChange={(value) => {
+                  setData({ role: value });
+                  clearError('role');
+                }}
                 label="Role"
                 error={errors.role}
                 required
@@ -226,16 +247,19 @@ const AddUserPage: React.FC = () => {
               <Select
                 options={outletOptionsWithEmpty}
                 value={data.outlet_id}
-                onChange={(value) => setData({ outlet_id: value })}
+                onChange={(value) => {
+                  setData({ outlet_id: value });
+                  clearError('outlet_id');
+                }}
                 label="Outlet Assignment"
-                error={data.role === 'manager' && !data.outlet_id ? 'Outlet is required for managers' : undefined}
+                error={errors.outlet_id}
                 required={data.role === 'manager'}
                 disabled={isSubmitting}
               />
               <Select
                 options={statusOptions}
                 value={data.is_active.toString()}
-                onChange={(value) => handleChange('is_active')({ target: { value: value === 'true' } } as any)}
+                onChange={(value) => setData({ is_active: value === 'true' })}
                 label="Status"
                 disabled={isSubmitting}
               />

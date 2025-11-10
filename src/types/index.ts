@@ -21,7 +21,7 @@ export interface User {
   last_login?: string;
 }
 
-export type UserRole = 'admin' | 'manager';
+export type UserRole = 'admin' | 'manager' | 'accountant' | 'viewer';
 
 export interface Permission {
   resource: string;
@@ -50,6 +50,26 @@ export interface RegisterData {
   full_name: string;
   role: UserRole;
   phone?: string;
+}
+
+export interface CreateUserInput {
+  email: string;
+  password?: string;
+  full_name: string;
+  role: UserRole;
+  phone?: string;
+  outlet_id?: string;
+  is_active?: boolean;
+  send_invite?: boolean;
+}
+
+export interface UpdateUserInput {
+  user_id: string;
+  full_name?: string;
+  role?: UserRole;
+  phone?: string;
+  outlet_id?: string | null;
+  is_active?: boolean;
 }
 
 // ============================================================================

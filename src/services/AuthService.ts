@@ -71,11 +71,28 @@ export class AuthService {
         .from('user_profiles')
         .select('*')
         .eq('id', data.user.id)
-        .single();
+        .maybeSingle();
 
       if (profileError) {
-        console.error('Error fetching user profile:', profileError);
-        throw new Error('Failed to fetch user profile');
+        console.error('DB error fetching user_profiles:', profileError);
+        throw new Error('Database error');
+      }
+
+      if (!profile) {
+        console.warn('user_profiles row not found for filter id:', data.user.id);
+        // Return controlled response: user exists but profile is missing
+        return { 
+          user: {
+            id: data.user.id,
+            email: data.user.email || '',
+            full_name: data.user.user_metadata?.full_name || '',
+            role: (data.user.user_metadata?.role || 'operator') as User['role'],
+            is_active: true,
+            created_at: data.user.created_at || new Date().toISOString(),
+            updated_at: data.user.updated_at || new Date().toISOString()
+          },
+          session: data.session
+        };
       }
 
       const user = mapProfileToUser(profile as UserProfileRow, data.user.email || '');
@@ -115,11 +132,28 @@ export class AuthService {
         .from('user_profiles')
         .select('*')
         .eq('id', authData.user.id)
-        .single();
+        .maybeSingle();
 
       if (profileError) {
-        console.error('Error fetching created user profile:', profileError);
-        throw new Error('Failed to load user profile after registration');
+        console.error('DB error fetching user_profiles:', profileError);
+        throw new Error('Database error');
+      }
+
+      if (!profile) {
+        console.warn('user_profiles row not found for filter id:', authData.user.id);
+        // Profile may not have been created by trigger yet - return user with metadata
+        return {
+          user: {
+            id: authData.user.id,
+            email: authData.user.email || '',
+            full_name: userData.full_name,
+            role: userData.role,
+            is_active: true,
+            created_at: authData.user.created_at || new Date().toISOString(),
+            updated_at: authData.user.updated_at || new Date().toISOString()
+          },
+          session: authData.session
+        };
       }
 
       const user = mapProfileToUser(profile as UserProfileRow, authData.user.email || '');
@@ -175,10 +209,16 @@ export class AuthService {
         .from('user_profiles')
         .select('*')
         .eq('id', data.session.user.id)
-        .single();
+        .maybeSingle();
 
       if (profileError) {
-        console.error('Error fetching user profile:', profileError);
+        console.error('DB error fetching user_profiles:', profileError);
+        return { user: null, session: null };
+      }
+
+      if (!profile) {
+        console.warn('user_profiles row not found for filter id:', data.session.user.id);
+        // Return null user when profile is missing
         return { user: null, session: null };
       }
 
@@ -267,9 +307,17 @@ export class AuthService {
         })
         .eq('id', userId)
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error('DB error fetching user_profiles:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('user_profiles row not found for filter id:', userId);
+        throw new Error('User profile not found');
+      }
 
       return mapProfileToUser(data as UserProfileRow);
     } catch (error) {

@@ -61,11 +61,16 @@ export class CustomerService {
         .from('customers')
         .select('*')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error fetching customer:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching customers:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('customers row not found for filter id:', id);
+        throw new Error('Customer not found');
       }
 
       // Map database fields to our interface
@@ -131,11 +136,16 @@ export class CustomerService {
         .from('customers')
         .insert(insertData)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error creating customer:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching customers:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('customers row not found after insert');
+        throw new Error('Failed to create customer');
       }
 
       // Map response to our interface
@@ -196,11 +206,16 @@ export class CustomerService {
         .update(updateData)
         .eq('id', id)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error updating customer:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching customers:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('customers row not found for filter id:', id);
+        throw new Error('Customer not found');
       }
 
       // Map response to our interface

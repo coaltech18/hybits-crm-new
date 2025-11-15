@@ -53,11 +53,16 @@ export class OrderService {
         .from('rental_orders')
         .insert(insertData)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error creating order:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching rental_orders:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('rental_orders row not found after insert');
+        throw new Error('Failed to create order');
       }
 
       // Create order items
@@ -180,11 +185,16 @@ export class OrderService {
           )
         `)
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error fetching order:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching rental_orders:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('rental_orders row not found for filter id:', id);
+        throw new Error('Order not found');
       }
 
       return {
@@ -247,11 +257,16 @@ export class OrderService {
             )
           )
         `)
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error updating order status:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching rental_orders:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('rental_orders row not found for filter id:', id);
+        throw new Error('Order not found');
       }
 
       return {

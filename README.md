@@ -168,9 +168,22 @@ hybits-crm-new/
 3. **Environment Setup:**
    Create a `.env.local` file in the root directory:
    ```env
+   # Client-side public keys (safe to expose in client bundle)
    VITE_SUPABASE_URL=your_supabase_url
    VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+   
+   # Server-only key (NEVER expose in client code or client bundle)
+   # Only use in server-side code, Supabase Edge Functions, or API routes
+   SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
    ```
+   
+   **Important Security Notes:**
+   - `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` — Public (client-safe) keys that can be used in browser code
+   - `SUPABASE_SERVICE_ROLE_KEY` — Server-only, never in client repo or client bundle. Only use in:
+     - Supabase Edge Functions
+     - Server-side API routes
+     - Backend services
+     - Database migrations/scripts
 
 4. **Database Setup:**
    - Run the SQL migrations in the `supabase/migrations/` directory

@@ -66,13 +66,16 @@ class LocationService {
         .from('locations')
         .select('*')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (error) {
-        if (error.code === 'PGRST116') {
-          return null; // Not found
-        }
-        throw error;
+        console.error('DB error fetching locations:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('locations row not found for filter id:', id);
+        return null;
       }
 
       return {
@@ -127,9 +130,17 @@ class LocationService {
         .from('locations')
         .insert(insertData)
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error('DB error fetching locations:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('locations row not found after insert');
+        throw new Error('Failed to create location');
+      }
 
       return {
         id: data.id,
@@ -181,9 +192,17 @@ class LocationService {
         .update(updateData)
         .eq('id', id)
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error('DB error fetching locations:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('locations row not found for filter id:', id);
+        throw new Error('Location not found');
+      }
 
       return {
         id: data.id,

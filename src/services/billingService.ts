@@ -352,10 +352,17 @@ export class BillingService {
         .from('vendors')
         .select('*')
         .eq('id', vendorId)
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
-      if (!data) throw new Error('Vendor not found');
+      if (error) {
+        console.error('DB error fetching vendors:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('vendors row not found for filter id:', vendorId);
+        throw new Error('Vendor not found');
+      }
 
       return data as Vendor;
     } catch (error: any) {
@@ -376,9 +383,18 @@ export class BillingService {
           status: vendorData.status || 'active'
         })
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error('DB error fetching vendors:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('vendors row not found after insert');
+        throw new Error('Failed to create vendor');
+      }
+
       return data as Vendor;
     } catch (error: any) {
       console.error('Error in createVendor:', error);
@@ -399,10 +415,17 @@ export class BillingService {
         })
         .eq('id', vendorId)
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
-      if (!data) throw new Error('Vendor not found');
+      if (error) {
+        console.error('DB error fetching vendors:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('vendors row not found for filter id:', vendorId);
+        throw new Error('Vendor not found');
+      }
 
       return data as Vendor;
     } catch (error: any) {
@@ -514,9 +537,18 @@ export class BillingService {
           status: 'active'
         })
         .select('id')
-        .single();
+        .maybeSingle();
 
-      if (subErr) throw subErr;
+      if (subErr) {
+        console.error('DB error fetching vendor_subscriptions:', subErr);
+        throw new Error('Database error');
+      }
+
+      if (!subInsert || !subInsert.id) {
+        console.warn('vendor_subscriptions row not found after insert');
+        throw new Error('Failed to create vendor subscription');
+      }
+
       const subscriptionId = subInsert.id as string;
 
       // Prepare items
@@ -607,11 +639,15 @@ export class BillingService {
             .order('created_at', { ascending: true });
 
           // Fetch vendor name
-          const { data: vendor } = await supabase
+          const { data: vendor, error: vendorError } = await supabase
             .from('vendors')
             .select('name')
             .eq('id', sub.vendor_id)
-            .single();
+            .maybeSingle();
+
+          if (vendorError) {
+            console.error('DB error fetching vendors:', vendorError);
+          }
 
           return {
             ...sub,
@@ -675,9 +711,18 @@ export class BillingService {
         .from('vendor_payments')
         .insert(paymentData)
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error('DB error fetching vendor_payments:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('vendor_payments row not found after insert');
+        throw new Error('Failed to create vendor payment');
+      }
+
       return data as VendorPayment;
     } catch (error: any) {
       console.error('Error in createVendorPayment:', error);

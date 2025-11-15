@@ -63,13 +63,16 @@ class OutletService {
         .from('locations')
         .select('*')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (error) {
-        if (error.code === 'PGRST116') {
-          return null; // Not found
-        }
-        throw error;
+        console.error('DB error fetching locations:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('locations row not found for filter id:', id);
+        return null;
       }
 
       return {
@@ -124,9 +127,17 @@ class OutletService {
         .from('locations')
         .insert(insertData)
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error('DB error fetching locations:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('locations row not found after insert');
+        throw new Error('Failed to create outlet');
+      }
 
       return {
         id: data.id,
@@ -177,9 +188,17 @@ class OutletService {
         .update(updateData)
         .eq('id', id)
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
+      if (error) {
+        console.error('DB error fetching locations:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('locations row not found for filter id:', id);
+        throw new Error('Outlet not found');
+      }
 
       return {
         id: data.id,

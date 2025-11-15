@@ -53,14 +53,17 @@ class InventoryService {
         .from('inventory_items')
         .select('*')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error fetching inventory item:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching inventory_items:', error);
+        throw new Error('Database error');
       }
 
-      if (!data) return null;
+      if (!data) {
+        console.warn('inventory_items row not found for filter id:', id);
+        return null;
+      }
 
       // Map database fields to interface fields
       return {
@@ -121,11 +124,16 @@ class InventoryService {
         .from('inventory_items')
         .insert(insertData)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error creating inventory item:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching inventory_items:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('inventory_items row not found after insert');
+        throw new Error('Failed to create inventory item');
       }
 
       console.log('Item created successfully:', data);
@@ -161,11 +169,16 @@ class InventoryService {
         })
         .eq('id', id)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error updating inventory item:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching inventory_items:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('inventory_items row not found for filter id:', id);
+        throw new Error('Inventory item not found');
       }
 
       return data;

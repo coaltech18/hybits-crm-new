@@ -71,11 +71,16 @@ export class InvoiceService {
         .from('invoices')
         .insert(insertData)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error creating invoice:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching invoices:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('invoices row not found after insert');
+        throw new Error('Failed to create invoice');
       }
 
       // Create invoice items
@@ -163,11 +168,16 @@ export class InvoiceService {
           invoice_items(*)
         `)
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.error('Error fetching invoice:', error);
-        throw new Error(error.message);
+        console.error('DB error fetching invoices:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        console.warn('invoices row not found for filter id:', id);
+        throw new Error('Invoice not found');
       }
 
       return {

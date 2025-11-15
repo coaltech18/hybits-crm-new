@@ -2,7 +2,7 @@ services:
   - type: web
     name: hybits-crm
     env: static
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --legacy-peer-deps && npm run build
     staticPublishPath: ./build
     envVars:
       - key: VITE_SUPABASE_URL

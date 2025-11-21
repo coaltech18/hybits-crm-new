@@ -5,6 +5,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { hasPermission } from '@/utils/permissions';
 import Icon from '../AppIcon';
 import { User, NavItem } from '@/types';
 
@@ -16,6 +17,10 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }) => {
   const { user: currentUser } = useAuth();
+
+  if (!currentUser?.role) {
+    return null;
+  }
 
   const navigationItems: NavItem[] = [
     {
@@ -58,7 +63,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }
       name: 'Accounting',
       href: '/accounting',
       icon: 'dollar-sign',
-      roles: ['admin', 'manager']
+      roles: ['admin', 'manager', 'accountant']
     },
     {
       name: 'Outlets',
@@ -80,9 +85,43 @@ const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }
     }
   ];
 
-  const filteredNavItems = navigationItems.filter(item => 
-    currentUser?.role && item.roles.includes(currentUser.role)
-  );
+  // Filter navigation items using hasPermission
+  const filteredNavItems = navigationItems.filter(item => {
+    // Map routes to permission resources
+    const resourceMap: Record<string, string> = {
+      '/dashboard': 'dashboard',
+      '/inventory': 'inventory',
+      '/customers': 'customers',
+      '/orders': 'orders',
+      '/subscriptions': 'billing', // subscriptions uses billing permissions
+      '/vendors': 'vendors',
+      '/outlets': 'outlets',
+      '/accounting': 'accounting',
+      '/users': 'users',
+      '/settings': 'settings',
+    };
+    
+    const resource = resourceMap[item.href];
+    
+    // If resource mapping exists, use hasPermission
+    if (resource) {
+      // Special handling for Accounting: show for admin OR if user has accounting read permission
+      if (resource === 'accounting') {
+        return currentUser.role === 'admin' || hasPermission(currentUser.role, 'accounting', 'read');
+      }
+      
+      // Users and Settings: only show if user has read permission (admin only)
+      if (resource === 'users' || resource === 'settings') {
+        return hasPermission(currentUser.role, resource, 'read');
+      }
+      
+      // For other resources, check read permission
+      return hasPermission(currentUser.role, resource, 'read');
+    }
+    
+    // Fallback to role-based check for items not in resourceMap
+    return item.roles.includes(currentUser.role);
+  });
 
   return (
     <>

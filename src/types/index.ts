@@ -21,7 +21,7 @@ export interface User {
   last_login?: string;
 }
 
-export type UserRole = 'admin' | 'manager' | 'accountant' | 'viewer';
+export type UserRole = 'admin' | 'manager' | 'accountant';
 
 export interface Permission {
   resource: string;

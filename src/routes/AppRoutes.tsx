@@ -39,9 +39,14 @@ import NotFoundPage from '@/pages/NotFoundPage';
 import GSTReportPage from '@/pages/reports/GSTReportPage';
 
 // Protected Route Component
-const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean }> = ({ 
+const ProtectedRoute: React.FC<{ 
+  children: React.ReactNode; 
+  requireAdmin?: boolean;
+  allowedRoles?: string[];
+}> = ({ 
   children, 
-  requireAdmin = false 
+  requireAdmin = false,
+  allowedRoles
 }) => {
   const { user, loading } = useAuth();
 
@@ -57,7 +62,13 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
     return <Navigate to="/login" replace />;
   }
 
-  if (requireAdmin && !hasPermission(user.role, 'settings', 'read')) {
+  // Check if route requires admin
+  if (requireAdmin && !hasPermission(user.role, 'users', 'read')) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // Check if route has allowed roles restriction
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -123,15 +134,57 @@ const AppRoutes: React.FC = () => {
         <Route path="vendors/new" element={<VendorFormPage />} />
         <Route path="vendors/:id/edit" element={<VendorFormPage />} />
         <Route path="vendors/:id" element={<VendorProfilePage />} />
-        <Route path="accounting" element={<AccountingPage />} />
-        <Route path="accounting/invoices" element={<InvoicesPage />} />
-        <Route path="accounting/invoice/new" element={<NewInvoicePage />} />
+        <Route 
+          path="accounting" 
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <AccountingPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="accounting/invoices" 
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InvoicesPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="accounting/invoice/new" 
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <NewInvoicePage />
+            </ProtectedRoute>
+          } 
+        />
         <Route path="locations" element={<LocationsPage />} />
         <Route path="outlets" element={<OutletsPage />} />
         <Route path="outlets/new" element={<AddOutletPage />} />
-        <Route path="users" element={<UsersPage />} />
-        <Route path="users/new" element={<AddUserPage />} />
-        <Route path="settings" element={<SettingsPage />} />
+        <Route 
+          path="users" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <UsersPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="users/new" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <AddUserPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="settings" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <SettingsPage />
+            </ProtectedRoute>
+          } 
+        />
         <Route path="reports/gst" element={<GSTReportPage />} />
         
         {/* Admin Routes */}

@@ -31,6 +31,11 @@ export const ROLE_PERMISSIONS: RolePermissions = {
     { resource: 'reports', actions: ['read'] },
     { resource: 'analytics', actions: ['read'] },
   ],
+  accountant: [
+    { resource: 'accounting', actions: ['read', 'create', 'update', 'export'] },
+    { resource: 'vendors', actions: ['read'] },
+    { resource: 'reports', actions: ['read', 'export'] },
+  ],
 };
 
 // Check if user has permission for a specific resource and action
@@ -40,6 +45,7 @@ export function hasPermission(
   action: string
 ): boolean {
   const permissions = ROLE_PERMISSIONS[userRole];
+  // Handle missing roles gracefully
   if (!permissions) return false;
 
   const resourcePermission = permissions.find(p => p.resource === resource);
@@ -57,8 +63,8 @@ export function canAccessOutlet(
   // Admin can access all outlets
   if (userRole === 'admin') return true;
   
-  // Manager can only access their assigned outlet
-  if (userRole === 'manager') {
+  // Manager and accountant can only access their assigned outlet
+  if (userRole === 'manager' || userRole === 'accountant') {
     return userOutletId === targetOutletId;
   }
   

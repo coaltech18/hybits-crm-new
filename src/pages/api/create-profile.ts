@@ -119,7 +119,7 @@ serve(async (req) => {
         is_active: true
       })
       .select()
-      .single();
+      .maybeSingle();
     
     if (error) {
       return new Response(

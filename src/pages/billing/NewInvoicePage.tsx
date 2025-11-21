@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useForm } from '@/hooks/useForm';
 import { commonValidationRules } from '@/utils/validation';
 import { hasPermission } from '@/utils/permissions';
+import { InvoiceService } from '@/services/invoiceService';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
@@ -38,7 +39,7 @@ interface InvoiceFormData {
 
 const NewInvoicePage: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, currentOutlet } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([
     {
@@ -112,14 +113,33 @@ const NewInvoicePage: React.FC = () => {
           return;
         }
         
-        // TODO: Implement invoice creation API call
-        console.log('Creating invoice:', { ...formData, items: validItems });
-        
-        // Simulate API call
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Redirect to billing page
-        navigate('/billing');
+        // Get current outlet ID
+        const currentOutletId = currentOutlet?.id || user?.outlet_id;
+        if (!currentOutletId) {
+          setError('customer_name', 'Outlet not selected');
+          return;
+        }
+
+        // Create invoice payload
+        const payload = {
+          customer_id: '', // TODO: Get from customer selector
+          invoice_date: formData.invoice_date,
+          due_date: formData.due_date,
+          items: validItems.map(item => ({
+            description: item.description,
+            quantity: item.quantity,
+            rate: item.rate,
+            gst_rate: item.gst_rate
+          })),
+          notes: formData.notes
+        };
+
+        try {
+          const res = await InvoiceService.createInvoice({ ...payload, outlet_id: currentOutletId } as any);
+          navigate(`/invoices/${res.id}`);
+        } catch (error: any) {
+          alert(error.message || 'Failed to create invoice');
+        }
       } catch (error: any) {
         setError('customer_name', error.message || 'Failed to create invoice');
       } finally {

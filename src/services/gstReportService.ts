@@ -35,12 +35,18 @@ function to2(n: number): number {
 }
 
 export class GSTReportService {
-  static async getGSTReport(month: number, year: number): Promise<GSTReportGroupedResult> {
+  static async getGSTReport(month: number, year: number, outletId?: string): Promise<GSTReportGroupedResult> {
     // Read from final view (amounts already signed for credit notes)
-    const { data, error } = await supabase
+    let query = supabase
       .from('gst_reports_final')
-      .select('*')
-      .order('invoice_date', { ascending: true });
+      .select('*');
+
+    // Filter by outlet_id if provided (for manager/accountant)
+    if (outletId) {
+      query = query.eq('outlet_id', outletId);
+    }
+
+    const { data, error } = await query.order('invoice_date', { ascending: true });
 
     if (error) {
       console.error('Error fetching GST report:', error);

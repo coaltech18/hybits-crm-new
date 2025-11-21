@@ -2,15 +2,16 @@
 // NEW ORDER PAGE
 // ============================================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useForm } from '@/hooks/useForm';
 import { commonValidationRules, indianDateValidation } from '@/utils/validation';
 import { parseIndianDate } from '@/utils/format';
 import { hasPermission } from '@/utils/permissions';
-import { Customer } from '@/types';
+import { Customer, InventoryItem } from '@/types';
 import { OrderService } from '@/services/orderService';
+import inventoryService from '@/services/inventoryService';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
@@ -28,12 +29,23 @@ interface OrderFormData {
   notes: string;
 }
 
+interface OrderItem {
+  item_id: string;
+  item_name: string;
+  quantity: number;
+  rental_days: number;
+  rate: number;
+}
+
 const NewOrderPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, currentOutlet, getCurrentOutletId } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [selectedItems, setSelectedItems] = useState<OrderItem[]>([]);
+  const [loadingItems, setLoadingItems] = useState(false);
 
   const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<OrderFormData>({
     initialData: {
@@ -77,6 +89,20 @@ const NewOrderPage: React.FC = () => {
           return;
         }
         
+        // Validate selected items
+        const validItems = selectedItems.filter(item => item.item_id && item.quantity > 0);
+        if (validItems.length === 0) {
+          setError('customer_id', 'Please add at least one inventory item');
+          return;
+        }
+
+        // Get current outlet ID
+        const currentOutletId = getCurrentOutletId();
+        if (!currentOutletId) {
+          setError('customer_id', 'Outlet not selected');
+          return;
+        }
+
         // Create order using OrderService
         const orderData = {
           customer_id: formData.customer_id,
@@ -85,9 +111,15 @@ const NewOrderPage: React.FC = () => {
           event_duration: formData.event_duration,
           guest_count: formData.guest_count,
           location_type: formData.location_type as 'indoor' | 'outdoor' | 'both',
-          items: [], // TODO: Add inventory items selection
+          items: validItems.map(item => ({
+            item_id: item.item_id,
+            quantity: item.quantity,
+            rate: item.rate,
+            rental_days: item.rental_days
+          })),
           status: 'pending' as const,
-          notes: formData.notes
+          notes: formData.notes,
+          outlet_id: currentOutletId
         };
 
         console.log('Creating order with data:', orderData);
@@ -113,6 +145,53 @@ const NewOrderPage: React.FC = () => {
     setSelectedCustomer(newCustomer);
     setData({ customer_id: newCustomer.id });
     setShowAddCustomerModal(false);
+  };
+
+  // Fetch inventory items on mount
+  useEffect(() => {
+    const fetchItems = async () => {
+      try {
+        setLoadingItems(true);
+        const currentOutletId = getCurrentOutletId();
+        const items = await inventoryService.getInventoryItems({ outletId: currentOutletId });
+        setInventoryItems(items);
+      } catch (error) {
+        console.error('Error fetching inventory items:', error);
+      } finally {
+        setLoadingItems(false);
+      }
+    };
+    fetchItems();
+  }, [getCurrentOutletId]);
+
+  const addOrderItem = () => {
+    setSelectedItems([...selectedItems, {
+      item_id: '',
+      item_name: '',
+      quantity: 1,
+      rental_days: 1,
+      rate: 0
+    }]);
+  };
+
+  const removeOrderItem = (index: number) => {
+    setSelectedItems(selectedItems.filter((_, i) => i !== index));
+  };
+
+  const updateOrderItem = (index: number, field: keyof OrderItem, value: any) => {
+    const updated = [...selectedItems];
+    updated[index] = { ...updated[index], [field]: value };
+    
+    // If item_id changed, update item_name and rate
+    if (field === 'item_id') {
+      const item = inventoryItems.find(i => i.id === value);
+      if (item) {
+        updated[index].item_name = item.name;
+        updated[index].rate = item.unit_price || 0;
+      }
+    }
+    
+    setSelectedItems(updated);
   };
 
   const eventTypeOptions = [
@@ -266,6 +345,101 @@ const NewOrderPage: React.FC = () => {
                 disabled={isSubmitting}
               />
             </div>
+          </div>
+
+          {/* Inventory Items Selection */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-foreground">Inventory Items</h3>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={addOrderItem}
+                disabled={isSubmitting || loadingItems}
+              >
+                <Icon name="plus" size={16} className="mr-2" />
+                Add Item
+              </Button>
+            </div>
+            
+            {loadingItems ? (
+              <div className="text-center py-4 text-muted-foreground">Loading inventory items...</div>
+            ) : (
+              <div className="space-y-4">
+                {selectedItems.map((item, index) => (
+                  <div key={index} className="grid grid-cols-12 gap-4 items-end p-4 border border-border rounded-lg">
+                    <div className="col-span-4">
+                      <Select
+                        options={[
+                          { value: '', label: 'Select item' },
+                          ...inventoryItems.map(i => ({ value: i.id, label: `${i.name} (${i.code})` }))
+                        ]}
+                        value={item.item_id}
+                        onChange={(value) => updateOrderItem(index, 'item_id', value)}
+                        label="Item"
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Input
+                        type="number"
+                        label="Quantity"
+                        value={item.quantity}
+                        onChange={(e) => updateOrderItem(index, 'quantity', parseInt(e.target.value) || 0)}
+                        min={1}
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Input
+                        type="number"
+                        label="Rental Days"
+                        value={item.rental_days}
+                        onChange={(e) => updateOrderItem(index, 'rental_days', parseInt(e.target.value) || 1)}
+                        min={1}
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Input
+                        type="number"
+                        label="Rate (₹)"
+                        value={item.rate}
+                        onChange={(e) => updateOrderItem(index, 'rate', parseFloat(e.target.value) || 0)}
+                        min={0}
+                        step={0.01}
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                    <div className="col-span-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeOrderItem(index)}
+                        disabled={isSubmitting}
+                        className="text-destructive hover:text-destructive"
+                      >
+                        <Icon name="trash" size={16} />
+                      </Button>
+                    </div>
+                    <div className="col-span-12">
+                      <div className="text-right">
+                        <span className="text-sm text-muted-foreground">
+                          Total: ₹{(item.quantity * item.rental_days * item.rate).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {selectedItems.length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground border border-border rounded-lg">
+                    <Icon name="package" size={48} className="mx-auto mb-2 opacity-50" />
+                    <p>No items selected. Click "Add Item" to add inventory items to this order.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Additional Notes */}

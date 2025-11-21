@@ -143,6 +143,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  // Helper functions
+  const isAdmin = (): boolean => {
+    return user?.role === 'admin';
+  };
+
+  const isManager = (): boolean => {
+    return user?.role === 'manager';
+  };
+
+  const isAccountant = (): boolean => {
+    return user?.role === 'accountant';
+  };
+
+  const getCurrentOutletId = (): string | undefined => {
+    return currentOutlet?.id || user?.outlet_id;
+  };
+
   const value: AuthContextType = {
     user,
     currentOutlet,
@@ -153,6 +170,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     register,
     updateProfile,
     switchOutlet,
+    isAdmin,
+    isManager,
+    isAccountant,
+    getCurrentOutletId,
   };
 
   return (

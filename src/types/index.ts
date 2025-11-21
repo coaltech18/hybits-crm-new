@@ -42,6 +42,11 @@ export interface AuthContextType {
   register: (userData: RegisterData) => Promise<void>;
   updateProfile: (updates: Partial<User>) => Promise<void>;
   switchOutlet: (outletId: string) => Promise<void>;
+  // Helper functions
+  isAdmin: () => boolean;
+  isManager: () => boolean;
+  isAccountant: () => boolean;
+  getCurrentOutletId: () => string | undefined;
 }
 
 export interface RegisterData {

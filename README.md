@@ -271,3 +271,7 @@ npm run build
 - Styled with Tailwind CSS
 
 Built with ❤️ for Hybits
+
+## Database migrations
+
+Run supabase/migrations/001_full_production_schema.sql then 002_entity_sequences_and_triggers.sql in Supabase SQL Editor (see supabase/README_RUN_MIGRATIONS.md for details).

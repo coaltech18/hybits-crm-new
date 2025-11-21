@@ -54,6 +54,12 @@ const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }
       roles: ['admin', 'manager']
     },
     {
+      name: 'Customer Subscriptions',
+      href: '/subscriptions/customer',
+      icon: 'repeat',
+      roles: ['admin', 'manager', 'accountant']
+    },
+    {
       name: 'Vendors',
       href: '/vendors',
       icon: 'truck',
@@ -93,7 +99,8 @@ const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }
       '/inventory': 'inventory',
       '/customers': 'customers',
       '/orders': 'orders',
-      '/subscriptions': 'billing', // subscriptions uses billing permissions
+      '/subscriptions': 'billing', // vendor subscriptions uses billing permissions
+      '/subscriptions/customer': 'billing', // customer subscriptions uses billing permissions
       '/vendors': 'vendors',
       '/outlets': 'outlets',
       '/accounting': 'accounting',

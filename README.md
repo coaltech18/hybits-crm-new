@@ -274,4 +274,11 @@ Built with ❤️ for Hybits
 
 ## Database migrations
 
-Run supabase/migrations/001_full_production_schema.sql then 002_entity_sequences_and_triggers.sql in Supabase SQL Editor (see supabase/README_RUN_MIGRATIONS.md for details).
+Run migrations in order in Supabase SQL Editor (see supabase/README_RUN_MIGRATIONS.md for details):
+
+1. `001_full_production_schema.sql` - Core tables, enums, views, RLS policies
+2. `002_entity_sequences_and_triggers.sql` - Code generation system
+3. `003_subscriptions_schema.sql` - Customer subscription tables and RLS policies
+4. `004_subscriptions_invoice_generator.sql` - Monthly invoice generation RPC
+
+**Note:** After running migrations 003 and 004, you can schedule automatic monthly invoice generation. See `supabase/SCHEDULE_SUBSCRIPTIONS.md` for scheduling options.

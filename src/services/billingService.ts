@@ -15,21 +15,52 @@ import {
   VendorFormData,
   VendorPayment,
   VendorPaymentFormData,
-  SubscriptionItem
+  SubscriptionItem,
+  CustomerSubscription,
+  CustomerSubscriptionFormData,
+  SubscriptionInvoice,
+  SubscriptionPayment,
+  SubscriptionPaymentFormData
 } from '@/types/billing';
-import { mockPlans, mockSubscriptions, mockInvoices, mockUsers } from './mockBillingData';
 import { supabase } from '@/lib/supabase';
 
 export class BillingService {
   /**
-   * Get all subscription plans
+   * Get all subscription plans (with outlet filtering for non-admin users)
    */
-  static async getPlans(): Promise<Plan[]> {
+  static async getPlans(options?: { outletId?: string; adminFlag?: boolean }): Promise<Plan[]> {
     try {
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      return mockPlans.filter(plan => plan.active);
+      let query = supabase
+        .from('plans')
+        .select('*');
+
+      // Filter by outlet_id if provided and not admin
+      if (options?.outletId && !options?.adminFlag) {
+        query = query.eq('outlet_id', options.outletId);
+      }
+
+      // Filter active plans only
+      query = query.eq('is_active', true);
+
+      const { data, error } = await query.order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching plans:', error);
+        throw new Error(error.message || 'Failed to fetch plans');
+      }
+
+      // Map database fields to Plan interface
+      return (data || []).map((plan: any) => ({
+        id: plan.id,
+        name: plan.name,
+        price: 0, // Plans table doesn't have price - this is for customer subscriptions
+        interval: (plan.billing_period || 'monthly') as 'monthly' | 'yearly',
+        features: [], // Plans table doesn't have features array
+        active: plan.is_active,
+        description: plan.description,
+        created_at: plan.created_at,
+        updated_at: plan.updated_at
+      }));
     } catch (error: any) {
       console.error('Error in getPlans:', error);
       throw new Error(error.message || 'Failed to fetch plans');
@@ -39,10 +70,35 @@ export class BillingService {
   /**
    * Get all plans (including inactive) - Admin only
    */
-  static async getAllPlans(): Promise<Plan[]> {
+  static async getAllPlans(options?: { outletId?: string }): Promise<Plan[]> {
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return mockPlans;
+      let query = supabase
+        .from('plans')
+        .select('*');
+
+      // Filter by outlet_id if provided
+      if (options?.outletId) {
+        query = query.eq('outlet_id', options.outletId);
+      }
+
+      const { data, error } = await query.order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching all plans:', error);
+        throw new Error(error.message || 'Failed to fetch all plans');
+      }
+
+      return (data || []).map((plan: any) => ({
+        id: plan.id,
+        name: plan.name,
+        price: 0,
+        interval: (plan.billing_period || 'monthly') as 'monthly' | 'yearly',
+        features: [],
+        active: plan.is_active,
+        description: plan.description,
+        created_at: plan.created_at,
+        updated_at: plan.updated_at
+      }));
     } catch (error: any) {
       console.error('Error in getAllPlans:', error);
       throw new Error(error.message || 'Failed to fetch all plans');
@@ -54,14 +110,32 @@ export class BillingService {
    */
   static async getPlan(id: string): Promise<Plan> {
     try {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      const plan = mockPlans.find(p => p.id === id);
-      if (!plan) {
+      const { data, error } = await supabase
+        .from('plans')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (error) {
+        console.error('DB error fetching plans:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
         throw new Error('Plan not found');
       }
-      
-      return plan;
+
+      return {
+        id: data.id,
+        name: data.name,
+        price: 0,
+        interval: (data.billing_period || 'monthly') as 'monthly' | 'yearly',
+        features: [],
+        active: data.is_active,
+        description: data.description,
+        created_at: data.created_at,
+        updated_at: data.updated_at
+      };
     } catch (error: any) {
       console.error('Error in getPlan:', error);
       throw new Error(error.message || 'Failed to fetch plan');
@@ -71,19 +145,52 @@ export class BillingService {
   /**
    * Create a new plan - Admin only
    */
-  static async createPlan(planData: PlanFormData): Promise<Plan> {
+  static async createPlan(planData: PlanFormData & { outlet_id?: string }): Promise<Plan> {
     try {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      const newPlan: Plan = {
-        id: `plan_${Date.now()}`,
-        ...planData,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+      // Get current user for outlet_id and created_by
+      const { data: { user } } = await supabase.auth.getUser();
+      const outletId = planData.outlet_id;
+
+      const insertData: any = {
+        // plan_code will be auto-generated if needed
+        name: planData.name,
+        description: planData.description,
+        billing_period: planData.interval || 'monthly',
+        is_active: planData.active !== undefined ? planData.active : true,
+        created_by: user?.id
       };
-      
-      mockPlans.push(newPlan);
-      return newPlan;
+
+      // Add outlet_id if provided
+      if (outletId) {
+        insertData.outlet_id = outletId;
+      }
+
+      const { data, error } = await supabase
+        .from('plans')
+        .insert(insertData)
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        console.error('DB error creating plan:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        throw new Error('Failed to create plan');
+      }
+
+      return {
+        id: data.id,
+        name: data.name,
+        price: 0,
+        interval: (data.billing_period || 'monthly') as 'monthly' | 'yearly',
+        features: [],
+        active: data.is_active,
+        description: data.description,
+        created_at: data.created_at,
+        updated_at: data.updated_at
+      };
     } catch (error: any) {
       console.error('Error in createPlan:', error);
       throw new Error(error.message || 'Failed to create plan');
@@ -95,25 +202,42 @@ export class BillingService {
    */
   static async updatePlan(id: string, planData: Partial<PlanFormData>): Promise<Plan> {
     try {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      const planIndex = mockPlans.findIndex(p => p.id === id);
-      if (planIndex === -1) {
-        throw new Error('Plan not found');
-      }
-      
-      const plan = mockPlans[planIndex];
-      if (!plan) {
-        throw new Error('Plan not found');
-      }
-      
-      mockPlans[planIndex] = {
-        ...plan,
-        ...planData,
+      const updateData: any = {
         updated_at: new Date().toISOString()
       };
-      
-      return mockPlans[planIndex]!;
+
+      if (planData.name) updateData.name = planData.name;
+      if (planData.description !== undefined) updateData.description = planData.description;
+      if (planData.interval) updateData.billing_period = planData.interval;
+      if (planData.active !== undefined) updateData.is_active = planData.active;
+
+      const { data, error } = await supabase
+        .from('plans')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        console.error('DB error updating plan:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        throw new Error('Plan not found');
+      }
+
+      return {
+        id: data.id,
+        name: data.name,
+        price: 0,
+        interval: (data.billing_period || 'monthly') as 'monthly' | 'yearly',
+        features: [],
+        active: data.is_active,
+        description: data.description,
+        created_at: data.created_at,
+        updated_at: data.updated_at
+      };
     } catch (error: any) {
       console.error('Error in updatePlan:', error);
       throw new Error(error.message || 'Failed to update plan');
@@ -125,20 +249,15 @@ export class BillingService {
    */
   static async deletePlan(id: string): Promise<void> {
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const planIndex = mockPlans.findIndex(p => p.id === id);
-      if (planIndex === -1) {
-        throw new Error('Plan not found');
+      const { error } = await supabase
+        .from('plans')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) {
+        console.error('DB error deleting plan:', error);
+        throw new Error('Database error');
       }
-      
-      const plan = mockPlans[planIndex];
-      if (!plan) {
-        throw new Error('Plan not found');
-      }
-      
-      plan.active = false;
-      plan.updated_at = new Date().toISOString();
     } catch (error: any) {
       console.error('Error in deletePlan:', error);
       throw new Error(error.message || 'Failed to delete plan');
@@ -146,170 +265,29 @@ export class BillingService {
   }
 
   /**
-   * Get user's current subscription
-   */
-  static async getUserSubscription(userId: string): Promise<Subscription | null> {
-    try {
-      await new Promise(resolve => setTimeout(resolve, 400));
-      
-      const subscription = mockSubscriptions.find(s => s.user_id === userId && s.status === 'active');
-      return subscription || null;
-    } catch (error: any) {
-      console.error('Error in getUserSubscription:', error);
-      throw new Error(error.message || 'Failed to fetch subscription');
-    }
-  }
-
-  /**
-   * Get all subscriptions - Admin only
-   */
-  static async getAllSubscriptions(): Promise<(Subscription & { user_name?: string; user_email?: string })[]> {
-    try {
-      await new Promise(resolve => setTimeout(resolve, 600));
-      
-      return mockSubscriptions.map(subscription => {
-        const user = mockUsers.find(u => u.id === subscription.user_id);
-        return {
-          ...subscription,
-          ...(user?.name && { user_name: user.name }),
-          ...(user?.email && { user_email: user.email })
-        };
-      });
-    } catch (error: any) {
-      console.error('Error in getAllSubscriptions:', error);
-      throw new Error(error.message || 'Failed to fetch subscriptions');
-    }
-  }
-
-  /**
-   * Create a new subscription
-   */
-  static async createSubscription(planId: string, userId: string): Promise<Subscription> {
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const plan = mockPlans.find(p => p.id === planId);
-      if (!plan) {
-        throw new Error('Plan not found');
-      }
-      
-      // Cancel existing active subscription
-      const existingIndex = mockSubscriptions.findIndex(s => s.user_id === userId && s.status === 'active');
-      if (existingIndex !== -1) {
-        const existingSubscription = mockSubscriptions[existingIndex];
-        if (existingSubscription) {
-          existingSubscription.status = 'canceled';
-          existingSubscription.updated_at = new Date().toISOString();
-        }
-      }
-      
-      const startDate = new Date();
-      const endDate = new Date();
-      endDate.setMonth(endDate.getMonth() + 1);
-      
-      const newSubscription: Subscription = {
-        id: `sub_${Date.now()}`,
-        user_id: userId,
-        plan_id: planId,
-        plan_name: plan.name,
-        status: 'active',
-        start_date: startDate.toISOString(),
-        end_date: endDate.toISOString(),
-        next_billing_date: endDate.toISOString(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-      
-      mockSubscriptions.push(newSubscription);
-      return newSubscription;
-    } catch (error: any) {
-      console.error('Error in createSubscription:', error);
-      throw new Error(error.message || 'Failed to create subscription');
-    }
-  }
-
-  /**
-   * Cancel a subscription
-   */
-  static async cancelSubscription(subscriptionId: string): Promise<void> {
-    try {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      const subscriptionIndex = mockSubscriptions.findIndex(s => s.id === subscriptionId);
-      if (subscriptionIndex === -1) {
-        throw new Error('Subscription not found');
-      }
-      
-      const subscription = mockSubscriptions[subscriptionIndex];
-      if (!subscription) {
-        throw new Error('Subscription not found');
-      }
-      
-      subscription.status = 'canceled';
-      subscription.updated_at = new Date().toISOString();
-    } catch (error: any) {
-      console.error('Error in cancelSubscription:', error);
-      throw new Error(error.message || 'Failed to cancel subscription');
-    }
-  }
-
-  /**
-   * Get invoices for a user
-   */
-  static async getInvoices(userId: string): Promise<Invoice[]> {
-    try {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const userSubscriptions = mockSubscriptions.filter(s => s.user_id === userId);
-      const subscriptionIds = userSubscriptions.map(s => s.id);
-      
-      return mockInvoices
-        .filter(invoice => subscriptionIds.includes(invoice.subscription_id))
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    } catch (error: any) {
-      console.error('Error in getInvoices:', error);
-      throw new Error(error.message || 'Failed to fetch invoices');
-    }
-  }
-
-  /**
-   * Get all invoices - Admin only
-   */
-  static async getAllInvoices(): Promise<(Invoice & { user_name?: string; user_email?: string })[]> {
-    try {
-      await new Promise(resolve => setTimeout(resolve, 600));
-      
-      return mockInvoices.map(invoice => {
-        const subscription = mockSubscriptions.find(s => s.id === invoice.subscription_id);
-        const user = subscription ? mockUsers.find(u => u.id === subscription.user_id) : null;
-        
-        return {
-          ...invoice,
-          ...(user?.name && { user_name: user.name }),
-          ...(user?.email && { user_email: user.email })
-        };
-      }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    } catch (error: any) {
-      console.error('Error in getAllInvoices:', error);
-      throw new Error(error.message || 'Failed to fetch all invoices');
-    }
-  }
-
-  /**
    * Get billing statistics - Admin only
+   * NOTE: This function now uses customer subscriptions instead of user subscriptions
    */
   static async getBillingStats(): Promise<BillingStats> {
     try {
-      await new Promise(resolve => setTimeout(resolve, 400));
+      // Get stats from database
+      const [plans, customerSubscriptions] = await Promise.all([
+        this.getAllPlans(),
+        this.getCustomerSubscriptions()
+      ]);
+
+      const activeSubscriptions = customerSubscriptions.filter(s => s.status === 'active').length;
       
-      const activeSubscriptions = mockSubscriptions.filter(s => s.status === 'active').length;
-      const pendingInvoices = mockInvoices.filter(i => i.status === 'pending').length;
-      const totalRevenue = mockInvoices
-        .filter(i => i.status === 'paid')
-        .reduce((sum, invoice) => sum + invoice.amount, 0);
+      // Get invoices for customer subscriptions
+      const allInvoices = await Promise.all(
+        customerSubscriptions.map(sub => this.getSubscriptionInvoices(sub.id))
+      );
+      const invoices = allInvoices.flat();
+      const pendingInvoices = invoices.filter(i => i.amount && i.amount > 0).length;
+      const totalRevenue = invoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
       
       return {
-        totalPlans: mockPlans.filter(p => p.active).length,
+        totalPlans: plans.filter(p => p.active).length,
         activeSubscriptions,
         totalRevenue,
         pendingInvoices
@@ -318,6 +296,56 @@ export class BillingService {
       console.error('Error in getBillingStats:', error);
       throw new Error(error.message || 'Failed to fetch billing stats');
     }
+  }
+
+  // ============================================================================
+  // DEPRECATED: User subscription methods (not used - customer subscriptions are used instead)
+  // ============================================================================
+  
+  /**
+   * @deprecated Use getCustomerSubscriptions instead. User subscriptions are not implemented.
+   */
+  static async getUserSubscription(userId: string): Promise<Subscription | null> {
+    console.warn('getUserSubscription is deprecated. Use getCustomerSubscriptions instead.');
+    return null;
+  }
+
+  /**
+   * @deprecated Use getCustomerSubscriptions instead. User subscriptions are not implemented.
+   */
+  static async getAllSubscriptions(): Promise<(Subscription & { user_name?: string; user_email?: string })[]> {
+    console.warn('getAllSubscriptions is deprecated. Use getCustomerSubscriptions instead.');
+    return [];
+  }
+
+  /**
+   * @deprecated Use createCustomerSubscription instead. User subscriptions are not implemented.
+   */
+  static async createSubscription(planId: string, userId: string): Promise<Subscription> {
+    throw new Error('User subscriptions are not implemented. Use createCustomerSubscription instead.');
+  }
+
+  /**
+   * @deprecated User subscriptions are not implemented.
+   */
+  static async cancelSubscription(subscriptionId: string): Promise<void> {
+    throw new Error('User subscriptions are not implemented.');
+  }
+
+  /**
+   * @deprecated Use getSubscriptionInvoices instead. User subscriptions are not implemented.
+   */
+  static async getInvoices(userId: string): Promise<Invoice[]> {
+    console.warn('getInvoices is deprecated. Use getSubscriptionInvoices instead.');
+    return [];
+  }
+
+  /**
+   * @deprecated Use InvoiceService.getInvoices instead.
+   */
+  static async getAllInvoices(): Promise<(Invoice & { user_name?: string; user_email?: string })[]> {
+    console.warn('getAllInvoices is deprecated. Use InvoiceService.getInvoices instead.');
+    return [];
   }
 
   // ============================================================================
@@ -852,6 +880,360 @@ export class BillingService {
     } catch (error: any) {
       console.error('Error in getVendorPayments:', error);
       throw new Error(error.message || 'Failed to fetch vendor payments');
+    }
+  }
+
+  // ============================================================================
+  // CUSTOMER SUBSCRIPTION METHODS (for daily-delivered items billed monthly)
+  // ============================================================================
+
+  /**
+   * Get all customer subscriptions (with outlet filtering for non-admin users)
+   */
+  static async getCustomerSubscriptions(options?: { outletId?: string; customerId?: string }): Promise<CustomerSubscription[]> {
+    try {
+      let query = supabase
+        .from('customer_subscriptions')
+        .select(`
+          *,
+          customers:customer_id(contact_person, company_name),
+          plans:plan_id(name)
+        `);
+
+      // Filter by outlet_id if provided (for manager/accountant)
+      if (options?.outletId) {
+        query = query.eq('outlet_id', options.outletId);
+      }
+
+      // Filter by customer_id if provided
+      if (options?.customerId) {
+        query = query.eq('customer_id', options.customerId);
+      }
+
+      const { data, error } = await query.order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching customer subscriptions:', error);
+        throw new Error(error.message || 'Failed to fetch subscriptions');
+      }
+
+      return (data || []).map((sub: any) => ({
+        id: sub.id,
+        subscription_code: sub.subscription_code,
+        customer_id: sub.customer_id,
+        customer_name: sub.customers?.contact_person || sub.customers?.company_name,
+        plan_id: sub.plan_id,
+        plan_name: sub.plans?.name,
+        outlet_id: sub.outlet_id,
+        start_date: sub.start_date,
+        end_date: sub.end_date,
+        quantity_per_day: sub.quantity_per_day,
+        unit_price: Number(sub.unit_price),
+        monthly_amount: Number(sub.monthly_amount),
+        security_deposit: Number(sub.security_deposit),
+        gst_rate: Number(sub.gst_rate),
+        status: sub.status as 'active' | 'paused' | 'cancelled' | 'expired',
+        created_by: sub.created_by,
+        created_at: sub.created_at,
+        updated_at: sub.updated_at
+      }));
+    } catch (error: any) {
+      console.error('Error in getCustomerSubscriptions:', error);
+      throw new Error(error.message || 'Failed to fetch subscriptions');
+    }
+  }
+
+  /**
+   * Get a single customer subscription by ID
+   */
+  static async getCustomerSubscription(id: string): Promise<CustomerSubscription> {
+    try {
+      const { data, error } = await supabase
+        .from('customer_subscriptions')
+        .select(`
+          *,
+          customers:customer_id(contact_person, company_name),
+          plans:plan_id(name),
+          subscription_items(*)
+        `)
+        .eq('id', id)
+        .maybeSingle();
+
+      if (error) {
+        console.error('DB error fetching subscription:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        throw new Error('Subscription not found');
+      }
+
+      return {
+        id: data.id,
+        subscription_code: data.subscription_code,
+        customer_id: data.customer_id,
+        customer_name: data.customers?.contact_person || data.customers?.company_name,
+        plan_id: data.plan_id,
+        plan_name: data.plans?.name,
+        outlet_id: data.outlet_id,
+        start_date: data.start_date,
+        end_date: data.end_date,
+        quantity_per_day: data.quantity_per_day,
+        unit_price: Number(data.unit_price),
+        monthly_amount: Number(data.monthly_amount),
+        security_deposit: Number(data.security_deposit),
+        gst_rate: Number(data.gst_rate),
+        status: data.status as 'active' | 'paused' | 'cancelled' | 'expired',
+        created_by: data.created_by,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        items: data.subscription_items?.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          quantity: item.quantity,
+          unit_price: Number(item.unit_price),
+          total_amount: Number(item.total_amount)
+        }))
+      };
+    } catch (error: any) {
+      console.error('Error in getCustomerSubscription:', error);
+      throw new Error(error.message || 'Failed to fetch subscription');
+    }
+  }
+
+  /**
+   * Create a new customer subscription
+   */
+  static async createCustomerSubscription(subscriptionData: CustomerSubscriptionFormData): Promise<CustomerSubscription> {
+    try {
+      // Get current user for outlet_id and created_by
+      const { data: { user } } = await supabase.auth.getUser();
+      const outletId = subscriptionData.outlet_id;
+
+      if (!outletId) {
+        throw new Error('Outlet ID is required');
+      }
+
+      const insertData: any = {
+        // subscription_code will be auto-generated by trigger
+        customer_id: subscriptionData.customer_id,
+        plan_id: subscriptionData.plan_id || null,
+        outlet_id: outletId,
+        start_date: subscriptionData.start_date,
+        end_date: subscriptionData.end_date || null,
+        quantity_per_day: subscriptionData.quantity_per_day,
+        unit_price: subscriptionData.unit_price,
+        security_deposit: subscriptionData.security_deposit || 0,
+        gst_rate: subscriptionData.gst_rate || 18,
+        status: 'active',
+        created_by: user?.id
+      };
+
+      const { data: subData, error: subError } = await supabase
+        .from('customer_subscriptions')
+        .insert(insertData)
+        .select()
+        .maybeSingle();
+
+      if (subError) {
+        console.error('DB error creating subscription:', subError);
+        throw new Error('Database error');
+      }
+
+      if (!subData) {
+        throw new Error('Failed to create subscription');
+      }
+
+      // Create subscription items if provided
+      if (subscriptionData.items && subscriptionData.items.length > 0) {
+        const items = subscriptionData.items.map(item => ({
+          subscription_id: subData.id,
+          name: item.name,
+          quantity: item.quantity,
+          unit_price: item.unit_price
+        }));
+
+        const { error: itemsError } = await supabase
+          .from('subscription_items')
+          .insert(items);
+
+        if (itemsError) {
+          console.error('Error creating subscription items:', itemsError);
+          // Don't throw - subscription is created, items can be added later
+        }
+      }
+
+      // Fetch the complete subscription with items
+      return await this.getCustomerSubscription(subData.id);
+    } catch (error: any) {
+      console.error('Error in createCustomerSubscription:', error);
+      throw new Error(error.message || 'Failed to create subscription');
+    }
+  }
+
+  /**
+   * Update customer subscription
+   */
+  static async updateCustomerSubscription(id: string, updates: Partial<CustomerSubscriptionFormData>): Promise<CustomerSubscription> {
+    try {
+      const updateData: any = {
+        updated_at: new Date().toISOString()
+      };
+
+      if (updates.quantity_per_day !== undefined) updateData.quantity_per_day = updates.quantity_per_day;
+      if (updates.unit_price !== undefined) updateData.unit_price = updates.unit_price;
+      if (updates.security_deposit !== undefined) updateData.security_deposit = updates.security_deposit;
+      if (updates.gst_rate !== undefined) updateData.gst_rate = updates.gst_rate;
+      if (updates.end_date !== undefined) updateData.end_date = updates.end_date;
+      if (updates.status !== undefined) updateData.status = updates.status;
+
+      const { data, error } = await supabase
+        .from('customer_subscriptions')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        console.error('DB error updating subscription:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        throw new Error('Subscription not found');
+      }
+
+      return await this.getCustomerSubscription(id);
+    } catch (error: any) {
+      console.error('Error in updateCustomerSubscription:', error);
+      throw new Error(error.message || 'Failed to update subscription');
+    }
+  }
+
+  /**
+   * Get subscription invoices
+   */
+  static async getSubscriptionInvoices(subscriptionId: string): Promise<SubscriptionInvoice[]> {
+    try {
+      const { data, error } = await supabase
+        .from('subscription_invoices')
+        .select(`
+          *,
+          invoices:invoice_id(
+            invoice_number,
+            total_amount,
+            payment_status
+          )
+        `)
+        .eq('subscription_id', subscriptionId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('DB error fetching subscription invoices:', error);
+        throw new Error('Database error');
+      }
+
+      return (data || []).map((si: any) => ({
+        id: si.id,
+        subscription_id: si.subscription_id,
+        invoice_id: si.invoice_id,
+        invoice_number: si.invoices?.invoice_number,
+        billing_period_start: si.billing_period_start,
+        billing_period_end: si.billing_period_end,
+        amount: Number(si.invoices?.total_amount || 0),
+        created_at: si.created_at
+      }));
+    } catch (error: any) {
+      console.error('Error in getSubscriptionInvoices:', error);
+      throw new Error(error.message || 'Failed to fetch subscription invoices');
+    }
+  }
+
+  /**
+   * Create subscription payment
+   */
+  static async createSubscriptionPayment(paymentData: SubscriptionPaymentFormData): Promise<SubscriptionPayment> {
+    try {
+      // Get current user for outlet_id and created_by
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      // Get subscription to determine outlet_id if not provided
+      let outletId = paymentData.outlet_id;
+      if (!outletId) {
+        const subscription = await this.getCustomerSubscription(paymentData.subscription_id);
+        outletId = subscription.outlet_id;
+      }
+
+      const insertData: any = {
+        // payment_code will be auto-generated by trigger
+        subscription_id: paymentData.subscription_id,
+        outlet_id: outletId,
+        payment_date: paymentData.payment_date,
+        amount: paymentData.amount,
+        payment_method: paymentData.payment_method,
+        reference_number: paymentData.reference_number,
+        notes: paymentData.notes,
+        created_by: user?.id
+      };
+
+      const { data, error } = await supabase
+        .from('subscription_payments')
+        .insert(insertData)
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        console.error('DB error creating subscription payment:', error);
+        throw new Error('Database error');
+      }
+
+      if (!data) {
+        throw new Error('Failed to create payment');
+      }
+
+      return {
+        id: data.id,
+        payment_code: data.payment_code,
+        subscription_id: data.subscription_id,
+        outlet_id: data.outlet_id,
+        payment_date: data.payment_date,
+        amount: Number(data.amount),
+        payment_method: data.payment_method,
+        reference_number: data.reference_number,
+        notes: data.notes,
+        created_by: data.created_by,
+        created_at: data.created_at
+      };
+    } catch (error: any) {
+      console.error('Error in createSubscriptionPayment:', error);
+      throw new Error(error.message || 'Failed to create payment');
+    }
+  }
+
+  /**
+   * Generate monthly invoices for active subscriptions (RPC call)
+   */
+  static async rpcGenerateMonthlyInvoices(runDate: Date = new Date()): Promise<Array<{ subscription_id: string; invoice_id: string; amount: number }>> {
+    try {
+      const dateStr = runDate.toISOString().split('T')[0];
+      
+      const { data, error } = await supabase.rpc('generate_monthly_subscription_invoices', {
+        p_run_date: dateStr
+      });
+
+      if (error) {
+        console.error('RPC error generating invoices:', error);
+        throw new Error(error.message || 'Failed to generate invoices');
+      }
+
+      return (data || []).map((row: any) => ({
+        subscription_id: row.subscription_id,
+        invoice_id: row.invoice_id,
+        amount: Number(row.amount || 0)
+      }));
+    } catch (error: any) {
+      console.error('Error in rpcGenerateMonthlyInvoices:', error);
+      throw new Error(error.message || 'Failed to generate monthly invoices');
     }
   }
 }

@@ -167,3 +167,87 @@ export interface VendorPaymentFormData {
   transaction_ref?: string;
   notes?: string;
 }
+
+// ============================================================================
+// CUSTOMER SUBSCRIPTION TYPES (for daily-delivered items billed monthly)
+// ============================================================================
+
+export interface CustomerSubscription {
+  id: string;
+  subscription_code: string;
+  customer_id: string;
+  customer_name?: string;
+  plan_id?: string;
+  plan_name?: string;
+  outlet_id: string;
+  start_date: string;
+  end_date?: string;
+  quantity_per_day: number;
+  unit_price: number;
+  monthly_amount: number;
+  security_deposit: number;
+  gst_rate: number;
+  status: 'active' | 'paused' | 'cancelled' | 'expired';
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+  items?: Array<{
+    id: string;
+    name: string;
+    quantity: number;
+    unit_price: number;
+    total_amount: number;
+  }>;
+}
+
+export interface CustomerSubscriptionFormData {
+  customer_id: string;
+  plan_id?: string;
+  outlet_id?: string;
+  start_date: string;
+  end_date?: string;
+  quantity_per_day: number;
+  unit_price: number;
+  security_deposit: number;
+  gst_rate?: number;
+  items?: Array<{
+    name: string;
+    quantity: number;
+    unit_price: number;
+  }>;
+}
+
+export interface SubscriptionInvoice {
+  id: string;
+  subscription_id: string;
+  invoice_id: string;
+  invoice_number?: string;
+  billing_period_start: string;
+  billing_period_end: string;
+  amount?: number;
+  created_at: string;
+}
+
+export interface SubscriptionPayment {
+  id: string;
+  payment_code: string;
+  subscription_id: string;
+  outlet_id: string;
+  payment_date: string;
+  amount: number;
+  payment_method: 'cash' | 'cheque' | 'bank_transfer' | 'upi' | 'card' | 'online';
+  reference_number?: string;
+  notes?: string;
+  created_by?: string;
+  created_at: string;
+}
+
+export interface SubscriptionPaymentFormData {
+  subscription_id: string;
+  outlet_id?: string;
+  payment_date: string;
+  amount: number;
+  payment_method: 'cash' | 'cheque' | 'bank_transfer' | 'upi' | 'card' | 'online';
+  reference_number?: string;
+  notes?: string;
+}

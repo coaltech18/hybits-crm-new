@@ -32,7 +32,7 @@
  * 
  * Response: { success: true, profile: {...} } or { success: false, error: string }
  */
-export async function createProfileHandler(request: {
+export async function createProfileHandler(_request: {
   userId: string;
   email: string;
   full_name: string;
@@ -80,9 +80,9 @@ export async function createProfileHandler(request: {
   return { success: true, profile: data };
   */
   
-  // Use request parameter to avoid TypeScript unused variable warning
+  // Use _request parameter to avoid TypeScript unused variable warning
   throw new Error(
-    `This endpoint must be implemented in a server environment. Expected: userId=${request.userId}, email=${request.email}`
+    `This endpoint must be implemented in a server environment. Expected: userId=${_request.userId}, email=${_request.email}`
   );
 }
 

@@ -4,14 +4,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
 import { CustomerSubscription, SubscriptionInvoice } from '@/types/billing';
 import { BillingService } from '@/services/billingService';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/AppIcon';
 
 const CustomerSubscriptionDetailPage: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const params = useParams();
+  const id = params.id;
   const navigate = useNavigate();
   const [subscription, setSubscription] = useState<CustomerSubscription | null>(null);
   const [invoices, setInvoices] = useState<SubscriptionInvoice[]>([]);

@@ -4,14 +4,29 @@
 
 import React from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { hasPermission } from '@/utils/permissions';
 import Select from './Select';
 import Icon from '../AppIcon';
 
 const OutletSelector: React.FC = () => {
   const { user, currentOutlet, availableOutlets, switchOutlet } = useAuth();
 
-  if (!user || !hasPermission(user.role, 'outlets', 'read')) {
+  if (!user) {
+    return null;
+  }
+
+  // Manager: Show read-only outlet name (no selector)
+  if (user.role === 'manager') {
+    return (
+      <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+        <Icon name="map-pin" size={16} />
+        <span>{currentOutlet?.name || 'No outlet assigned'}</span>
+      </div>
+    );
+  }
+
+  // Accountant and Admin: Show outlet selector for filtering
+  // Accountants need outlet selector for filtering invoices/reports, but don't have 'outlets' permission
+  if (user.role !== 'admin' && user.role !== 'accountant') {
     return null;
   }
 

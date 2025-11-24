@@ -2,22 +2,116 @@
 // DASHBOARD PAGE
 // ============================================================================
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { Navigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import { hasPermission } from '@/utils/permissions';
 import Icon from '@/components/AppIcon';
+import DashboardService, { DashboardStatsExtended, RecentOrder } from '@/services/dashboardService';
 import { DashboardStats } from '@/types';
 
-// Mock data for demonstration
-const mockStats: DashboardStats = {
-  totalCustomers: 1247,
-  totalOrders: 89,
-  totalRevenue: 2450000,
-  pendingOrders: 12,
-  lowStockItems: 8,
-  overdueInvoices: 3
-};
-
 const DashboardPage: React.FC = () => {
-  const stats = mockStats;
+  const { user, currentOutlet, getCurrentOutletId, isAdmin, isManager } = useAuth();
+  const [stats, setStats] = useState<DashboardStatsExtended | null>(null);
+  const [aggregatedStats, setAggregatedStats] = useState<DashboardStatsExtended | null>(null);
+  const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Check if user has permission to access dashboard
+  if (!user || !hasPermission(user.role, 'dashboard', 'read')) {
+    // Redirect based on role
+    if (user?.role === 'accountant') {
+      return <Navigate to="/accounting" replace />;
+    }
+    return <Navigate to="/login" replace />;
+  }
+
+  useEffect(() => {
+    loadDashboardData();
+  }, [user, currentOutlet]);
+
+  const loadDashboardData = async () => {
+    if (!user) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const outletId = getCurrentOutletId();
+
+      if (isAdmin()) {
+        // Admin: Load both aggregated and outlet-specific stats
+        const [aggStats, outletStats, orders] = await Promise.all([
+          DashboardService.getAggregatedStats(),
+          outletId ? DashboardService.getOutletStats(outletId) : null,
+          DashboardService.getRecentOrders(outletId, 5),
+        ]);
+
+        setAggregatedStats(aggStats);
+        setStats(outletStats || aggStats); // Use outlet stats if outlet selected, else aggregated
+        setRecentOrders(orders);
+      } else if (isManager()) {
+        // Manager: Only outlet-specific stats
+        if (!outletId) {
+          setError('No outlet assigned. Please contact administrator.');
+          return;
+        }
+
+        const [outletStats, orders] = await Promise.all([
+          DashboardService.getOutletStats(outletId),
+          DashboardService.getRecentOrders(outletId, 5),
+        ]);
+
+        setStats(outletStats);
+        setRecentOrders(orders);
+      }
+    } catch (err: any) {
+      console.error('Error loading dashboard data:', err);
+      setError(err.message || 'Failed to load dashboard data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <Icon name="alert-triangle" size={48} className="mx-auto text-destructive mb-4" />
+          <h3 className="text-lg font-medium text-foreground mb-2">Error</h3>
+          <p className="text-muted-foreground">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!stats) {
+    return null;
+  }
+
+  // Format revenue for display
+  const formatRevenue = (amount: number): string => {
+    if (amount >= 10000000) {
+      return `₹${(amount / 10000000).toFixed(2)}Cr`;
+    } else if (amount >= 100000) {
+      return `₹${(amount / 100000).toFixed(2)}L`;
+    } else if (amount >= 1000) {
+      return `₹${(amount / 1000).toFixed(2)}K`;
+    }
+    return `₹${amount.toLocaleString()}`;
+  };
 
   const statCards = [
     {
@@ -26,26 +120,20 @@ const DashboardPage: React.FC = () => {
       icon: 'users',
       color: 'text-blue-600',
       bgColor: 'bg-blue-100 dark:bg-blue-900/20',
-      change: '+12%',
-      changeType: 'positive' as const
     },
     {
-      title: 'Active Orders',
+      title: 'Total Orders',
       value: stats.totalOrders.toString(),
       icon: 'shopping-cart',
       color: 'text-green-600',
       bgColor: 'bg-green-100 dark:bg-green-900/20',
-      change: '+5%',
-      changeType: 'positive' as const
     },
     {
       title: 'Total Revenue',
-      value: `₹${(stats.totalRevenue / 100000).toFixed(1)}L`,
+      value: formatRevenue(stats.totalRevenue),
       icon: 'dollar-sign',
       color: 'text-purple-600',
       bgColor: 'bg-purple-100 dark:bg-purple-900/20',
-      change: '+18%',
-      changeType: 'positive' as const
     },
     {
       title: 'Pending Orders',
@@ -53,8 +141,6 @@ const DashboardPage: React.FC = () => {
       icon: 'clock',
       color: 'text-orange-600',
       bgColor: 'bg-orange-100 dark:bg-orange-900/20',
-      change: '-2',
-      changeType: 'negative' as const
     },
     {
       title: 'Low Stock Items',
@@ -62,8 +148,6 @@ const DashboardPage: React.FC = () => {
       icon: 'alert-triangle',
       color: 'text-red-600',
       bgColor: 'bg-red-100 dark:bg-red-900/20',
-      change: '+3',
-      changeType: 'negative' as const
     },
     {
       title: 'Overdue Invoices',
@@ -71,20 +155,74 @@ const DashboardPage: React.FC = () => {
       icon: 'file-text',
       color: 'text-yellow-600',
       bgColor: 'bg-yellow-100 dark:bg-yellow-900/20',
-      change: '-1',
-      changeType: 'positive' as const
     }
   ];
+
+  const getStatusColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'completed':
+        return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400';
+      case 'confirmed':
+        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400';
+      case 'items_dispatched':
+      case 'in_progress':
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
+      case 'pending':
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+      default:
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-muted-foreground mt-2">
-          Welcome back! Here's what's happening with your business today.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
+          <p className="text-muted-foreground mt-2">
+            {isAdmin() && currentOutlet 
+              ? `Viewing data for ${currentOutlet.name}`
+              : isAdmin()
+              ? 'Viewing aggregated data across all outlets'
+              : `Welcome back! Here's what's happening with your outlet today.`}
+          </p>
+        </div>
+        {isAdmin() && aggregatedStats && (
+          <div className="text-sm text-muted-foreground">
+            <span className="font-medium">All Outlets:</span> {aggregatedStats.totalCustomers} customers, {aggregatedStats.totalOrders} orders
+          </div>
+        )}
       </div>
+
+      {/* Admin: Show aggregated stats comparison if outlet selected */}
+      {isAdmin() && aggregatedStats && currentOutlet && (
+        <div className="bg-muted/50 border border-border rounded-lg p-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+              <p className="text-muted-foreground">All Outlets - Customers</p>
+              <p className="text-lg font-semibold">{aggregatedStats.totalCustomers}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">All Outlets - Orders</p>
+              <p className="text-lg font-semibold">{aggregatedStats.totalOrders}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">All Outlets - Revenue</p>
+              <p className="text-lg font-semibold">{formatRevenue(aggregatedStats.totalRevenue)}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">All Outlets - Pending</p>
+              <p className="text-lg font-semibold">{aggregatedStats.pendingOrders}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -98,21 +236,6 @@ const DashboardPage: React.FC = () => {
                 <p className="text-2xl font-bold text-foreground mt-1">
                   {stat.value}
                 </p>
-                <div className="flex items-center mt-2">
-                  <Icon 
-                    name={stat.changeType === 'positive' ? 'trending-up' : 'trending-down'} 
-                    size={16} 
-                    className={`mr-1 ${
-                      stat.changeType === 'positive' ? 'text-green-500' : 'text-red-500'
-                    }`} 
-                  />
-                  <span className={`text-sm font-medium ${
-                    stat.changeType === 'positive' ? 'text-green-600' : 'text-red-600'
-                  }`}>
-                    {stat.change}
-                  </span>
-                  <span className="text-sm text-muted-foreground ml-1">from last month</span>
-                </div>
               </div>
               <div className={`w-12 h-12 rounded-lg ${stat.bgColor} flex items-center justify-center`}>
                 <Icon name={stat.icon} size={24} className={stat.color} />
@@ -142,33 +265,30 @@ const DashboardPage: React.FC = () => {
           <h3 className="text-lg font-semibold text-foreground mb-4">
             Recent Orders
           </h3>
-          <div className="space-y-3">
-            {[
-              { id: 'ORD-001', customer: 'John Doe', amount: '₹25,000', status: 'Confirmed' },
-              { id: 'ORD-002', customer: 'Jane Smith', amount: '₹18,500', status: 'Pending' },
-              { id: 'ORD-003', customer: 'Mike Johnson', amount: '₹32,000', status: 'In Progress' },
-              { id: 'ORD-004', customer: 'Sarah Wilson', amount: '₹15,750', status: 'Completed' },
-              { id: 'ORD-005', customer: 'David Brown', amount: '₹28,900', status: 'Confirmed' }
-            ].map((order) => (
-              <div key={order.id} className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                <div>
-                  <p className="font-medium text-foreground">{order.id}</p>
-                  <p className="text-sm text-muted-foreground">{order.customer}</p>
+          {recentOrders.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Icon name="shopping-cart" size={48} className="mx-auto mb-2 opacity-50" />
+              <p>No recent orders</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {recentOrders.map((order) => (
+                <div key={order.id} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                  <div>
+                    <p className="font-medium text-foreground">{order.order_number}</p>
+                    <p className="text-sm text-muted-foreground">{order.customer_name}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{formatDate(order.created_at)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-medium text-foreground">{formatRevenue(order.amount)}</p>
+                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium mt-1 ${getStatusColor(order.status)}`}>
+                      {order.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    </span>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-medium text-foreground">{order.amount}</p>
-                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                    order.status === 'Completed' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
-                    order.status === 'Confirmed' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' :
-                    order.status === 'In Progress' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400' :
-                    'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
-                  }`}>
-                    {order.status}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

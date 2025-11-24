@@ -91,9 +91,12 @@ const AddUserPage: React.FC = () => {
           is_active: formData.is_active,
         };
 
-        if (formData.role === 'manager' && formData.outlet_id) {
+        // Always include outlet_id if provided (for managers it's required)
+        if (formData.outlet_id) {
           payload.outlet_id = formData.outlet_id;
         }
+
+        console.log('Creating user with payload:', payload);
 
         await AuthService.createUser(payload);
 
@@ -120,7 +123,7 @@ const AddUserPage: React.FC = () => {
 
   const outletOptions = availableOutlets.map(outlet => ({
     value: outlet.id,
-    label: outlet.name
+    label: `${outlet.name}${outlet.code ? ` (${outlet.code})` : ''}`
   }));
 
   // Add empty option for outlet selection
@@ -128,6 +131,11 @@ const AddUserPage: React.FC = () => {
     { value: '', label: 'Select outlet (required for managers)' },
     ...outletOptions
   ];
+
+  // Show message if no outlets available
+  if (availableOutlets.length === 0) {
+    console.warn('No outlets available for assignment');
+  }
 
   if (!user || !hasPermission(user.role, 'users', 'create')) {
     return (
@@ -246,15 +254,17 @@ const AddUserPage: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Select
                 options={outletOptionsWithEmpty}
-                value={data.outlet_id}
+                value={data.outlet_id || ''}
                 onChange={(value) => {
+                  console.log('Outlet selected:', value);
                   setData({ outlet_id: value });
                   clearError('outlet_id');
                 }}
                 label="Outlet Assignment"
                 error={errors.outlet_id}
                 required={data.role === 'manager'}
-                disabled={isSubmitting}
+                disabled={isSubmitting || availableOutlets.length === 0}
+                placeholder={availableOutlets.length === 0 ? 'No outlets available. Create an outlet first.' : 'Select outlet (required for managers)'}
               />
               <Select
                 options={statusOptions}

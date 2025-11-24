@@ -8,7 +8,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { CustomerSubscriptionFormData } from '@/types/billing';
 import { Customer } from '@/types';
 import { BillingService } from '@/services/billingService';
-import { CustomerService } from '@/services/customerService';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
@@ -17,14 +16,13 @@ import Icon from '@/components/AppIcon';
 
 const NewCustomerSubscriptionPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user, getCurrentOutletId } = useAuth();
+  const { getCurrentOutletId } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [customers, setCustomers] = useState<Customer[]>([]);
 
   const [formData, setFormData] = useState<CustomerSubscriptionFormData>({
     customer_id: '',
-    start_date: new Date().toISOString().split('T')[0],
+    start_date: new Date().toISOString().split('T')[0] || '',
     quantity_per_day: 0,
     unit_price: 0,
     security_deposit: 0,
@@ -32,18 +30,8 @@ const NewCustomerSubscriptionPage: React.FC = () => {
   });
 
   useEffect(() => {
-    loadCustomers();
+    // Customers will be loaded by CustomerSelector component
   }, []);
-
-  const loadCustomers = async () => {
-    try {
-      const outletId = getCurrentOutletId();
-      const data = await CustomerService.getCustomers(outletId);
-      setCustomers(data);
-    } catch (err) {
-      console.error('Error loading customers:', err);
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,7 +67,7 @@ const NewCustomerSubscriptionPage: React.FC = () => {
           await BillingService.createSubscriptionPayment({
             subscription_id: subscription.id,
             outlet_id: outletId,
-            payment_date: new Date().toISOString().split('T')[0],
+            payment_date: new Date().toISOString().split('T')[0] || '',
             amount: formData.security_deposit,
             payment_method: 'cash',
             notes: 'Initial security deposit'
@@ -148,7 +136,15 @@ const NewCustomerSubscriptionPage: React.FC = () => {
               type="date"
               label="End Date (Optional)"
               value={formData.end_date || ''}
-              onChange={(e) => setFormData({ ...formData, end_date: e.target.value || undefined })}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val) {
+                  setFormData({ ...formData, end_date: val });
+                } else {
+                  const { end_date, ...rest } = formData;
+                  setFormData(rest as CustomerSubscriptionFormData);
+                }
+              }}
               disabled={isSubmitting}
             />
             <Input

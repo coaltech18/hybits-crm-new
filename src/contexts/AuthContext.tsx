@@ -32,7 +32,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       if (currentUser) {
         // Load available outlets for the user
-        const outlets = await OutletService.getAllOutlets();
+        let outlets = await OutletService.getAllOutlets();
+        
+        // Manager: Only see their assigned outlet
+        if (currentUser.role === 'manager' && currentUser.outlet_id) {
+          outlets = outlets.filter((o: any) => o.id === currentUser.outlet_id);
+        }
+        // Accountant and Admin: See all outlets
+        
         setAvailableOutlets(outlets);
         
         // Set current outlet
@@ -40,7 +47,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const outlet = outlets.find((o: any) => o.id === currentUser.outlet_id);
           setCurrentOutlet(outlet || null);
         } else if (outlets.length > 0) {
-          // Admin can choose any outlet, default to first one
+          // Admin/Accountant can choose any outlet, default to first one
           setCurrentOutlet(outlets[0] || null);
         }
       }
@@ -61,7 +68,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(loggedInUser);
       
       // Load available outlets for the user
-      const outlets = await OutletService.getAllOutlets();
+      let outlets = await OutletService.getAllOutlets();
+      
+      // Manager: Only see their assigned outlet
+      if (loggedInUser.role === 'manager' && loggedInUser.outlet_id) {
+        outlets = outlets.filter((o: any) => o.id === loggedInUser.outlet_id);
+      }
+      // Accountant and Admin: See all outlets
+      
       setAvailableOutlets(outlets);
       
       // Set current outlet
@@ -69,7 +83,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const outlet = outlets.find((o: any) => o.id === loggedInUser.outlet_id);
         setCurrentOutlet(outlet || null);
       } else if (outlets.length > 0) {
-        // Admin can choose any outlet, default to first one
+        // Admin/Accountant can choose any outlet, default to first one
         setCurrentOutlet(outlets[0] || null);
       }
     } catch (error) {

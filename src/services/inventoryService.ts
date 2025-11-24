@@ -104,14 +104,13 @@ class InventoryService {
         name: itemData.name,
         description: itemData.description,
         category: itemData.category,
-        subcategory: itemData.subcategory,
         condition: itemData.condition || 'excellent',
         total_quantity: itemData.total_quantity,
         available_quantity: itemData.available_quantity || itemData.total_quantity,
         reserved_quantity: 0,
         unit_price: itemData.unit_price,
-        gst_rate: itemData.gst_rate || 0,
-        hsn_code: itemData.hsn_code,
+        gst_rate: (itemData as any).gst_rate || 0,
+        hsn_code: (itemData as any).hsn_code,
         reorder_point: itemData.reorder_point || 0,
       };
 

@@ -23,7 +23,7 @@ export async function getSignedUrl(key: string, expires: number = 3600): Promise
     .from('inventory-images')
     .createSignedUrl(key, expires);
   
-  return { url: data?.signedUrl || data?.signedURL || null, error };
+  return { url: data?.signedUrl || null, error };
 }
 
 export async function deleteImage(key: string): Promise<{ error?: any }> {

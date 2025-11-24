@@ -37,17 +37,21 @@ BEGIN
   LOOP
     BEGIN
       UPDATE public.entity_sequences
-      SET last_seq = last_seq + 1, updated_at = NOW()
+      SET last_seq = entity_sequences.last_seq + 1, updated_at = NOW()
       WHERE entity = p_entity AND outlet_id IS NOT DISTINCT FROM p_outlet
-      RETURNING last_seq INTO cur;
+      RETURNING entity_sequences.last_seq INTO cur;
 
       IF FOUND THEN
         RETURN cur;
       END IF;
 
+      -- Insert with ON CONFLICT - use subquery to avoid ambiguity
       INSERT INTO public.entity_sequences(entity, outlet_id, last_seq)
       VALUES (p_entity, p_outlet, 1)
-      ON CONFLICT (entity, outlet_id) DO UPDATE SET last_seq = last_seq + 1, updated_at = NOW()
+      ON CONFLICT (entity, outlet_id) 
+      DO UPDATE SET 
+        last_seq = (SELECT last_seq FROM public.entity_sequences es WHERE es.entity = EXCLUDED.entity AND es.outlet_id IS NOT DISTINCT FROM EXCLUDED.outlet_id) + 1,
+        updated_at = NOW()
       RETURNING last_seq INTO cur;
 
       RETURN cur;

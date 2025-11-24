@@ -20,11 +20,17 @@ interface UserProfileRow {
 }
 
 const mapProfileToUser = (profile: UserProfileRow, fallbackEmail?: string): User => {
+  // Normalize role to lowercase to ensure it matches the UserRole type
+  const normalizedRole = profile.role?.toLowerCase() || 'manager';
+  const validRole: User['role'] = (normalizedRole === 'admin' || normalizedRole === 'manager' || normalizedRole === 'accountant') 
+    ? normalizedRole 
+    : 'manager'; // Default to manager if invalid role
+
   const user: User = {
     id: profile.id,
     email: profile.email || fallbackEmail || '',
     full_name: profile.full_name,
-    role: profile.role as User['role'],
+    role: validRole,
     is_active: profile.is_active,
     created_at: profile.created_at,
     updated_at: profile.updated_at,

@@ -5,7 +5,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Upload, X, Image as ImageIcon, AlertCircle } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import ImageService from '@/services/imageService';
+import * as ImageService from '@/services/imageService';
 
 interface ImageUploadProps {
   value?: string;
@@ -79,15 +79,9 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
       setPreviewUrl(preview);
 
       // Upload to Supabase Storage
-      const result = await ImageService.uploadImage({
-        file,
-        bucket: 'inventory-images',
-        folder: 'items',
-        generateThumbnail: true,
-        maxWidth: 800,
-        maxHeight: 600,
-        quality: 0.8
-      });
+      // Get outlet ID from context or use default
+      const outletId = 'default'; // TODO: Get from auth context
+      const result = await ImageService.uploadImage(file, outletId);
 
       if (result.error) {
         onError?.(result.error);
@@ -95,7 +89,13 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         return;
       }
 
-      onChange(result.url);
+      // Get signed URL for the uploaded image
+      const urlResult = await ImageService.getSignedUrl(result.key);
+      if (urlResult.url) {
+        onChange(urlResult.url);
+      } else {
+        onError?.('Failed to get image URL');
+      }
       
     } catch (error: any) {
       onError?.(error.message || 'Failed to upload image');

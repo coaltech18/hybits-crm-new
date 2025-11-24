@@ -41,6 +41,18 @@ import SettingsPage from '@/pages/settings/SettingsPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 import GSTReportPage from '@/pages/reports/GSTReportPage';
 
+// Helper function to get default route based on user role
+const getDefaultRoute = (role: string): string => {
+  switch (role) {
+    case 'accountant':
+      return '/accounting';
+    case 'admin':
+    case 'manager':
+    default:
+      return '/dashboard';
+  }
+};
+
 // Protected Route Component
 const ProtectedRoute: React.FC<{ 
   children: React.ReactNode; 
@@ -67,18 +79,18 @@ const ProtectedRoute: React.FC<{
 
   // Check if route requires admin
   if (requireAdmin && !hasPermission(user.role, 'users', 'read')) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={getDefaultRoute(user.role)} replace />;
   }
 
   // Check if route has allowed roles restriction
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={getDefaultRoute(user.role)} replace />;
   }
 
   return <>{children}</>;
 };
 
-// Public Route Component (redirects to dashboard if already logged in)
+// Public Route Component (redirects to role-based default route if already logged in)
 const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
 
@@ -91,10 +103,21 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }
 
   if (user) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={getDefaultRoute(user.role)} replace />;
   }
 
   return <>{children}</>;
+};
+
+// Default Route Component (redirects based on role)
+const DefaultRoute: React.FC = () => {
+  const { user } = useAuth();
+  
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+  
+  return <Navigate to={getDefaultRoute(user.role)} replace />;
 };
 
 const AppRoutes: React.FC = () => {
@@ -121,8 +144,15 @@ const AppRoutes: React.FC = () => {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<DashboardPage />} />
+        <Route index element={<DefaultRoute />} />
+        <Route 
+          path="dashboard" 
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <DashboardPage />
+            </ProtectedRoute>
+          } 
+        />
         <Route path="inventory" element={<InventoryPage />} />
         <Route path="inventory/new" element={<NewItemPage />} />
         <Route path="customers" element={<CustomersPage />} />

@@ -16,9 +16,12 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ user, onToggleSidebar }) => {
-  const { logout } = useAuth();
+  const { logout, user: currentUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  
+  // Use currentUser from AuthContext instead of prop to ensure latest data
+  const displayUser = currentUser || user;
 
   const handleLogout = async () => {
     try {
@@ -123,15 +126,15 @@ const Header: React.FC<HeaderProps> = ({ user, onToggleSidebar }) => {
             >
               <div className="w-9 h-9 bg-gradient-to-br from-primary to-primary/80 rounded-xl flex items-center justify-center shadow-sm">
                 <span className="text-primary-foreground text-sm font-bold">
-                  {user?.full_name?.charAt(0) || 'U'}
+                  {displayUser?.full_name?.charAt(0).toUpperCase() || 'U'}
                 </span>
               </div>
               <div className="hidden md:block text-left">
                 <p className="text-sm font-medium text-foreground">
-                  {user?.full_name || 'User'}
+                  {displayUser?.email || displayUser?.full_name || 'User'}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  {user?.role || 'Employee'}
+                <p className="text-xs text-muted-foreground capitalize">
+                  {displayUser?.role || 'user'}
                 </p>
               </div>
               <Icon name="chevron-down" size={16} />
@@ -143,10 +146,13 @@ const Header: React.FC<HeaderProps> = ({ user, onToggleSidebar }) => {
                 <div className="py-2">
                   <div className="px-4 py-3 border-b border-border bg-gradient-to-r from-muted/20 to-muted/10">
                     <p className="text-sm font-semibold text-foreground">
-                      {user?.full_name || 'User'}
+                      {displayUser?.full_name || 'User'}
                     </p>
                     <p className="text-xs text-muted-foreground font-medium">
-                      {user?.email || 'user@example.com'}
+                      {displayUser?.email || 'user@example.com'}
+                    </p>
+                    <p className="text-xs text-muted-foreground/70 capitalize mt-1">
+                      Role: {displayUser?.role || 'user'}
                     </p>
                   </div>
                   

@@ -34,7 +34,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
         )
       : options;
 
-    const selectedOption = options.find(option => option.value === value);
+    const selectedOption = options.find(option => String(option.value) === String(value));
 
     useEffect(() => {
       const handleClickOutside = (event: MouseEvent) => {

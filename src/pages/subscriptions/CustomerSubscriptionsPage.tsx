@@ -31,7 +31,9 @@ const CustomerSubscriptionsPage: React.FC = () => {
       setError(null);
       
       const outletId = isAdmin() ? undefined : getCurrentOutletId();
-      const data = await BillingService.getCustomerSubscriptions({ outletId });
+      const data = await BillingService.getCustomerSubscriptions(
+        outletId ? { outletId } : undefined
+      );
       setSubscriptions(data);
     } catch (err: any) {
       console.error('Error loading subscriptions:', err);
@@ -44,6 +46,10 @@ const CustomerSubscriptionsPage: React.FC = () => {
   const handleGenerateInvoices = async () => {
     try {
       setGeneratingInvoices(true);
+      if (!invoiceDate) {
+        alert('Please select a date');
+        return;
+      }
       const selectedDate = new Date(invoiceDate);
       const results = await BillingService.rpcGenerateMonthlyInvoices(selectedDate);
       
@@ -104,7 +110,7 @@ const CustomerSubscriptionsPage: React.FC = () => {
             <Input
               type="date"
               label="Billing Date"
-              value={invoiceDate}
+              value={invoiceDate || ''}
               onChange={(e) => setInvoiceDate(e.target.value)}
             />
             <div className="flex space-x-2">

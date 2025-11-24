@@ -39,7 +39,7 @@ interface OrderItem {
 
 const NewOrderPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user, currentOutlet, getCurrentOutletId } = useAuth();
+  const { user, getCurrentOutletId } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
@@ -153,7 +153,9 @@ const NewOrderPage: React.FC = () => {
       try {
         setLoadingItems(true);
         const currentOutletId = getCurrentOutletId();
-        const items = await inventoryService.getInventoryItems({ outletId: currentOutletId });
+        const items = await inventoryService.getInventoryItems(
+          currentOutletId ? { outletId: currentOutletId } : undefined
+        );
         setInventoryItems(items);
       } catch (error) {
         console.error('Error fetching inventory items:', error);
@@ -180,14 +182,20 @@ const NewOrderPage: React.FC = () => {
 
   const updateOrderItem = (index: number, field: keyof OrderItem, value: any) => {
     const updated = [...selectedItems];
-    updated[index] = { ...updated[index], [field]: value };
+    const currentItem = updated[index];
+    if (!currentItem) return;
+    
+    updated[index] = { ...currentItem, [field]: value };
     
     // If item_id changed, update item_name and rate
     if (field === 'item_id') {
       const item = inventoryItems.find(i => i.id === value);
       if (item) {
-        updated[index].item_name = item.name;
-        updated[index].rate = item.unit_price || 0;
+        updated[index] = {
+          ...updated[index],
+          item_name: item.name,
+          rate: item.unit_price || 0
+        };
       }
     }
     

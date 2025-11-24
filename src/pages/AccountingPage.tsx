@@ -5,21 +5,23 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Invoice } from '@/types/billing';
-import { BillingService } from '@/services/billingService';
+import { Invoice, InvoiceService } from '@/services/invoiceService';
+import { Outlet } from '@/types';
 import Button from '@/components/ui/Button';
+import Select from '@/components/ui/Select';
 import Icon from '@/components/AppIcon';
 
 const AccountingPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, getCurrentOutletId, isAdmin, isManager, isAccountant, availableOutlets } = useAuth();
   const navigate = useNavigate();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedOutletId, setSelectedOutletId] = useState<string>('');
 
   useEffect(() => {
     loadInvoices();
-  }, [user]);
+  }, [user, selectedOutletId]);
 
   const loadInvoices = async () => {
     if (!user) return;
@@ -28,7 +30,20 @@ const AccountingPage: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      const invoicesData = await BillingService.getInvoices(user.id);
+      let outletId: string | undefined;
+
+      if (isManager()) {
+        // Manager: Always filtered by their outlet
+        outletId = getCurrentOutletId();
+      } else if (isAccountant()) {
+        // Accountant: All invoices by default, or filtered by selected outlet
+        outletId = selectedOutletId || undefined;
+      } else if (isAdmin()) {
+        // Admin: All invoices by default, or filtered by selected outlet
+        outletId = selectedOutletId || undefined;
+      }
+
+      const invoicesData = await InvoiceService.getInvoices(outletId);
       setInvoices(invoicesData);
     } catch (err: any) {
       console.error('Error loading invoices:', err);
@@ -39,14 +54,14 @@ const AccountingPage: React.FC = () => {
   };
 
   const getInvoiceStats = () => {
-    const totalAmount = invoices.reduce((sum, invoice) => sum + invoice.amount, 0);
+    const totalAmount = invoices.reduce((sum, invoice) => sum + invoice.total_amount, 0);
     const paidAmount = invoices
-      .filter(invoice => invoice.status === 'paid')
-      .reduce((sum, invoice) => sum + invoice.amount, 0);
+      .filter(invoice => invoice.payment_status === 'paid')
+      .reduce((sum, invoice) => sum + invoice.total_amount, 0);
     const pendingAmount = invoices
-      .filter(invoice => invoice.status === 'pending')
-      .reduce((sum, invoice) => sum + invoice.amount, 0);
-    const overdueCount = invoices.filter(invoice => invoice.status === 'overdue').length;
+      .filter(invoice => invoice.payment_status === 'pending')
+      .reduce((sum, invoice) => sum + invoice.total_amount, 0);
+    const overdueCount = invoices.filter(invoice => invoice.payment_status === 'overdue').length;
 
     return { totalAmount, paidAmount, pendingAmount, overdueCount };
   };
@@ -81,10 +96,32 @@ const AccountingPage: React.FC = () => {
           </p>
         </div>
         
-        <Button onClick={() => navigate('/accounting/invoice/new')}>
-          <Icon name="plus" size={20} className="mr-2" />
-          Create Invoice
-        </Button>
+        <div className="flex items-center space-x-4">
+          {/* Outlet Filter - Show for Admin and Accountant only */}
+          {(isAdmin() || isAccountant()) && availableOutlets.length > 0 && (
+            <div className="flex items-center space-x-2">
+              <Icon name="map-pin" size={16} className="text-muted-foreground" />
+              <Select
+                options={[
+                  { value: '', label: 'All Outlets' },
+                  ...availableOutlets.map((outlet: Outlet) => ({
+                    value: outlet.id,
+                    label: outlet.name
+                  }))
+                ]}
+                value={selectedOutletId}
+                onChange={(value) => setSelectedOutletId(value)}
+                placeholder="Filter by outlet"
+                className="min-w-[200px]"
+              />
+            </div>
+          )}
+          
+          <Button onClick={() => navigate('/accounting/invoice/new')}>
+            <Icon name="plus" size={20} className="mr-2" />
+            Create Invoice
+          </Button>
+        </div>
       </div>
 
       {/* Error Message */}
@@ -175,19 +212,19 @@ const AccountingPage: React.FC = () => {
                     {invoice.invoice_number || `INV-${invoice.id.slice(-6)}`}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    {invoice.description}
+                    {invoice.customer_name || invoice.notes || 'No description'}
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="font-medium text-foreground">₹{invoice.amount.toLocaleString()}</p>
+                  <p className="font-medium text-foreground">₹{invoice.total_amount.toLocaleString()}</p>
                   <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                    invoice.status === 'paid' 
+                    invoice.payment_status === 'paid' 
                       ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                      : invoice.status === 'pending'
+                      : invoice.payment_status === 'pending'
                       ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
                       : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
                   }`}>
-                    {invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)}
+                    {invoice.payment_status.charAt(0).toUpperCase() + invoice.payment_status.slice(1)}
                   </span>
                 </div>
               </div>

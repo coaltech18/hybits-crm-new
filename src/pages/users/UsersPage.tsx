@@ -12,6 +12,7 @@ import { User, UserRole } from '@/types';
 import { AuthService } from '@/services/AuthService';
 import { useAuth } from '@/contexts/AuthContext';
 import { hasPermission } from '@/utils/permissions';
+import { exportData, formatDateForExport } from '@/utils/exportUtils';
 
 const UsersPage: React.FC = () => {
   const navigate = useNavigate();
@@ -67,6 +68,42 @@ const UsersPage: React.FC = () => {
     return matchesSearch && matchesRole && matchesStatus;
   });
   }, [users, searchTerm, selectedRole, selectedStatus]);
+
+  const handleExport = () => {
+    if (filteredUsers.length === 0) {
+      alert('No users to export');
+      return;
+    }
+
+    const headers = [
+      'Email',
+      'Full Name',
+      'Role',
+      'Phone',
+      'Outlet',
+      'Status',
+      'Created At',
+      'Updated At',
+      'Last Login'
+    ];
+
+    const rows = filteredUsers.map(user => [
+      user.email,
+      user.full_name,
+      user.role,
+      user.phone || '',
+      user.outlet_name || '',
+      user.is_active ? 'Active' : 'Inactive',
+      formatDateForExport(user.created_at),
+      formatDateForExport(user.updated_at),
+      formatDateForExport(user.last_login)
+    ]);
+
+    exportData([headers, ...rows], 'excel', {
+      filename: `users_export_${new Date().toISOString().split('T')[0]}.xlsx`,
+      sheetName: 'Users'
+    });
+  };
 
   const getRoleColor = (role: UserRole) => {
     switch (role) {
@@ -174,7 +211,7 @@ const UsersPage: React.FC = () => {
               <Icon name="filter" size={16} className="mr-2" />
               Filters
             </Button>
-            <Button variant="outline">
+            <Button variant="outline" onClick={handleExport} disabled={filteredUsers.length === 0}>
               <Icon name="download" size={16} />
             </Button>
           </div>

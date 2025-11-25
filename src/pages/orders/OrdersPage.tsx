@@ -12,6 +12,7 @@ import { Order, OrderStatus, PaymentStatus, EventType } from '@/types';
 import { OrderService } from '@/services/orderService';
 import OrderDetailsModal from '@/components/ui/OrderDetailsModal';
 import EditOrderModal from '@/components/ui/EditOrderModal';
+import { exportData, formatDateForExport, formatCurrencyForExport } from '@/utils/exportUtils';
 
 // Mock data
 const mockOrders: Order[] = [
@@ -177,6 +178,52 @@ const OrdersPage: React.FC = () => {
       case 'cancelled': return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
       default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
     }
+  };
+
+  const handleExport = () => {
+    if (filteredOrders.length === 0) {
+      alert('No orders to export');
+      return;
+    }
+
+    const headers = [
+      'Order Number',
+      'Customer Name',
+      'Event Date',
+      'Event Type',
+      'Event Duration (hours)',
+      'Guest Count',
+      'Location Type',
+      'Total Amount',
+      'Status',
+      'Payment Status',
+      'Items Count',
+      'Notes',
+      'Created At',
+      'Updated At'
+    ];
+
+    const rows = filteredOrders.map(order => [
+      order.order_number,
+      order.customer_name,
+      order.event_date,
+      order.event_type,
+      order.event_duration || 0,
+      order.guest_count || 0,
+      order.location_type || '',
+      formatCurrencyForExport(order.total_amount),
+      order.status,
+      order.payment_status,
+      order.items?.length || 0,
+      order.notes || '',
+      formatDateForExport(order.created_at),
+      formatDateForExport(order.updated_at)
+    ]);
+
+    exportData([headers, ...rows], 'excel', {
+      filename: `orders_export_${new Date().toISOString().split('T')[0]}.xlsx`,
+      sheetName: 'Orders'
+    });
   };
 
   const getPaymentStatusColor = (status: PaymentStatus) => {
@@ -443,7 +490,7 @@ const OrdersPage: React.FC = () => {
               <Icon name="filter" size={16} className="mr-2" />
               Filters
             </Button>
-            <Button variant="outline">
+            <Button variant="outline" onClick={handleExport} disabled={filteredOrders.length === 0}>
               <Icon name="download" size={16} />
             </Button>
           </div>

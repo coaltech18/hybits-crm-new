@@ -12,6 +12,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Icon from '@/components/AppIcon';
+import { exportData, formatDateForExport } from '@/utils/exportUtils';
 
 const OutletsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -54,6 +55,48 @@ const OutletsPage: React.FC = () => {
     { value: 'active', label: 'Active' },
     { value: 'inactive', label: 'Inactive' }
   ];
+
+  const handleExport = () => {
+    if (filteredOutlets.length === 0) {
+      alert('No outlets to export');
+      return;
+    }
+
+    const headers = [
+      'Outlet Code',
+      'Name',
+      'Address',
+      'City',
+      'State',
+      'Pincode',
+      'Contact Person',
+      'Contact Phone',
+      'Contact Email',
+      'Status',
+      'Created At',
+      'Updated At'
+    ];
+
+    const rows = filteredOutlets.map(outlet => [
+      outlet.code,
+      outlet.name,
+      outlet.address.street,
+      outlet.address.city,
+      outlet.address.state,
+      outlet.address.pincode,
+      outlet.contact_person,
+      outlet.contact_phone,
+      outlet.contact_email,
+      outlet.is_active ? 'Active' : 'Inactive',
+      formatDateForExport(outlet.created_at),
+      formatDateForExport(outlet.updated_at)
+    ]);
+
+    exportData([headers, ...rows], 'excel', {
+      filename: `outlets_export_${new Date().toISOString().split('T')[0]}.xlsx`,
+      sheetName: 'Outlets'
+    });
+  };
 
   const getStatusColor = (isActive: boolean) => {
     return isActive 
@@ -126,7 +169,7 @@ const OutletsPage: React.FC = () => {
             <Icon name="filter" size={16} className="mr-2" />
             Filters
           </Button>
-          <Button variant="outline" className="flex-1">
+          <Button variant="outline" className="flex-1" onClick={handleExport} disabled={filteredOutlets.length === 0}>
             <Icon name="download" size={16} className="mr-2" />
             Export
           </Button>

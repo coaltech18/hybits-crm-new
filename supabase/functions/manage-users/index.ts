@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-explicit-any
-// @deno-types="https://deno.land/x/types/index.d.ts"
+// @ts-expect-error - Deno URL imports are resolved at runtime
 import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
+// @ts-expect-error - Deno URL imports are resolved at runtime
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.1";
 
 // Declare Deno global for TypeScript

@@ -8,7 +8,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { hasPermission } from '@/utils/permissions';
 import Icon from '@/components/AppIcon';
 import DashboardService, { DashboardStatsExtended, RecentOrder } from '@/services/dashboardService';
-import { DashboardStats } from '@/types';
 
 const DashboardPage: React.FC = () => {
   const { user, currentOutlet, getCurrentOutletId, isAdmin, isManager } = useAuth();

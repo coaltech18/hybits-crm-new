@@ -11,6 +11,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Icon from '@/components/AppIcon';
+import { exportData, formatDateForExport, formatCurrencyForExport } from '@/utils/exportUtils';
 
 const InvoicesPage: React.FC = () => {
   const { user } = useAuth();
@@ -75,6 +76,40 @@ const InvoicesPage: React.FC = () => {
     alert(`Downloading invoice ${invoice.invoice_number || invoice.id}`);
   };
 
+  const handleExport = () => {
+    if (filteredInvoices.length === 0) {
+      alert('No invoices to export');
+      return;
+    }
+
+    const headers = [
+      'Invoice Number',
+      'Description',
+      'Customer',
+      'Amount',
+      'Status',
+      'Due Date',
+      'Paid Date',
+      'Created At'
+    ];
+
+    const rows = filteredInvoices.map(invoice => [
+      invoice.invoice_number || invoice.id,
+      invoice.description || '',
+      '', // Customer name not available in billing Invoice type
+      formatCurrencyForExport(invoice.amount),
+      invoice.status,
+      formatDateForExport(invoice.due_date),
+      '', // Paid date not available in billing Invoice type
+      formatDateForExport(invoice.created_at)
+    ]);
+
+    exportData([headers, ...rows], 'excel', {
+      filename: `invoices_export_${new Date().toISOString().split('T')[0]}.xlsx`,
+      sheetName: 'Invoices'
+    });
+  };
+
   const getInvoiceStats = () => {
     const totalAmount = invoices.reduce((sum, invoice) => sum + invoice.amount, 0);
     const paidAmount = invoices
@@ -127,7 +162,7 @@ const InvoicesPage: React.FC = () => {
           </p>
         </div>
         
-        <Button variant="outline">
+        <Button variant="outline" onClick={handleExport} disabled={filteredInvoices.length === 0}>
           <Icon name="download" size={20} className="mr-2" />
           Export All
         </Button>

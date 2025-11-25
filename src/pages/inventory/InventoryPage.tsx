@@ -11,6 +11,7 @@ import Select from '@/components/ui/Select';
 import { InventoryItem, ItemCondition } from '@/types';
 import AppImage from '@/components/AppImage';
 import InventoryService from '@/services/inventoryService';
+import { exportData, formatDateForExport, formatCurrencyForExport } from '@/utils/exportUtils';
 
 // Mock data - Based on actual inventory items
 const mockInventoryItems: InventoryItem[] = [
@@ -203,6 +204,52 @@ const InventoryPage: React.FC = () => {
     }
   };
 
+  const handleExport = () => {
+    if (filteredItems.length === 0) {
+      alert('No items to export');
+      return;
+    }
+
+    const headers = [
+      'Item Code',
+      'Name',
+      'Description',
+      'Category',
+      'Subcategory',
+      'Condition',
+      'Total Quantity',
+      'Available Quantity',
+      'Reserved Quantity',
+      'Reorder Point',
+      'Unit Price',
+      'Last Movement',
+      'Created At',
+      'Updated At'
+    ];
+
+    const rows = filteredItems.map(item => [
+      item.code,
+      item.name,
+      item.description || '',
+      item.category,
+      item.subcategory || '',
+      item.condition,
+      item.total_quantity || 0,
+      item.available_quantity || 0,
+      item.reserved_quantity || 0,
+      item.reorder_point || 0,
+      formatCurrencyForExport(item.unit_price),
+      formatDateForExport(item.last_movement),
+      formatDateForExport(item.created_at),
+      formatDateForExport(item.updated_at)
+    ]);
+
+    exportData([headers, ...rows], 'excel', {
+      filename: `inventory_export_${new Date().toISOString().split('T')[0]}.xlsx`,
+      sheetName: 'Inventory'
+    });
+  };
+
   const getStockStatus = (item: InventoryItem) => {
     const available = item.available_quantity || 0;
     const reorderPoint = item.reorder_point || 0;
@@ -297,7 +344,7 @@ const InventoryPage: React.FC = () => {
               <Icon name="filter" size={16} className="mr-2" />
               Filters
             </Button>
-            <Button variant="outline">
+            <Button variant="outline" onClick={handleExport} disabled={filteredItems.length === 0}>
               <Icon name="download" size={16} />
             </Button>
           </div>

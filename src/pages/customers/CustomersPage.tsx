@@ -10,6 +10,7 @@ import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import { Customer, CustomerStatus } from '@/types';
 import { CustomerService } from '@/services/customerService';
+import { exportData, formatDateForExport } from '@/utils/exportUtils';
 
 // Mock data
 const mockCustomers: Customer[] = [
@@ -125,6 +126,54 @@ const CustomersPage: React.FC = () => {
     }
   };
 
+  const handleExport = () => {
+    if (filteredCustomers.length === 0) {
+      alert('No customers to export');
+      return;
+    }
+
+    // Prepare data for export
+    const headers = [
+      'Customer Code',
+      'Name',
+      'Email',
+      'Phone',
+      'Company',
+      'Address',
+      'City',
+      'State',
+      'Pincode',
+      'GSTIN',
+      'Status',
+      'Created At',
+      'Updated At'
+    ];
+
+    const rows = filteredCustomers.map(customer => [
+      customer.code,
+      customer.name,
+      customer.email,
+      customer.phone,
+      customer.company || 'Individual',
+      customer.address.street,
+      customer.address.city,
+      customer.address.state,
+      customer.address.pincode,
+      customer.gstin || '',
+      customer.status,
+      formatDateForExport(customer.created_at),
+      formatDateForExport(customer.updated_at)
+    ]);
+
+    const exportDataArray = [headers, ...rows];
+    
+    // Export as Excel by default
+    exportData(exportDataArray, 'excel', {
+      filename: `customers_export_${new Date().toISOString().split('T')[0]}.xlsx`,
+      sheetName: 'Customers'
+    });
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -166,7 +215,7 @@ const CustomersPage: React.FC = () => {
               <Icon name="filter" size={16} className="mr-2" />
               Filters
             </Button>
-            <Button variant="outline">
+            <Button variant="outline" onClick={handleExport} disabled={filteredCustomers.length === 0}>
               <Icon name="download" size={16} />
             </Button>
           </div>

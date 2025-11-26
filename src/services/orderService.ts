@@ -63,12 +63,13 @@ export class OrderService {
       const { data, error } = await supabase
         .from('rental_orders')
         .insert(insertData)
-        .select()
+        .select('id, order_number, customer_id, event_date, event_type, event_duration, guest_count, location_type, status, payment_status, total_amount, notes, created_at, updated_at')
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching rental_orders:', error);
-        throw new Error('Database error');
+        console.error('DB error creating rental_orders:', error);
+        console.error('Error details:', JSON.stringify(error, null, 2));
+        throw new Error(error.message || 'Database error: ' + (error.details || error.hint || 'Unknown error'));
       }
 
       if (!data) {
@@ -96,6 +97,111 @@ export class OrderService {
           console.error('Error creating order items:', itemsError);
           throw new Error(itemsError.message);
         }
+      }
+
+      // Automatically create invoice for the order
+      try {
+        // Fetch inventory item names for invoice descriptions
+        const itemIds = orderData.items.map(item => item.item_id);
+        const { data: inventoryItems, error: inventoryError } = await supabase
+          .from('inventory_items')
+          .select('id, name')
+          .in('id', itemIds);
+
+        if (inventoryError) {
+          console.warn('Error fetching inventory items for invoice:', inventoryError);
+        }
+
+        // Create a map of item_id to item_name
+        const itemNameMap = new Map<string, string>();
+        (inventoryItems || []).forEach((item: any) => {
+          itemNameMap.set(item.id, item.name || 'Unknown Item');
+        });
+
+        // Calculate invoice dates
+        const invoiceDate = new Date().toISOString().split('T')[0]; // Today's date
+        const eventDateObj = new Date(orderData.event_date);
+        // Due date: 30 days from invoice date, or event date + 7 days, whichever is later
+        const dueDateObj = new Date(eventDateObj);
+        dueDateObj.setDate(dueDateObj.getDate() + 7);
+        const defaultDueDate = new Date();
+        defaultDueDate.setDate(defaultDueDate.getDate() + 30);
+        const dueDate = dueDateObj > defaultDueDate 
+          ? dueDateObj.toISOString().split('T')[0]
+          : defaultDueDate.toISOString().split('T')[0];
+
+        // Convert order items to invoice items
+        const invoiceItems = orderData.items.map(item => ({
+          description: itemNameMap.get(item.item_id) || 'Rental Item',
+          quantity: item.quantity * ((item as any).rental_days || 1),
+          rate: item.rate,
+          gst_rate: 0 // Default GST rate, can be configured later
+        }));
+
+        // Calculate invoice totals
+        const subtotal = invoiceItems.reduce((sum, item) => sum + (item.quantity * item.rate), 0);
+        const totalGst = invoiceItems.reduce((sum, item) => {
+          const itemTotal = item.quantity * item.rate;
+          return sum + (itemTotal * item.gst_rate / 100);
+        }, 0);
+        const totalAmount = subtotal + totalGst;
+
+        // Create invoice
+        const invoiceInsertData: any = {
+          customer_id: data.customer_id,
+          order_id: data.id, // Link invoice to order
+          invoice_date: invoiceDate,
+          due_date: dueDate,
+          invoice_type: 'rental',
+          subtotal: subtotal,
+          total_gst: totalGst,
+          total_amount: totalAmount,
+          payment_status: 'pending',
+          notes: orderData.notes || `Invoice for order ${data.order_number}`,
+          created_by: user?.id
+        };
+
+        // Add outlet_id if available
+        if (outletId) {
+          invoiceInsertData.outlet_id = outletId;
+        }
+
+        const { data: invoiceData, error: invoiceError } = await supabase
+          .from('invoices')
+          .insert(invoiceInsertData)
+          .select('id')
+          .maybeSingle();
+
+        if (invoiceError) {
+          console.error('Error creating invoice:', invoiceError);
+          // Don't throw error - invoice creation failure shouldn't fail order creation
+          console.warn('Order created but invoice creation failed. Invoice can be created manually later.');
+        } else if (invoiceData && invoiceItems.length > 0) {
+          // Create invoice items
+          const invoiceItemsData = invoiceItems.map(item => ({
+            invoice_id: invoiceData.id,
+            description: item.description,
+            quantity: item.quantity,
+            rate: item.rate,
+            gst_rate: item.gst_rate,
+            amount: (item.quantity * item.rate) + (item.quantity * item.rate * item.gst_rate / 100)
+          }));
+
+          const { error: invoiceItemsError } = await supabase
+            .from('invoice_items')
+            .insert(invoiceItemsData);
+
+          if (invoiceItemsError) {
+            console.error('Error creating invoice items:', invoiceItemsError);
+            console.warn('Invoice created but items failed. Items can be added manually later.');
+          } else {
+            console.log(`Invoice ${invoiceData.id} created successfully for order ${data.order_number}`);
+          }
+        }
+      } catch (invoiceCreationError: any) {
+        // Log error but don't fail order creation
+        console.error('Unexpected error during invoice creation:', invoiceCreationError);
+        console.warn('Order created successfully but invoice creation encountered an error.');
       }
 
       return {

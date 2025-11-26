@@ -46,6 +46,7 @@ const NewOrderPage: React.FC = () => {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<OrderItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  const [itemsError, setItemsError] = useState<string | null>(null);
 
   const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<OrderFormData>({
     initialData: {
@@ -152,19 +153,56 @@ const NewOrderPage: React.FC = () => {
     const fetchItems = async () => {
       try {
         setLoadingItems(true);
-        const currentOutletId = getCurrentOutletId();
-        const items = await inventoryService.getInventoryItems(
-          currentOutletId ? { outletId: currentOutletId } : undefined
-        );
-        setInventoryItems(items);
-      } catch (error) {
+        setItemsError(null);
+        
+        // Temporarily fetch all items to debug - we'll add outlet filtering back once we confirm items load
+        // For managers, filter by their outlet. For admins/accountants, show all items
+        const currentOutletId = user?.role === 'manager' ? getCurrentOutletId() : undefined;
+        console.log('Fetching inventory items for outlet:', currentOutletId, 'User role:', user?.role);
+        console.log('Current user:', user);
+        console.log('Current outlet ID from getCurrentOutletId():', getCurrentOutletId());
+        
+        // For now, fetch all items regardless of outlet to debug
+        const items = await inventoryService.getInventoryItems(undefined);
+        console.log('All items fetched (no filter):', items.length);
+        
+        // If manager and we have items, filter client-side for now
+        let filteredItems = items;
+        if (user?.role === 'manager' && currentOutletId && items.length > 0) {
+          filteredItems = items.filter((item: any) => 
+            !item.outlet_id || item.outlet_id === currentOutletId
+          );
+          console.log('Filtered items for manager:', filteredItems.length);
+        }
+        
+        const itemsToUse = filteredItems;
+        
+        console.log('Fetched inventory items:', itemsToUse);
+        console.log('Number of items:', itemsToUse.length);
+        console.log('Items details:', itemsToUse.map((i: any) => ({ id: i.id, name: i.name, code: i.code, outlet_id: i.outlet_id })));
+        
+        setInventoryItems(itemsToUse);
+        
+        if (itemsToUse.length === 0) {
+          console.warn('No inventory items found. Check if items exist in database.');
+          if (user?.role === 'manager') {
+            setItemsError('No inventory items found for your outlet. Please add items to inventory first.');
+          } else {
+            setItemsError('No inventory items found. Please add items to inventory first.');
+          }
+        }
+      } catch (error: any) {
         console.error('Error fetching inventory items:', error);
+        setItemsError(error.message || 'Failed to load inventory items. Please refresh the page.');
       } finally {
         setLoadingItems(false);
       }
     };
-    fetchItems();
-  }, [getCurrentOutletId]);
+    
+    if (user) {
+      fetchItems();
+    }
+  }, [user]);
 
   const addOrderItem = () => {
     setSelectedItems([...selectedItems, {
@@ -371,7 +409,50 @@ const NewOrderPage: React.FC = () => {
             </div>
             
             {loadingItems ? (
-              <div className="text-center py-4 text-muted-foreground">Loading inventory items...</div>
+              <div className="text-center py-4 text-muted-foreground">
+                <Icon name="loader" size={24} className="mx-auto mb-2 animate-spin" />
+                Loading inventory items...
+              </div>
+            ) : itemsError ? (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+                <div className="flex items-center">
+                  <Icon name="alert-triangle" size={20} className="text-yellow-600 mr-3" />
+                  <div>
+                    <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">{itemsError}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate('/inventory/new')}
+                      className="mt-2"
+                    >
+                      <Icon name="plus" size={14} className="mr-2" />
+                      Add Inventory Item
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : inventoryItems.length === 0 ? (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+                <div className="flex items-center">
+                  <Icon name="alert-triangle" size={20} className="text-yellow-600 mr-3" />
+                  <div>
+                    <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                      No inventory items found. Please add items to inventory first.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate('/inventory/new')}
+                      className="mt-2"
+                    >
+                      <Icon name="plus" size={14} className="mr-2" />
+                      Add Inventory Item
+                    </Button>
+                  </div>
+                </div>
+              </div>
             ) : (
               <div className="space-y-4">
                 {selectedItems.map((item, index) => (
@@ -380,7 +461,10 @@ const NewOrderPage: React.FC = () => {
                       <Select
                         options={[
                           { value: '', label: 'Select item' },
-                          ...inventoryItems.map(i => ({ value: i.id, label: `${i.name} (${i.code})` }))
+                          ...inventoryItems.map(i => ({ 
+                            value: i.id, 
+                            label: `${i.name}${i.code ? ` (${i.code})` : ''}` 
+                          }))
                         ]}
                         value={item.item_id}
                         onChange={(value) => updateOrderItem(index, 'item_id', value)}

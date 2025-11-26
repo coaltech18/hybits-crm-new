@@ -25,6 +25,8 @@ import NewInvoicePage from '@/pages/billing/NewInvoicePage';
 import InvoicesPage from '@/pages/billing/InvoicesPage';
 import SubscriptionsPage from '@/pages/SubscriptionsPage';
 import AccountingPage from '@/pages/AccountingPage';
+import PaymentsPage from '@/pages/accounting/PaymentsPage';
+import InvoiceDetailPage from '@/pages/accounting/InvoiceDetailPage';
 import SubscriptionEntryPage from '@/pages/subscriptions/SubscriptionEntryPage';
 import CustomerSubscriptionsPage from '@/pages/subscriptions/CustomerSubscriptionsPage';
 import NewCustomerSubscriptionPage from '@/pages/subscriptions/NewCustomerSubscriptionPage';
@@ -184,6 +186,22 @@ const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
               <InvoicesPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="accounting/invoices/:id" 
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InvoiceDetailPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="accounting/payments" 
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <PaymentsPage />
             </ProtectedRoute>
           } 
         />

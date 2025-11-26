@@ -77,7 +77,7 @@ BEGIN
   seq := public.next_entity_seq(p_entity, p_outlet_id);
 
   IF p_outlet_id IS NOT NULL THEN
-    SELECT UPPER(COALESCE(code, 'OUT')) INTO outcode FROM public.locations WHERE id = p_outlet_id LIMIT 1;
+    SELECT UPPER(COALESCE(locations.code, 'OUT')) INTO outcode FROM public.locations WHERE id = p_outlet_id LIMIT 1;
     IF outcode IS NULL THEN
       outcode := 'OUT';
     END IF;

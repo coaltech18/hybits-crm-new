@@ -67,8 +67,8 @@ const InvoicesPage: React.FC = () => {
   };
 
   const handleViewInvoice = (invoice: Invoice) => {
-    // In a real app, this would open a detailed invoice view
-    alert(`Viewing invoice ${invoice.invoice_number || invoice.id}`);
+    // Navigate to invoice detail page
+    window.location.href = `/accounting/invoices/${invoice.id}`;
   };
 
   const handleDownloadInvoice = (invoice: Invoice) => {

@@ -1,9 +1,11 @@
 // ============================================================================
 // CUSTOMERS PAGE
+// Hotfix: Added outlet_id filtering for multi-tenant isolation
 // ============================================================================
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import Icon from '@/components/AppIcon';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -73,19 +75,24 @@ const mockCustomers: Customer[] = [
 
 const CustomersPage: React.FC = () => {
   const navigate = useNavigate();
+  const { getCurrentOutletId, currentOutlet } = useAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<CustomerStatus | ''>('');
 
-  // Load customers from database
+  // Get current outlet ID for multi-tenant filtering
+  const currentOutletId = getCurrentOutletId();
+
+  // Load customers from database with outlet filtering
   useEffect(() => {
     const loadCustomers = async () => {
       try {
         setLoading(true);
         setError(null);
-        const customersData = await CustomerService.getCustomers();
+        // CRITICAL: Pass outletId for multi-tenant isolation
+        const customersData = await CustomerService.getCustomers(currentOutletId);
         setCustomers(customersData);
       } catch (err: any) {
         console.error('Error loading customers:', err);
@@ -98,7 +105,7 @@ const CustomersPage: React.FC = () => {
     };
 
     loadCustomers();
-  }, []);
+  }, [currentOutletId]);
 
   const statusOptions = [
     { value: '', label: 'All Status' },

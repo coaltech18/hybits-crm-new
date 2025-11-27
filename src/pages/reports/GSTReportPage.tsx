@@ -1,8 +1,10 @@
 // ============================================================================
 // GST REPORT PAGE
+// Hotfix: Added outlet_id filtering for multi-tenant isolation
 // ============================================================================
 
 import React, { useMemo, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import Select from '@/components/ui/Select';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/AppIcon';
@@ -80,6 +82,7 @@ const Section: React.FC<{ title: string; rows: any[] }>
 };
 
 const GSTReportPage: React.FC = () => {
+  const { getCurrentOutletId, currentOutlet, isAdmin } = useAuth();
   const now = new Date();
   const [month, setMonth] = useState<number>(now.getMonth() + 1);
   const [year, setYear] = useState<number>(now.getFullYear());
@@ -87,13 +90,20 @@ const GSTReportPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<GSTReportGroupedResult | null>(null);
 
+  // Get current outlet ID for multi-tenant filtering
+  const currentOutletId = getCurrentOutletId();
+
   const canExport = useMemo(() => !!data && !loading, [data, loading]);
 
   const handleGenerate = async () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await GSTReportService.getGSTReport(month, year);
+      // CRITICAL: Pass outletId for multi-tenant isolation
+      // Non-admin users must have outletId; admin can pass undefined to see all outlets
+      const userIsAdmin = isAdmin();
+      // For non-admin users, ensure outletId is provided (service will validate)
+      const res = await GSTReportService.getGSTReport(month, year, currentOutletId, userIsAdmin);
       setData(res);
     } catch (err: any) {
       setError(err.message || 'Failed to generate report');
@@ -112,7 +122,12 @@ const GSTReportPage: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">GST Summary</h1>
-          <p className="text-muted-foreground mt-2">Export monthly GST summary (Domestic / SEZ / Export)</p>
+          <p className="text-muted-foreground mt-2">
+            Export monthly GST summary (Domestic / SEZ / Export)
+            {currentOutlet && (
+              <span className="ml-2 text-primary">• {currentOutlet.name}</span>
+            )}
+          </p>
         </div>
 
         <div className="flex items-center gap-2">

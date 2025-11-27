@@ -1,11 +1,25 @@
 // ===================================================================
 // HYBITS CRM — Invoice PDF Generation Edge Function
 // Generates PDF invoices using pdf-lib (Deno-compatible)
+// 
+// NOTE: This file uses Deno-specific imports and APIs.
+// TypeScript errors about missing modules in IDE are expected - 
+// code runs correctly in Deno runtime at Supabase Edge Functions.
 // ===================================================================
 
+// @ts-ignore - Deno-specific import, works at runtime
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+// @ts-ignore - ESM import, works at runtime
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// @ts-ignore - ESM import, works at runtime
 import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1'
+
+// Deno global type declaration (for IDE support)
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined
+  }
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,7 +66,7 @@ interface InvoiceData {
   }>
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -88,7 +102,7 @@ serve(async (req) => {
     // Create Supabase client with service role for data access
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey)
 
     // Create client with user token for auth verification
     const userToken = authHeader.replace('Bearer ', '')
@@ -96,31 +110,62 @@ serve(async (req) => {
       global: { headers: { Authorization: authHeader } }
     })
 
-    // Verify user has permission (admin/manager/accountant)
+    // Verify user authentication
     const { data: { user }, error: authError } = await userSupabase.auth.getUser(userToken)
-    if (authError || !user) {
+    if (authError || !user || !user.id) {
       return new Response(
         JSON.stringify({ error: 'Invalid authentication' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    // Get user profile to check role
-    const { data: profile } = await userSupabase
+    // Fetch user profile with outlet_id for ownership check
+    // Note: user_profiles.id references auth.users.id (not user_id)
+    const { data: profile, error: profileError } = await supabaseAdmin
       .from('user_profiles')
-      .select('role')
-      .eq('user_id', user.id)
+      .select('id, role, outlet_id')
+      .eq('id', user.id)
       .single()
 
-    if (!profile || !['admin', 'manager', 'accountant'].includes(profile.role)) {
+    if (profileError || !profile) {
+      return new Response(
+        JSON.stringify({ error: 'Profile not found' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Verify user has required role
+    if (!['admin', 'manager', 'accountant'].includes(profile.role)) {
       return new Response(
         JSON.stringify({ error: 'Insufficient permissions' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    // Fetch invoice data with related information
-    const { data: invoice, error: invoiceError } = await supabase
+    // Fetch invoice with outlet_id first to check ownership
+    const { data: invoiceCheck, error: invoiceCheckError } = await supabaseAdmin
+      .from('invoices')
+      .select('id, outlet_id, invoice_number')
+      .eq('id', invoice_id)
+      .single()
+
+    if (invoiceCheckError || !invoiceCheck) {
+      return new Response(
+        JSON.stringify({ error: 'Invoice not found' }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Enforce outlet ownership: admin can access all, others only their outlet
+    if (profile.role !== 'admin' && profile.outlet_id !== invoiceCheck.outlet_id) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden: You do not have access to this invoice' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Fetch full invoice data with related information (now that ownership is verified)
+    const { data: invoice, error: invoiceError } = await supabaseAdmin
       .from('invoices')
       .select(`
         *,
@@ -133,8 +178,8 @@ serve(async (req) => {
 
     if (invoiceError || !invoice) {
       return new Response(
-        JSON.stringify({ error: 'Invoice not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Failed to fetch invoice data' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -145,7 +190,7 @@ serve(async (req) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
     const fileName = `invoices/${invoice.invoice_number}_${timestamp}.pdf`
 
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await supabaseAdmin.storage
       .from('documents')
       .upload(fileName, pdfBytes, {
         contentType: 'application/pdf',
@@ -160,10 +205,12 @@ serve(async (req) => {
       )
     }
 
-    // Create signed URL (1 hour expiry)
-    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+    // Create signed URL with configurable expiry (default 1 hour = 3600 seconds)
+    // Signed URLs expire after the specified time for security
+    const signedUrlExpiry = parseInt(Deno.env.get('PDF_SIGNED_URL_EXPIRY') || '3600', 10)
+    const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin.storage
       .from('documents')
-      .createSignedUrl(fileName, 3600)
+      .createSignedUrl(fileName, signedUrlExpiry)
 
     if (signedUrlError || !signedUrlData) {
       console.error('Signed URL error:', signedUrlError)
@@ -174,7 +221,7 @@ serve(async (req) => {
     }
 
     // Update invoice with PDF information
-    const { error: updateError } = await supabase
+    const { error: updateError } = await supabaseAdmin
       .from('invoices')
       .update({
         invoice_pdf_url: signedUrlData.signedUrl,
@@ -188,10 +235,27 @@ serve(async (req) => {
       console.warn('PDF uploaded but invoice update failed:', updateError)
     }
 
+    // Insert audit log entry (using service role client)
+    const { error: auditError } = await supabaseAdmin
+      .from('invoice_pdf_audit')
+      .insert({
+        invoice_id: invoice.id,
+        generated_by: profile.id,
+        pdf_key: fileName
+      })
+
+    if (auditError) {
+      // Log error but don't fail the request - audit is non-critical
+      console.error('Audit log error:', auditError)
+      console.warn('PDF generated but audit log failed')
+    }
+
+    // Return only signed URL and minimal metadata (no service role keys)
     return new Response(
       JSON.stringify({
         url: signedUrlData.signedUrl,
-        key: fileName
+        key: fileName,
+        expiresIn: signedUrlExpiry
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )

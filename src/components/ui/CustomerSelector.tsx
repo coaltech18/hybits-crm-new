@@ -1,10 +1,12 @@
 // ============================================================================
 // CUSTOMER SELECTOR COMPONENT
+// Hotfix: Added outlet_id filtering for multi-tenant isolation
 // ============================================================================
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Customer } from '@/types';
 import { CustomerService } from '@/services/customerService';
+import { useAuth } from '@/contexts/AuthContext';
 import Input from './Input';
 import Button from './Button';
 import Icon from '../AppIcon';
@@ -26,20 +28,25 @@ const CustomerSelector: React.FC<CustomerSelectorProps> = ({
   disabled = false,
   onAddNewCustomer
 }) => {
+  const { getCurrentOutletId, isAdmin } = useAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [recentCustomers, setRecentCustomers] = useState<Customer[]>([]);
   
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Load customers on component mount
+  // Get current outlet ID from auth context
+  const outletId = getCurrentOutletId();
+
+  // Load customers on component mount or when outlet changes
   useEffect(() => {
     loadCustomers();
-  }, []);
+  }, [outletId]);
 
   // Filter customers based on search term
   useEffect(() => {
@@ -50,7 +57,8 @@ const CustomerSelector: React.FC<CustomerSelectorProps> = ({
         customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         customer.company?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         customer.phone.includes(searchTerm) ||
-        customer.email.toLowerCase().includes(searchTerm.toLowerCase())
+        customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        customer.code?.toLowerCase().includes(searchTerm.toLowerCase())
       );
       setFilteredCustomers(filtered);
     }
@@ -71,7 +79,11 @@ const CustomerSelector: React.FC<CustomerSelectorProps> = ({
   const loadCustomers = async () => {
     try {
       setLoading(true);
-      const allCustomers = await CustomerService.getCustomers();
+      setLoadError(null);
+      
+      // CRITICAL: Pass outletId for multi-tenant filtering
+      // Admin can see all customers if no outlet selected
+      const allCustomers = await CustomerService.getCustomers(outletId);
       setCustomers(allCustomers);
       
       // Set recent customers (last 5 active customers)
@@ -80,8 +92,9 @@ const CustomerSelector: React.FC<CustomerSelectorProps> = ({
         .slice(0, 5);
       setRecentCustomers(recent);
       setFilteredCustomers(recent);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading customers:', error);
+      setLoadError(error.message || 'Failed to load customers');
     } finally {
       setLoading(false);
     }
@@ -161,6 +174,20 @@ const CustomerSelector: React.FC<CustomerSelectorProps> = ({
               <Icon name="loader-2" size={20} className="animate-spin mx-auto mb-2" />
               Loading customers...
             </div>
+          ) : loadError ? (
+            <div className="p-4 text-center">
+              <Icon name="alert-triangle" size={20} className="text-destructive mx-auto mb-2" />
+              <p className="text-sm text-destructive">{loadError}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={loadCustomers}
+                className="mt-2"
+              >
+                Retry
+              </Button>
+            </div>
           ) : filteredCustomers.length > 0 ? (
             <>
               {/* Recent customers section */}
@@ -198,34 +225,38 @@ const CustomerSelector: React.FC<CustomerSelectorProps> = ({
               )}
 
               {/* Add new customer option */}
-              <div className="border-t border-border p-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={onAddNewCustomer || (() => {})}
-                  className="w-full justify-center"
-                >
-                  <Icon name="plus" size={16} className="mr-2" />
-                  Add New Customer
-                </Button>
-              </div>
+              {onAddNewCustomer && (
+                <div className="border-t border-border p-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onAddNewCustomer}
+                    className="w-full justify-center"
+                  >
+                    <Icon name="plus" size={16} className="mr-2" />
+                    Add New Customer
+                  </Button>
+                </div>
+              )}
             </>
           ) : (
             <div className="p-4 text-center text-muted-foreground">
               <Icon name="users" size={20} className="mx-auto mb-2" />
               {searchTerm ? 'No customers found' : 'No customers available'}
-              <div className="mt-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={onAddNewCustomer || (() => {})}
-                >
-                  <Icon name="plus" size={16} className="mr-2" />
-                  Add New Customer
-                </Button>
-              </div>
+              {onAddNewCustomer && (
+                <div className="mt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onAddNewCustomer}
+                  >
+                    <Icon name="plus" size={16} className="mr-2" />
+                    Add New Customer
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -260,15 +291,15 @@ const CustomerOption: React.FC<CustomerOptionProps> = ({
         <div className="flex-1 min-w-0">
           <div className="font-medium truncate">{customer.name}</div>
           {customer.company && (
-            <div className="text-sm text-muted-foreground truncate">
+            <div className={`text-sm truncate ${isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
               {customer.company}
             </div>
           )}
-          <div className="text-xs text-muted-foreground">
+          <div className={`text-xs ${isSelected ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
             {customer.phone} • {customer.email}
           </div>
         </div>
-        <div className="ml-2 text-xs text-muted-foreground">
+        <div className={`ml-2 text-xs font-mono ${isSelected ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
           {customer.code}
         </div>
       </div>

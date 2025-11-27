@@ -35,7 +35,19 @@ function to2(n: number): number {
 }
 
 export class GSTReportService {
-  static async getGSTReport(month: number, year: number, outletId?: string): Promise<GSTReportGroupedResult> {
+  /**
+   * Get GST report for a specific month/year
+   * @param month - Month (1-12)
+   * @param year - Year (e.g., 2024)
+   * @param outletId - Optional outlet ID for filtering (required for non-admin users)
+   * @param isAdmin - Whether the user is an admin (allows empty outletId)
+   */
+  static async getGSTReport(month: number, year: number, outletId?: string, isAdmin: boolean = false): Promise<GSTReportGroupedResult> {
+    // Enforce outlet filter for non-admin users
+    if (!isAdmin && !outletId) {
+      throw new Error('Outlet required for non-admin users');
+    }
+
     // Read from final view (amounts already signed for credit notes)
     let query = supabase
       .from('gst_reports_final')

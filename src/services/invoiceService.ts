@@ -117,15 +117,27 @@ export class InvoiceService {
 
       // Create invoice items
       if (invoiceData.items.length > 0) {
-        const invoiceItems = invoiceData.items.map((item, index) => ({
-          invoice_id: data.id,
-          description: item.description,
-          quantity: item.quantity,
-          rate: item.rate,
-          gst_rate: item.gst_rate,
-          hsn_code: item.hsn_code || null,
-          total_amount: taxResult.breakdown[index]?.lineTotal || (item.quantity * item.rate * (1 + item.gst_rate / 100))
-        }));
+        const invoiceItems = invoiceData.items.map((item, index) => {
+          // Calculate line totals from tax breakdown
+          const lineTotal = taxResult.breakdown[index]?.lineTotal || (item.quantity * item.rate * (1 + item.gst_rate / 100));
+          const baseAmount = item.quantity * item.rate; // Base amount before GST
+          
+          // Map amount field: use provided amount, or total_amount, or calculate from quantity * rate
+          // Note: amount should be the base taxable value (quantity * rate), not including GST
+          const amount = baseAmount; // Base amount before GST
+          const total_amount = lineTotal; // Amount including GST
+          
+          return {
+            invoice_id: data.id,
+            description: item.description,
+            quantity: item.quantity,
+            rate: item.rate,
+            gst_rate: item.gst_rate,
+            hsn_code: item.hsn_code || null,
+            amount: amount, // Base amount (quantity * rate) - taxable value before GST
+            total_amount: total_amount // Total amount including GST
+          };
+        });
 
         const { error: itemsError } = await supabase
           .from('invoice_items')

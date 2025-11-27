@@ -1,22 +1,27 @@
 // ============================================================================
 // NEW INVOICE PAGE
+// Hotfix: Wired customer selection to payload with proper validation
 // ============================================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useForm } from '@/hooks/useForm';
 import { commonValidationRules } from '@/utils/validation';
 import { hasPermission } from '@/utils/permissions';
 import { InvoiceService } from '@/services/invoiceService';
+import { CustomerService } from '@/services/customerService';
+import { Customer } from '@/types';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
+import CustomerSelector from '@/components/ui/CustomerSelector';
 import Icon from '@/components/AppIcon';
 
 interface InvoiceItem {
   id: string;
   description: string;
+  hsn_code?: string;
   quantity: number;
   rate: number;
   gst_rate: number;
@@ -24,14 +29,6 @@ interface InvoiceItem {
 }
 
 interface InvoiceFormData {
-  customer_name: string;
-  customer_email: string;
-  customer_phone: string;
-  customer_street: string;
-  customer_city: string;
-  customer_state: string;
-  customer_pincode: string;
-  customer_gstin: string;
   invoice_date: string;
   due_date: string;
   notes: string;
@@ -39,12 +36,15 @@ interface InvoiceFormData {
 
 const NewInvoicePage: React.FC = () => {
   const navigate = useNavigate();
-  const { user, currentOutlet } = useAuth();
+  const { user, currentOutlet, getCurrentOutletId, isAdmin } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerError, setCustomerError] = useState<string | null>(null);
   const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([
     {
       id: '1',
       description: '',
+      hsn_code: '',
       quantity: 1,
       rate: 0,
       gst_rate: 18,
@@ -52,46 +52,16 @@ const NewInvoicePage: React.FC = () => {
     }
   ]);
 
+  // Get current outlet ID
+  const currentOutletId = getCurrentOutletId();
+
   const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<InvoiceFormData>({
     initialData: {
-      customer_name: '',
-      customer_email: '',
-      customer_phone: '',
-      customer_street: '',
-      customer_city: '',
-      customer_state: '',
-      customer_pincode: '',
-      customer_gstin: '',
       invoice_date: new Date().toISOString().split('T')[0] || '',
       due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] || '',
       notes: '',
     },
     validationRules: {
-      customer_name: [
-        commonValidationRules.required('Customer name is required'),
-        commonValidationRules.minLength(2, 'Name must be at least 2 characters'),
-      ],
-      customer_email: [
-        commonValidationRules.required('Email is required'),
-        commonValidationRules.email('Please enter a valid email address'),
-      ],
-      customer_phone: [
-        commonValidationRules.required('Phone number is required'),
-        commonValidationRules.pattern(/^[0-9+\-\s()]+$/, 'Please enter a valid phone number'),
-      ],
-      customer_street: [
-        commonValidationRules.required('Street address is required'),
-      ],
-      customer_city: [
-        commonValidationRules.required('City is required'),
-      ],
-      customer_state: [
-        commonValidationRules.required('State is required'),
-      ],
-      customer_pincode: [
-        commonValidationRules.required('Pincode is required'),
-        commonValidationRules.pattern(/^[0-9]{6}$/, 'Pincode must be 6 digits'),
-      ],
       invoice_date: [
         commonValidationRules.required('Invoice date is required'),
       ],
@@ -102,46 +72,54 @@ const NewInvoicePage: React.FC = () => {
     onSubmit: async (formData) => {
       try {
         setIsSubmitting(true);
+        setCustomerError(null);
         
+        // CRITICAL: Validate customer is selected
+        if (!selectedCustomer || !selectedCustomer.id) {
+          setCustomerError('Please select a customer');
+          return;
+        }
+
         // Validate invoice items
         const validItems = invoiceItems.filter(item => 
           item.description.trim() && item.quantity > 0 && item.rate > 0
         );
         
         if (validItems.length === 0) {
-          setError('customer_name', 'Please add at least one invoice item');
+          setError('notes', 'Please add at least one invoice item with description, quantity, and rate');
           return;
         }
         
-        // Get current outlet ID
-        const currentOutletId = currentOutlet?.id || user?.outlet_id;
+        // Validate outlet
         if (!currentOutletId) {
-          setError('customer_name', 'Outlet not selected');
+          setError('notes', 'Outlet not selected. Please select an outlet.');
           return;
         }
 
-        // Create invoice payload
+        // Create invoice payload with selected customer
         const payload = {
-          customer_id: '', // TODO: Get from customer selector
+          customer_id: selectedCustomer.id,
           invoice_date: formData.invoice_date,
           due_date: formData.due_date,
           items: validItems.map(item => ({
             description: item.description,
             quantity: item.quantity,
             rate: item.rate,
-            gst_rate: item.gst_rate
+            gst_rate: item.gst_rate,
+            hsn_code: item.hsn_code || undefined
           })),
-          notes: formData.notes
+          notes: formData.notes,
+          outlet_id: currentOutletId,
+          // Pass state info for GST calculation (intra vs inter state)
+          outletState: currentOutlet?.address?.state,
+          customerState: selectedCustomer.address?.state
         };
 
-        try {
-          const res = await InvoiceService.createInvoice({ ...payload, outlet_id: currentOutletId } as any);
-          navigate(`/invoices/${res.id}`);
-        } catch (error: any) {
-          alert(error.message || 'Failed to create invoice');
-        }
+        const res = await InvoiceService.createInvoice(payload);
+        navigate(`/accounting/invoices/${res.id}`);
       } catch (error: any) {
-        setError('customer_name', error.message || 'Failed to create invoice');
+        console.error('Invoice creation error:', error);
+        setError('notes', error.message || 'Failed to create invoice');
       } finally {
         setIsSubmitting(false);
       }
@@ -149,36 +127,18 @@ const NewInvoicePage: React.FC = () => {
   });
 
   const gstRateOptions = [
-    { value: 0, label: '0%' },
+    { value: 0, label: '0% (Exempt)' },
     { value: 5, label: '5%' },
     { value: 12, label: '12%' },
     { value: 18, label: '18%' },
     { value: 28, label: '28%' },
   ];
 
-  const stateOptions = [
-    { value: '', label: 'Select state' },
-    { value: 'Maharashtra', label: 'Maharashtra' },
-    { value: 'Delhi', label: 'Delhi' },
-    { value: 'Karnataka', label: 'Karnataka' },
-    { value: 'Tamil Nadu', label: 'Tamil Nadu' },
-    { value: 'Gujarat', label: 'Gujarat' },
-    { value: 'West Bengal', label: 'West Bengal' },
-    { value: 'Uttar Pradesh', label: 'Uttar Pradesh' },
-    { value: 'Rajasthan', label: 'Rajasthan' },
-    { value: 'Andhra Pradesh', label: 'Andhra Pradesh' },
-    { value: 'Telangana', label: 'Telangana' },
-    { value: 'Kerala', label: 'Kerala' },
-    { value: 'Madhya Pradesh', label: 'Madhya Pradesh' },
-    { value: 'Punjab', label: 'Punjab' },
-    { value: 'Haryana', label: 'Haryana' },
-    { value: 'Other', label: 'Other' },
-  ];
-
   const addInvoiceItem = () => {
     const newItem: InvoiceItem = {
       id: Date.now().toString(),
       description: '',
+      hsn_code: '',
       quantity: 1,
       rate: 0,
       gst_rate: 18,
@@ -217,6 +177,22 @@ const NewInvoicePage: React.FC = () => {
 
   const { subtotal, gstAmount, total } = calculateTotals();
 
+  // Handle customer selection
+  const handleCustomerSelect = (customer: Customer | null) => {
+    setSelectedCustomer(customer);
+    setCustomerError(null);
+  };
+
+  // Handle add new customer - navigate to customer creation
+  const handleAddNewCustomer = () => {
+    // Store current form data in session storage for restoration
+    sessionStorage.setItem('invoice_draft', JSON.stringify({
+      items: invoiceItems,
+      formData: data
+    }));
+    navigate('/customers/new?returnTo=/billing/invoice/new');
+  };
+
   if (!user || !hasPermission(user.role, 'billing', 'create')) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -237,111 +213,75 @@ const NewInvoicePage: React.FC = () => {
           <h1 className="text-2xl font-bold text-foreground">Create New Invoice</h1>
           <p className="text-muted-foreground">
             Create a new invoice for your customer
+            {currentOutlet && (
+              <span className="ml-2 text-primary">• {currentOutlet.name}</span>
+            )}
           </p>
         </div>
         <Button
           variant="outline"
-          onClick={() => navigate('/billing')}
+          onClick={() => navigate('/accounting')}
         >
           <Icon name="arrow-left" size={16} className="mr-2" />
-          Back to Billing
+          Back to Accounting
         </Button>
       </div>
 
       {/* Invoice Form */}
       <div className="bg-card border border-border rounded-lg p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Customer Information */}
+          {/* Customer Selection - CRITICAL SECTION */}
           <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-foreground">Customer Information</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                type="text"
-                label="Customer Name"
-                placeholder="Enter customer name"
-                value={data.customer_name}
-                onChange={handleChange('customer_name')}
-                error={errors.customer_name}
-                required
-                disabled={isSubmitting}
-              />
-              <Input
-                type="email"
-                label="Email"
-                placeholder="Enter email address"
-                value={data.customer_email}
-                onChange={handleChange('customer_email')}
-                error={errors.customer_email}
-                required
-                disabled={isSubmitting}
-              />
-              <Input
-                type="tel"
-                label="Phone Number"
-                placeholder="Enter phone number"
-                value={data.customer_phone}
-                onChange={handleChange('customer_phone')}
-                error={errors.customer_phone}
-                required
-                disabled={isSubmitting}
-              />
-              <Input
-                type="text"
-                label="GSTIN (Optional)"
-                placeholder="Enter GSTIN number"
-                value={data.customer_gstin}
-                onChange={handleChange('customer_gstin')}
-                disabled={isSubmitting}
-              />
-            </div>
-          </div>
-
-          {/* Customer Address */}
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-foreground">Customer Address</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <Input
-                  type="text"
-                  label="Street Address"
-                  placeholder="Enter street address"
-                  value={data.customer_street}
-                  onChange={handleChange('customer_street')}
-                  error={errors.customer_street}
-                  required
-                  disabled={isSubmitting}
-                />
+            <h3 className="text-lg font-semibold text-foreground">
+              Select Customer <span className="text-destructive">*</span>
+            </h3>
+            <CustomerSelector
+              value={selectedCustomer}
+              onChange={handleCustomerSelect}
+              error={customerError || undefined}
+              required
+              disabled={isSubmitting}
+              onAddNewCustomer={handleAddNewCustomer}
+            />
+            
+            {/* Selected Customer Details */}
+            {selectedCustomer && (
+              <div className="bg-muted p-4 rounded-lg">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Customer:</span>
+                    <span className="ml-2 font-medium">{selectedCustomer.name}</span>
+                    {selectedCustomer.company && (
+                      <span className="text-muted-foreground"> ({selectedCustomer.company})</span>
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Code:</span>
+                    <span className="ml-2 font-medium">{selectedCustomer.code}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Phone:</span>
+                    <span className="ml-2">{selectedCustomer.phone}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Email:</span>
+                    <span className="ml-2">{selectedCustomer.email}</span>
+                  </div>
+                  {selectedCustomer.gstin && (
+                    <div>
+                      <span className="text-muted-foreground">GSTIN:</span>
+                      <span className="ml-2 font-mono">{selectedCustomer.gstin}</span>
+                    </div>
+                  )}
+                  {selectedCustomer.address?.state && (
+                    <div>
+                      <span className="text-muted-foreground">State:</span>
+                      <span className="ml-2">{selectedCustomer.address.state}</span>
+                    </div>
+                  )}
+                </div>
               </div>
-              <Input
-                type="text"
-                label="City"
-                placeholder="Enter city"
-                value={data.customer_city}
-                onChange={handleChange('customer_city')}
-                error={errors.customer_city}
-                required
-                disabled={isSubmitting}
-              />
-              <Select
-                options={stateOptions}
-                value={data.customer_state}
-                onChange={(value) => setData({ customer_state: value })}
-                label="State"
-                error={errors.customer_state}
-                required
-                disabled={isSubmitting}
-              />
-              <Input
-                type="text"
-                label="Pincode"
-                placeholder="Enter 6-digit pincode"
-                value={data.customer_pincode}
-                onChange={handleChange('customer_pincode')}
-                error={errors.customer_pincode}
-                required
-                disabled={isSubmitting}
-              />
-            </div>
+            )}
           </div>
 
           {/* Invoice Details */}
@@ -349,7 +289,7 @@ const NewInvoicePage: React.FC = () => {
             <h3 className="text-lg font-semibold text-foreground">Invoice Details</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
-                type="text"
+                type="date"
                 label="Invoice Date"
                 value={data.invoice_date}
                 onChange={handleChange('invoice_date')}
@@ -358,7 +298,7 @@ const NewInvoicePage: React.FC = () => {
                 disabled={isSubmitting}
               />
               <Input
-                type="text"
+                type="date"
                 label="Due Date"
                 value={data.due_date}
                 onChange={handleChange('due_date')}
@@ -387,7 +327,7 @@ const NewInvoicePage: React.FC = () => {
             <div className="space-y-4">
               {invoiceItems.map((item) => (
                 <div key={item.id} className="grid grid-cols-12 gap-4 items-end p-4 border border-border rounded-lg">
-                  <div className="col-span-5">
+                  <div className="col-span-4">
                     <Input
                       type="text"
                       label="Description"
@@ -395,12 +335,23 @@ const NewInvoicePage: React.FC = () => {
                       value={item.description}
                       onChange={(e) => updateInvoiceItem(item.id, 'description', e.target.value)}
                       disabled={isSubmitting}
+                      required
                     />
                   </div>
                   <div className="col-span-2">
                     <Input
+                      type="text"
+                      label="HSN/SAC"
+                      placeholder="HSN Code"
+                      value={item.hsn_code || ''}
+                      onChange={(e) => updateInvoiceItem(item.id, 'hsn_code', e.target.value)}
+                      disabled={isSubmitting}
+                    />
+                  </div>
+                  <div className="col-span-1">
+                    <Input
                       type="number"
-                      label="Quantity"
+                      label="Qty"
                       value={item.quantity}
                       onChange={(e) => updateInvoiceItem(item.id, 'quantity', parseInt(e.target.value) || 0)}
                       min={1}
@@ -441,7 +392,9 @@ const NewInvoicePage: React.FC = () => {
                   </div>
                   <div className="col-span-12">
                     <div className="text-right">
-                      <span className="text-sm text-muted-foreground">Amount: ₹{item.amount.toFixed(2)}</span>
+                      <span className="text-sm text-muted-foreground">
+                        Amount: <span className="font-medium text-foreground">₹{item.amount.toFixed(2)}</span>
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -454,16 +407,16 @@ const NewInvoicePage: React.FC = () => {
             <h3 className="text-lg font-semibold text-foreground">Invoice Summary</h3>
             <div className="bg-muted p-4 rounded-lg space-y-2">
               <div className="flex justify-between">
-                <span>Subtotal:</span>
+                <span className="text-muted-foreground">Subtotal:</span>
                 <span>₹{subtotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span>GST Amount:</span>
+                <span className="text-muted-foreground">GST Amount:</span>
                 <span>₹{gstAmount.toFixed(2)}</span>
               </div>
               <div className="flex justify-between font-semibold text-lg border-t border-border pt-2">
                 <span>Total Amount:</span>
-                <span>₹{total.toFixed(2)}</span>
+                <span className="text-primary">₹{total.toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -478,6 +431,7 @@ const NewInvoicePage: React.FC = () => {
               placeholder="Enter any additional notes or terms..."
               value={data.notes}
               onChange={handleChange('notes')}
+              error={errors.notes}
               disabled={isSubmitting}
             />
           </div>
@@ -487,7 +441,7 @@ const NewInvoicePage: React.FC = () => {
             <Button
               type="button"
               variant="outline"
-              onClick={() => navigate('/billing')}
+              onClick={() => navigate('/accounting')}
               disabled={isSubmitting}
             >
               Cancel
@@ -495,7 +449,7 @@ const NewInvoicePage: React.FC = () => {
             <Button
               type="submit"
               loading={isSubmitting}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !selectedCustomer}
             >
               {isSubmitting ? 'Creating Invoice...' : 'Create Invoice'}
             </Button>

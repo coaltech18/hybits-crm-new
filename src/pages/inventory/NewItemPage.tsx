@@ -1,5 +1,6 @@
 // ============================================================================
 // NEW INVENTORY ITEM PAGE
+// Hotfix: Pass outletId to ImageUpload for proper storage path isolation
 // ============================================================================
 
 import React, { useState } from 'react';
@@ -32,8 +33,11 @@ interface ItemFormData {
 
 const NewItemPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user, availableOutlets } = useAuth();
+  const { user, availableOutlets, getCurrentOutletId } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // Get current outlet ID for image storage path
+  const currentOutletId = getCurrentOutletId();
 
   const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<ItemFormData>({
     initialData: {
@@ -303,6 +307,8 @@ const NewItemPage: React.FC = () => {
                 maxSize={5}
                 aspectRatio="4:3"
                 showPreview={true}
+                outletId={data.location_id || currentOutletId}
+                itemCode={data.name ? data.name.replace(/[^a-zA-Z0-9]/g, '-').substring(0, 20) : 'new-item'}
               />
               <div className="space-y-4">
                 <Input

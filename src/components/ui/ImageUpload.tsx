@@ -1,11 +1,40 @@
 // ============================================================================
 // IMAGE UPLOAD COMPONENT
+// Hotfix: Uses outlet from props/auth context, validates path, sanitizes filename
 // ============================================================================
 
 import React, { useState, useRef, useCallback } from 'react';
 import { Upload, X, Image as ImageIcon, AlertCircle } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import * as ImageService from '@/services/imageService';
+
+/**
+ * Sanitize filename to prevent path traversal and invalid characters
+ */
+function sanitizeFilename(filename: string): string {
+  // Remove path traversal attempts and invalid characters
+  return filename
+    .replace(/\.\./g, '')
+    .replace(/[\/\\]/g, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .substring(0, 100); // Limit length
+}
+
+/**
+ * Validate storage path format
+ */
+function validateStoragePath(path: string): boolean {
+  // Check for path traversal attempts
+  if (path.includes('..') || path.startsWith('/') || path.includes('\\')) {
+    return false;
+  }
+  // Validate format: {outletId}/{itemCode}/{filename}
+  const parts = path.split('/');
+  if (parts.length < 2) {
+    return false;
+  }
+  return true;
+}
 
 interface ImageUploadProps {
   value?: string;
@@ -20,6 +49,10 @@ interface ImageUploadProps {
   acceptedTypes?: string[];
   showPreview?: boolean;
   aspectRatio?: 'square' | '4:3' | '16:9' | 'auto';
+  /** Required: Outlet ID for storage path isolation */
+  outletId?: string;
+  /** Optional: Item code for organizing images */
+  itemCode?: string;
 }
 
 const ImageUpload: React.FC<ImageUploadProps> = ({
@@ -35,10 +68,13 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
   acceptedTypes = ['image/jpeg', 'image/png', 'image/webp'],
   showPreview = true,
   aspectRatio = '4:3',
+  outletId,
+  itemCode = 'general',
 }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(value || null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const getAspectRatioClass = () => {
@@ -65,9 +101,30 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
   };
 
   const handleFileUpload = useCallback(async (file: File) => {
+    // Clear previous errors
+    setUploadError(null);
+
+    // CRITICAL: Validate outlet ID is present
+    if (!outletId) {
+      const errorMsg = 'Cannot upload image: Outlet not selected. Please select an outlet first.';
+      setUploadError(errorMsg);
+      onError?.(errorMsg);
+      return;
+    }
+
     const validationError = validateFile(file);
     if (validationError) {
+      setUploadError(validationError);
       onError?.(validationError);
+      return;
+    }
+
+    // Sanitize filename
+    const sanitizedFilename = sanitizeFilename(file.name);
+    if (!sanitizedFilename) {
+      const errorMsg = 'Invalid filename. Please rename the file and try again.';
+      setUploadError(errorMsg);
+      onError?.(errorMsg);
       return;
     }
 
@@ -78,13 +135,25 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
       const preview = URL.createObjectURL(file);
       setPreviewUrl(preview);
 
-      // Upload to Supabase Storage
-      // Get outlet ID from context or use default
-      const outletId = 'default'; // TODO: Get from auth context
-      const result = await ImageService.uploadImage(file, outletId);
+      // Upload to Supabase Storage with outlet-aware path
+      // Path structure: {outlet_id}/{item_code}/{timestamp}_{sanitized_filename}
+      const result = await ImageService.uploadImage(file, outletId, itemCode);
 
       if (result.error) {
-        onError?.(result.error);
+        const errorMsg = typeof result.error === 'string' 
+          ? result.error 
+          : result.error.message || 'Failed to upload image';
+        setUploadError(errorMsg);
+        onError?.(errorMsg);
+        setPreviewUrl(null);
+        return;
+      }
+
+      // Validate the generated path
+      if (!validateStoragePath(result.key)) {
+        const errorMsg = 'Invalid storage path generated. Please try again.';
+        setUploadError(errorMsg);
+        onError?.(errorMsg);
         setPreviewUrl(null);
         return;
       }
@@ -93,17 +162,22 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
       const urlResult = await ImageService.getSignedUrl(result.key);
       if (urlResult.url) {
         onChange(urlResult.url);
+        setUploadError(null);
       } else {
-        onError?.('Failed to get image URL');
+        const errorMsg = 'Failed to get image URL';
+        setUploadError(errorMsg);
+        onError?.(errorMsg);
       }
       
     } catch (error: any) {
-      onError?.(error.message || 'Failed to upload image');
+      const errorMsg = error.message || 'Failed to upload image';
+      setUploadError(errorMsg);
+      onError?.(errorMsg);
       setPreviewUrl(null);
     } finally {
       setIsUploading(false);
     }
-  }, [maxSize, acceptedTypes, onChange, onError]);
+  }, [maxSize, acceptedTypes, onChange, onError, outletId, itemCode]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -134,6 +208,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
 
   const handleRemove = () => {
     setPreviewUrl(null);
+    setUploadError(null);
     onChange('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -142,9 +217,19 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
 
   const handleClick = () => {
     if (!disabled && !isUploading) {
+      // Check outlet before allowing upload
+      if (!outletId) {
+        const errorMsg = 'Cannot upload image: Outlet not selected. Please select an outlet first.';
+        setUploadError(errorMsg);
+        onError?.(errorMsg);
+        return;
+      }
       fileInputRef.current?.click();
     }
   };
+
+  // Combined error display
+  const displayError = error || uploadError;
 
   return (
     <div className={cn('space-y-2', className)}>
@@ -159,8 +244,8 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         className={cn(
           'relative border-2 border-dashed rounded-lg transition-colors',
           dragActive ? 'border-primary bg-primary/5' : 'border-border',
-          error ? 'border-destructive' : '',
-          disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+          displayError ? 'border-destructive' : '',
+          disabled || !outletId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
           showPreview && previewUrl ? 'p-2' : 'p-6'
         )}
         onDrop={handleDrop}
@@ -174,7 +259,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
           accept={acceptedTypes.join(',')}
           onChange={handleFileSelect}
           className="hidden"
-          disabled={disabled || isUploading}
+          disabled={disabled || isUploading || !outletId}
         />
 
         {showPreview && previewUrl ? (
@@ -211,6 +296,20 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
                 <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
                 <p className="text-sm text-muted-foreground">Uploading...</p>
               </div>
+            ) : !outletId ? (
+              <div className="flex flex-col items-center space-y-2">
+                <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                  <AlertCircle size={24} className="text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    Outlet Required
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Please select an outlet before uploading images
+                  </p>
+                </div>
+              </div>
             ) : (
               <div className="flex flex-col items-center space-y-2">
                 <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
@@ -230,14 +329,14 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         )}
       </div>
 
-      {error && (
+      {displayError && (
         <div className="flex items-center space-x-1 text-sm text-destructive">
           <AlertCircle size={16} />
-          <span>{error}</span>
+          <span>{displayError}</span>
         </div>
       )}
 
-      {value && !previewUrl && (
+      {value && !previewUrl && !displayError && (
         <div className="flex items-center space-x-2 text-sm text-muted-foreground">
           <ImageIcon size={16} />
           <span>Image uploaded successfully</span>

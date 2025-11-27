@@ -231,50 +231,10 @@ const InvoiceDetailPage: React.FC = () => {
            )}
            
            {/* Record Payment Button */}
-        <div className="flex space-x-2">
-          {/* PDF Generation/View Buttons */}
-          {(user?.role === 'admin' || user?.role === 'manager' || user?.role === 'accountant') && (
-            <>
-              {invoice?.invoice_pdf_url ? (
-                <>
-                  <Button variant="outline" onClick={handleDownloadPdf}>
-                    <Icon name="download" size={20} className="mr-2" />
-                    Download PDF
-                  </Button>
-                  <a
-                    href={invoice.invoice_pdf_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-                  >
-                    <Icon name="external-link" size={20} className="mr-2" />
-                    Open PDF
-                  </a>
-                </>
-              ) : (
-                <Button onClick={handleGeneratePdf} disabled={generatingPdf}>
-                  {generatingPdf ? (
-                    <>
-                      <Icon name="loader" size={20} className="mr-2 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <Icon name="file-text" size={20} className="mr-2" />
-                      Generate PDF
-                    </>
-                  )}
-                </Button>
-              )}
-            </>
-          )}
-          
-          {/* Record Payment Button */}
           <Button onClick={() => setShowRecordPaymentModal(true)}>
             <Icon name="plus" size={20} className="mr-2" />
             Record Payment
           </Button>
-        </div>
          </div>
       </div>
 
@@ -434,53 +394,6 @@ const InvoiceDetailPage: React.FC = () => {
               />
             </div>
           </div>
-      )}
-
-      {/* PDF Error Message */}
-      {pdfError && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-          <div className="flex items-center">
-            <Icon name="alert-triangle" size={20} className="text-red-600 mr-3" />
-            <div>
-              <h3 className="text-sm font-medium text-red-800 dark:text-red-200">PDF Generation Error</h3>
-              <p className="text-sm text-red-700 dark:text-red-300">{pdfError}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* PDF Viewer */}
-      {invoice?.invoice_pdf_url && (
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
-          <div className="p-6 border-b border-border">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-foreground">Invoice PDF</h3>
-              <div className="flex space-x-2">
-                <Button variant="outline" size="sm" onClick={handleDownloadPdf}>
-                  <Icon name="download" size={16} className="mr-2" />
-                  Download
-                </Button>
-                <a
-                  href={invoice.invoice_pdf_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-                >
-                  <Icon name="external-link" size={16} className="mr-2" />
-                  Open in New Tab
-                </a>
-              </div>
-            </div>
-          </div>
-          <div className="p-6">
-            <iframe
-              src={invoice.invoice_pdf_url}
-              className="w-full border border-border rounded-lg"
-              style={{ height: '800px' }}
-              title="Invoice PDF"
-            />
-          </div>
-        </div>
       )}
 
       {/* Payment History */}

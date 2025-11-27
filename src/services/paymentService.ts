@@ -59,10 +59,10 @@ export class PaymentService {
       // Get current user for created_by
       const { data: { user } } = await supabase.auth.getUser();
 
-      // Get invoice to determine customer_id and outlet_id
+      // Get invoice to determine customer_id, outlet_id, and due_date for overdue calculation
       const { data: invoiceData, error: invoiceError } = await supabase
         .from('invoices')
-        .select('id, customer_id, outlet_id, total_amount, payment_received, payment_status')
+        .select('id, customer_id, outlet_id, total_amount, payment_received, payment_status, due_date')
         .eq('id', data.invoice_id)
         .maybeSingle();
 
@@ -141,7 +141,7 @@ export class PaymentService {
           updated_at: new Date().toISOString()
         })
         .eq('id', data.invoice_id)
-        .select('id, invoice_number, payment_received, payment_status, total_amount')
+        .select('id, invoice_number, payment_received, payment_status, total_amount, due_date')
         .maybeSingle();
 
       if (updateError) {
@@ -321,10 +321,10 @@ export class PaymentService {
         throw new Error('Failed to delete payment');
       }
 
-      // Get invoice to recalculate totals
+      // Get invoice to recalculate totals (including due_date for overdue check)
       const { data: invoiceData, error: invoiceError } = await supabase
         .from('invoices')
-        .select('id, invoice_number, total_amount, payment_received, payment_status')
+        .select('id, invoice_number, total_amount, payment_received, payment_status, due_date')
         .eq('id', paymentData.invoice_id)
         .maybeSingle();
 
@@ -351,14 +351,26 @@ export class PaymentService {
 
       const paymentReceived = (allPayments || []).reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
-      // Update invoice.payment_status based on payment_received
+      // Recalculate invoice payment_status atomically based on payment_received and due_date
+      // Logic: 
+      // - If payment_received >= total_amount → 'paid'
+      // - Else if payment_received > 0 → 'partial'
+      // - Else → 'pending'
+      // - Additionally: if current_date > due_date AND payment_received < total_amount → 'overdue'
+      // Suggest: run daily function update_overdue_invoice_status() to catch missed cases
       let paymentStatus: 'pending' | 'partial' | 'paid' | 'overdue' = 'pending';
-      if (paymentReceived === 0) {
-        paymentStatus = 'pending';
-      } else if (paymentReceived >= invoiceData.total_amount) {
+      const currentDate = new Date();
+      const dueDate = invoiceData.due_date ? new Date(invoiceData.due_date) : null;
+      const isOverdue = dueDate && currentDate > dueDate && paymentReceived < invoiceData.total_amount;
+      
+      if (paymentReceived >= invoiceData.total_amount) {
         paymentStatus = 'paid';
-      } else {
+      } else if (isOverdue) {
+        paymentStatus = 'overdue';
+      } else if (paymentReceived > 0) {
         paymentStatus = 'partial';
+      } else {
+        paymentStatus = 'pending';
       }
 
       // Update invoice with recalculated values
@@ -370,7 +382,7 @@ export class PaymentService {
           updated_at: new Date().toISOString()
         })
         .eq('id', paymentData.invoice_id)
-        .select('id, invoice_number, payment_received, payment_status, total_amount')
+        .select('id, invoice_number, payment_received, payment_status, total_amount, due_date')
         .maybeSingle();
 
       if (updateError) {

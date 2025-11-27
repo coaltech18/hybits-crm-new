@@ -307,7 +307,7 @@ const NewItemPage: React.FC = () => {
                 maxSize={5}
                 aspectRatio="4:3"
                 showPreview={true}
-                outletId={data.location_id || currentOutletId}
+                outletId={(data.location_id || currentOutletId) || ''}
                 itemCode={data.name ? data.name.replace(/[^a-zA-Z0-9]/g, '-').substring(0, 20) : 'new-item'}
               />
               <div className="space-y-4">

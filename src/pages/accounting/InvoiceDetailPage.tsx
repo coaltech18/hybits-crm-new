@@ -10,11 +10,11 @@ import { PaymentService, Payment } from '@/services/paymentService';
 import RecordPaymentModal from '@/components/accounting/RecordPaymentModal';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/AppIcon';
-import { hasPermission } from '@/utils/permissions';
 import { supabase } from '@/lib/supabase';
 
 const InvoiceDetailPage: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const params = useParams();
+  const id = params.id;
   const navigate = useNavigate();
   const { user } = useAuth();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
@@ -79,7 +79,11 @@ const InvoiceDetailPage: React.FC = () => {
       }
 
       // Call Edge Function
-      const response = await fetch(`${supabase.supabaseUrl}/functions/v1/generate-invoice-pdf`, {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      if (!supabaseUrl) {
+        throw new Error('Supabase URL not configured');
+      }
+      const response = await fetch(`${supabaseUrl}/functions/v1/generate-invoice-pdf`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -93,7 +97,7 @@ const InvoiceDetailPage: React.FC = () => {
         throw new Error(errorData.error || 'Failed to generate PDF');
       }
 
-      const { url, key } = await response.json();
+      await response.json();
       
       // Reload invoice to get updated PDF fields
       await loadInvoice();

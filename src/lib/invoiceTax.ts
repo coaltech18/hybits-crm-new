@@ -131,8 +131,8 @@ export function calculateInvoiceFromLines(
     calculateLineTax({
       ...line,
       invoiceRegion,
-      outletState,
-      customerState
+      ...(outletState && { outletState }),
+      ...(customerState && { customerState })
     })
   );
 
@@ -189,7 +189,7 @@ export function validateGstRate(rate: number): { isValid: boolean; isStandard: b
   return {
     isValid: true,
     isStandard,
-    message: isStandard ? undefined : `Non-standard GST rate: ${rate}%`
+    ...(isStandard ? {} : { message: `Non-standard GST rate: ${rate}%` })
   };
 }
 

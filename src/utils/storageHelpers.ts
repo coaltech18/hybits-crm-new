@@ -36,7 +36,7 @@ export function generateDocumentPath(
  */
 export function extractOutletIdFromPath(path: string): string | null {
   const parts = path.split('/');
-  if (parts.length >= 3) {
+  if (parts.length >= 3 && parts[0]) {
     return parts[0]; // First part should be outlet_id
   }
   return null;

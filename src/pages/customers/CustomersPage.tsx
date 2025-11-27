@@ -75,7 +75,7 @@ const mockCustomers: Customer[] = [
 
 const CustomersPage: React.FC = () => {
   const navigate = useNavigate();
-  const { getCurrentOutletId, currentOutlet } = useAuth();
+  const { getCurrentOutletId } = useAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

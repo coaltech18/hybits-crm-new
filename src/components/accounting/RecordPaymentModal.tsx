@@ -33,7 +33,7 @@ const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     invoice_id: invoiceId,
     amount: 0,
     payment_method: 'cash',
-    payment_date: new Date().toISOString().split('T')[0],
+    payment_date: new Date().toISOString().split('T')[0] || '',
     reference_number: '',
     notes: ''
   });
@@ -62,7 +62,7 @@ const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       await PaymentService.createPayment({
         ...formData,
-        outlet_id: currentOutlet?.id
+        ...(currentOutlet?.id && { outlet_id: currentOutlet.id })
       });
 
       // Reset form
@@ -70,7 +70,7 @@ const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         invoice_id: invoiceId,
         amount: 0,
         payment_method: 'cash',
-        payment_date: new Date().toISOString().split('T')[0],
+        payment_date: new Date().toISOString().split('T')[0] || '',
         reference_number: '',
         notes: ''
       });
@@ -93,7 +93,7 @@ const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         invoice_id: invoiceId,
         amount: 0,
         payment_method: 'cash',
-        payment_date: new Date().toISOString().split('T')[0],
+        payment_date: new Date().toISOString().split('T')[0] || '',
         reference_number: '',
         notes: ''
       });
@@ -143,8 +143,8 @@ const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             </label>
             <Input
               type="number"
-              step="0.01"
-              min="0.01"
+              step={0.01}
+              min={0.01}
               required
               value={formData.amount || ''}
               onChange={(e) => setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })}

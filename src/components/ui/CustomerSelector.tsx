@@ -28,7 +28,7 @@ const CustomerSelector: React.FC<CustomerSelectorProps> = ({
   disabled = false,
   onAddNewCustomer
 }) => {
-  const { getCurrentOutletId, isAdmin } = useAuth();
+  const { getCurrentOutletId } = useAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');

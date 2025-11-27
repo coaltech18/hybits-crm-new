@@ -3,14 +3,12 @@
 // Hotfix: Wired customer selection to payload with proper validation
 // ============================================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useForm } from '@/hooks/useForm';
 import { commonValidationRules } from '@/utils/validation';
-import { hasPermission } from '@/utils/permissions';
 import { InvoiceService } from '@/services/invoiceService';
-import { CustomerService } from '@/services/customerService';
 import { Customer } from '@/types';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -36,7 +34,7 @@ interface InvoiceFormData {
 
 const NewInvoicePage: React.FC = () => {
   const navigate = useNavigate();
-  const { user, currentOutlet, getCurrentOutletId, isAdmin } = useAuth();
+  const { currentOutlet, getCurrentOutletId } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerError, setCustomerError] = useState<string | null>(null);
@@ -55,7 +53,7 @@ const NewInvoicePage: React.FC = () => {
   // Get current outlet ID
   const currentOutletId = getCurrentOutletId();
 
-  const { data, errors, handleChange, handleSubmit, setError, setData } = useForm<InvoiceFormData>({
+  const { data, errors, handleChange, handleSubmit, setError } = useForm<InvoiceFormData>({
     initialData: {
       invoice_date: new Date().toISOString().split('T')[0] || '',
       due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] || '',
@@ -106,13 +104,13 @@ const NewInvoicePage: React.FC = () => {
             quantity: item.quantity,
             rate: item.rate,
             gst_rate: item.gst_rate,
-            hsn_code: item.hsn_code || undefined
+            ...(item.hsn_code && { hsn_code: item.hsn_code })
           })),
           notes: formData.notes,
           outlet_id: currentOutletId,
           // Pass state info for GST calculation (intra vs inter state)
-          outletState: currentOutlet?.address?.state,
-          customerState: selectedCustomer.address?.state
+          ...(currentOutlet?.address?.state && { outletState: currentOutlet.address.state }),
+          ...(selectedCustomer.address?.state && { customerState: selectedCustomer.address.state })
         };
 
         const res = await InvoiceService.createInvoice(payload);
@@ -192,18 +190,6 @@ const NewInvoicePage: React.FC = () => {
     }));
     navigate('/customers/new?returnTo=/billing/invoice/new');
   };
-
-  if (!user || !hasPermission(user.role, 'billing', 'create')) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <Icon name="alert-triangle" size={48} className="mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium text-foreground mb-2">Access Denied</h3>
-          <p className="text-muted-foreground">You don't have permission to create invoices.</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">

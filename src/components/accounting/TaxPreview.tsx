@@ -34,9 +34,9 @@ const TaxPreview: React.FC<TaxPreviewProps> = ({
       qty: item.quantity,
       rate: item.rate,
       gstRate: item.gst_rate,
-      outletState,
-      customerState,
-      invoiceRegion
+      invoiceRegion,
+      ...(outletState && { outletState }),
+      ...(customerState && { customerState })
     }));
 
   // Calculate tax totals

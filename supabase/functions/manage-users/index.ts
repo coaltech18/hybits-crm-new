@@ -3,6 +3,8 @@
 import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
 // @ts-expect-error - Deno URL imports are resolved at runtime
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.1";
+// @ts-expect-error - Deno import path resolution
+import { SECURITY_HEADERS } from "../_shared/securityHeaders.ts";
 
 // Declare Deno global for TypeScript
 declare const Deno: {
@@ -15,6 +17,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST,OPTIONS",
+  ...SECURITY_HEADERS
 };
 
 interface ManageUserRequest {

@@ -9,6 +9,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 // @ts-ignore - ESM import, works at runtime
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// @ts-ignore - Deno import path resolution
+import { SECURITY_HEADERS } from '../_shared/securityHeaders.ts'
 
 // Deno global type declaration (for IDE support)
 declare const Deno: {
@@ -20,6 +22,7 @@ declare const Deno: {
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  ...SECURITY_HEADERS
 }
 
 serve(async (req) => {

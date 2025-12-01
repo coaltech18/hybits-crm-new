@@ -82,13 +82,16 @@ This forces browsers to respect the declared Content-Type and prevents MIME type
 ## Implementation Locations
 
 ### Supabase Edge Functions
-All Supabase Edge Functions import security headers from:
-- `supabase/functions/_shared/securityHeaders.ts`
+**Important:** Supabase Edge Functions don't support shared modules across functions. Each function must have security headers inlined directly in its code.
 
-Functions updated:
+Security headers are defined inline in each function file:
 - `generate-invoice-pdf/index.ts`
 - `run-mark-overdue/index.ts`
 - `manage-users/index.ts`
+
+**Reference file:** `supabase/functions/_shared/securityHeaders.ts` (for reference only, not imported)
+
+**Note:** When updating security headers, you must update all three function files manually to keep them in sync.
 
 ### Node/Express Server
 If a Node/Express server exists, security headers are set via middleware in the server entry point.

@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import { 
   Vendor, 
   SubscriptionItem, 
@@ -22,6 +23,7 @@ const SubscriptionEntryPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const vendorParam = searchParams.get('vendor');
+  const { getCurrentOutletId } = useAuth();
   
   // Vendors list (fetched)
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -161,10 +163,18 @@ const SubscriptionEntryPage: React.FC = () => {
       setLoading(true);
       setError(null);
 
+      // Get current outlet ID for multi-tenant isolation
+      const currentOutletId = getCurrentOutletId();
+      if (!currentOutletId) {
+        setError('Please select an outlet before creating a subscription');
+        return;
+      }
+
       // Save to Supabase
       await BillingService.createVendorSubscription(
         {
           ...formData,
+          outlet_id: currentOutletId,
           ...(formData.plan_type === 'custom' && { monthly_fee: calculation.monthly_fee })
         },
         items.map(i => ({

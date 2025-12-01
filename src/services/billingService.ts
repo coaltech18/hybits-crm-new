@@ -568,7 +568,24 @@ export class BillingService {
       
       // Get vendor to determine outlet_id
       const vendorData = await this.getVendorById(formData.vendor_id);
-      const outletId = formData.outlet_id || (vendorData as any).outlet_id;
+      
+      // Determine outlet_id: use formData, then vendor's outlet_id, then user's outlet_id
+      let outletId = formData.outlet_id || (vendorData as any).outlet_id;
+      
+      // If still no outlet_id, try to get from user profile
+      if (!outletId && user?.id) {
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('outlet_id')
+          .eq('id', user.id)
+          .maybeSingle();
+        outletId = profile?.outlet_id;
+      }
+      
+      // Validate outlet_id is present
+      if (!outletId) {
+        throw new Error('Outlet ID is required. Please ensure vendor has an outlet assigned or select an outlet.');
+      }
 
       // Calculate totals
       const calculation = this.calculateSubscription(items, formData.plan_type);
@@ -598,8 +615,16 @@ export class BillingService {
         .maybeSingle();
 
       if (subErr) {
-        console.error('DB error fetching vendor_subscriptions:', subErr);
-        throw new Error('Database error');
+        console.error('DB error creating vendor_subscriptions:', subErr);
+        // Provide more specific error message
+        if (subErr.code === '23502') { // NOT NULL violation
+          throw new Error('Missing required field. Please ensure all required fields are filled.');
+        } else if (subErr.code === '23503') { // Foreign key violation
+          throw new Error('Invalid reference. Please check vendor selection.');
+        } else if (subErr.message) {
+          throw new Error(`Database error: ${subErr.message}`);
+        }
+        throw new Error('Database error: Failed to create subscription');
       }
 
       if (!subInsert || !subInsert.id) {

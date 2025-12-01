@@ -35,6 +35,7 @@ interface OrderItem {
   quantity: number;
   rental_days: number;
   rate: number;
+  gst_rate?: number; // Optional, defaults to 18%
 }
 
 const NewOrderPage: React.FC = () => {
@@ -116,7 +117,8 @@ const NewOrderPage: React.FC = () => {
             item_id: item.item_id,
             quantity: item.quantity,
             rate: item.rate,
-            rental_days: item.rental_days
+            rental_days: item.rental_days,
+            gst_rate: item.gst_rate !== undefined ? item.gst_rate : 18 // Default 18%
           })),
           status: 'pending' as const,
           notes: formData.notes,
@@ -155,36 +157,15 @@ const NewOrderPage: React.FC = () => {
         setLoadingItems(true);
         setItemsError(null);
         
-        // Temporarily fetch all items to debug - we'll add outlet filtering back once we confirm items load
         // For managers, filter by their outlet. For admins/accountants, show all items
         const currentOutletId = user?.role === 'manager' ? getCurrentOutletId() : undefined;
-        console.log('Fetching inventory items for outlet:', currentOutletId, 'User role:', user?.role);
-        console.log('Current user:', user);
-        console.log('Current outlet ID from getCurrentOutletId():', getCurrentOutletId());
         
-        // For now, fetch all items regardless of outlet to debug
-        const items = await inventoryService.getInventoryItems(undefined);
-        console.log('All items fetched (no filter):', items.length);
+        // Fetch items with proper outlet filtering at service level
+        const items = await inventoryService.getInventoryItems(currentOutletId ? { outletId: currentOutletId } : undefined);
         
-        // If manager and we have items, filter client-side for now
-        let filteredItems = items;
-        if (user?.role === 'manager' && currentOutletId && items.length > 0) {
-          filteredItems = items.filter((item: any) => 
-            !item.outlet_id || item.outlet_id === currentOutletId
-          );
-          console.log('Filtered items for manager:', filteredItems.length);
-        }
+        setInventoryItems(items);
         
-        const itemsToUse = filteredItems;
-        
-        console.log('Fetched inventory items:', itemsToUse);
-        console.log('Number of items:', itemsToUse.length);
-        console.log('Items details:', itemsToUse.map((i: any) => ({ id: i.id, name: i.name, code: i.code, outlet_id: i.outlet_id })));
-        
-        setInventoryItems(itemsToUse);
-        
-        if (itemsToUse.length === 0) {
-          console.warn('No inventory items found. Check if items exist in database.');
+        if (items.length === 0) {
           if (user?.role === 'manager') {
             setItemsError('No inventory items found for your outlet. Please add items to inventory first.');
           } else {
@@ -192,7 +173,6 @@ const NewOrderPage: React.FC = () => {
           }
         }
       } catch (error: any) {
-        console.error('Error fetching inventory items:', error);
         setItemsError(error.message || 'Failed to load inventory items. Please refresh the page.');
       } finally {
         setLoadingItems(false);

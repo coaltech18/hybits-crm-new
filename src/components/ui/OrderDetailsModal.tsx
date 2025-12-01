@@ -1,7 +1,11 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Order } from '@/types';
 import { formatIndianDate } from '@/utils/format';
 import Icon from '../AppIcon';
+import Button from './Button';
+import { OrderService } from '@/services/orderService';
+import { AuditService, InvoiceCreationAudit } from '@/services/auditService';
+import { supabase } from '@/lib/supabase';
 
 interface OrderDetailsModalProps {
   isOpen: boolean;
@@ -10,6 +14,78 @@ interface OrderDetailsModalProps {
 }
 
 const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ isOpen, onClose, order }) => {
+  const [hasInvoice, setHasInvoice] = useState<boolean>(false);
+  const [hasFailedAttempts, setHasFailedAttempts] = useState<boolean>(false);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const [auditEntries, setAuditEntries] = useState<InvoiceCreationAudit[]>([]);
+
+  useEffect(() => {
+    if (order && isOpen) {
+      checkInvoiceAndFailedAttempts();
+    }
+  }, [order, isOpen]);
+
+  const checkInvoiceAndFailedAttempts = async () => {
+    if (!order) return;
+
+    try {
+      // Check if invoice exists for this order
+      const { data: invoiceData } = await supabase
+        .from('invoices')
+        .select('id')
+        .eq('order_id', order.id)
+        .maybeSingle();
+
+      setHasInvoice(!!invoiceData);
+
+      // Check for failed attempts
+      const hasFailed = await AuditService.hasFailedInvoiceCreation(order.id);
+      setHasFailedAttempts(hasFailed);
+    } catch (err) {
+      console.error('Error checking invoice and failed attempts:', err);
+    }
+  };
+
+  const handleRetryInvoiceCreation = async () => {
+    if (!order) return;
+
+    try {
+      setIsRetrying(true);
+      await OrderService.recreateInvoiceForOrder(order.id);
+      
+      alert('Invoice recreated successfully');
+      
+      // Refresh invoice status
+      await checkInvoiceAndFailedAttempts();
+    } catch (err: any) {
+      const errorMsg = err?.message || 'Failed to recreate invoice';
+      alert(`Invoice recreate failed: ${errorMsg.substring(0, 200)}`);
+      
+      // Open audit modal
+      await loadAuditEntries();
+      setShowAuditModal(true);
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
+  const loadAuditEntries = async () => {
+    if (!order) return;
+
+    try {
+      const entries = await AuditService.fetchInvoiceCreationAuditForOrder(order.id, 5);
+      setAuditEntries(entries);
+    } catch (err) {
+      console.error('Error loading audit entries:', err);
+    }
+  };
+
+  const handleOpenAuditModal = async () => {
+    await loadAuditEntries();
+    setShowAuditModal(true);
+  };
+
   if (!order) return null;
 
   const getStatusColor = (status: string) => {
@@ -174,6 +250,70 @@ const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ isOpen, onClose, 
       </div>
         </div>
       </div>
+
+      {/* Audit Modal */}
+      {showAuditModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
+          <div className="bg-card border border-border rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-foreground">Invoice Creation Audit Log</h2>
+              <button
+                onClick={() => setShowAuditModal(false)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Icon name="x" size={24} />
+              </button>
+            </div>
+            
+            {auditEntries.length === 0 ? (
+              <p className="text-muted-foreground">No audit entries found.</p>
+            ) : (
+              <div className="space-y-4">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left p-2 text-foreground">Attempt</th>
+                      <th className="text-left p-2 text-foreground">Status</th>
+                      <th className="text-left p-2 text-foreground">Error</th>
+                      <th className="text-left p-2 text-foreground">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditEntries.map((entry) => (
+                      <tr key={entry.id} className="border-b border-border">
+                        <td className="p-2 text-foreground">{entry.attempt_integer}</td>
+                        <td className="p-2">
+                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                            entry.success 
+                              ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' 
+                              : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+                          }`}>
+                            {entry.success ? 'Success' : 'Failed'}
+                          </span>
+                        </td>
+                        <td className="p-2 text-muted-foreground text-xs">
+                          {entry.error_message ? (
+                            <span title={entry.error_message}>
+                              {entry.error_message.length > 50 
+                                ? entry.error_message.substring(0, 50) + '...' 
+                                : entry.error_message}
+                            </span>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="p-2 text-muted-foreground">
+                          {new Date(entry.created_at).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

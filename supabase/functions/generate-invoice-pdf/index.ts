@@ -13,14 +13,22 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 // @ts-ignore - ESM import, works at runtime
 import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1'
-// @ts-ignore - Deno import path resolution
-import { SECURITY_HEADERS } from '../_shared/securityHeaders.ts'
 
 // Deno global type declaration (for IDE support)
 declare const Deno: {
   env: {
     get(key: string): string | undefined
   }
+}
+
+// Security headers - inlined (Supabase Edge Functions don't support shared modules)
+// See supabase/functions/_shared/securityHeaders.ts for reference
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'self'",
+  'Referrer-Policy': 'no-referrer-when-downgrade',
+  'Permissions-Policy': 'geolocation=(), camera=(), microphone=()',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
 }
 
 const corsHeaders = {

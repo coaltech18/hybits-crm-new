@@ -4,6 +4,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { Order, OrderStatus } from '@/types';
+import { calculateInvoiceFromLines, LineTaxInput, roundToTwoDecimals } from '@/lib/invoiceTax';
 
 export interface OrderFormData {
   customer_id: string;
@@ -86,7 +87,7 @@ export class OrderService {
           rental_days: (item as any).rental_days || 1,
           unit_price: item.rate,
           total_price: item.quantity * ((item as any).rental_days || 1) * item.rate,
-          gst_rate: 0 // Will be calculated if needed
+          gst_rate: (item as any).gst_rate !== undefined ? (item as any).gst_rate : 18 // Default 18%
         }));
 
         const { error: itemsError } = await supabase
@@ -97,111 +98,157 @@ export class OrderService {
           console.error('Error creating order items:', itemsError);
           throw new Error(itemsError.message);
         }
-      }
 
-      // Automatically create invoice for the order
-      try {
-        // Fetch inventory item names for invoice descriptions
-        const itemIds = orderData.items.map(item => item.item_id);
-        const { data: inventoryItems, error: inventoryError } = await supabase
-          .from('inventory_items')
-          .select('id, name')
-          .in('id', itemIds);
+        // --- START: Order -> Invoice using tax engine ---
+        try {
+          const currentOutletId = outletId;
+          const currentCustomerId = data.customer_id;
+          const currentUserId = user?.id;
+          const orderId = data.id;
 
-        if (inventoryError) {
-          console.warn('Error fetching inventory items for invoice:', inventoryError);
-        }
+          // Fetch inventory item names for invoice descriptions
+          const itemIds = orderData.items.map(item => item.item_id);
+          const { data: inventoryItems, error: inventoryError } = await supabase
+            .from('inventory_items')
+            .select('id, name')
+            .in('id', itemIds);
 
-        // Create a map of item_id to item_name
-        const itemNameMap = new Map<string, string>();
-        (inventoryItems || []).forEach((item: any) => {
-          itemNameMap.set(item.id, item.name || 'Unknown Item');
-        });
+          if (inventoryError) {
+            console.warn('Error fetching inventory items for invoice:', inventoryError);
+          }
 
-        // Calculate invoice dates
-        const invoiceDate = new Date().toISOString().split('T')[0]; // Today's date
-        const eventDateObj = new Date(orderData.event_date);
-        // Due date: 30 days from invoice date, or event date + 7 days, whichever is later
-        const dueDateObj = new Date(eventDateObj);
-        dueDateObj.setDate(dueDateObj.getDate() + 7);
-        const defaultDueDate = new Date();
-        defaultDueDate.setDate(defaultDueDate.getDate() + 30);
-        const dueDate = dueDateObj > defaultDueDate 
-          ? dueDateObj.toISOString().split('T')[0]
-          : defaultDueDate.toISOString().split('T')[0];
+          // Create a map of item_id to item_name
+          const itemNameMap = new Map<string, string>();
+          (inventoryItems || []).forEach((item: any) => {
+            itemNameMap.set(item.id, item.name || 'Unknown Item');
+          });
 
-        // Convert order items to invoice items
-        const invoiceItems = orderData.items.map(item => ({
-          description: itemNameMap.get(item.item_id) || 'Rental Item',
-          quantity: item.quantity * ((item as any).rental_days || 1),
-          rate: item.rate,
-          gst_rate: 0 // Default GST rate, can be configured later
-        }));
+          // Fetch outlet state
+          let outletState: string | undefined;
+          if (currentOutletId) {
+            const { data: outletData, error: outletErr } = await supabase
+              .from('locations')
+              .select('address')
+              .eq('id', currentOutletId)
+              .single();
+            if (outletErr) {
+              console.warn('Could not fetch outlet location for tax calculation', outletErr);
+            } else {
+              outletState = outletData?.address?.state;
+            }
+          }
 
-        // Calculate invoice totals
-        const subtotal = invoiceItems.reduce((sum, item) => sum + (item.quantity * item.rate), 0);
-        const totalGst = invoiceItems.reduce((sum, item) => {
-          const itemTotal = item.quantity * item.rate;
-          return sum + (itemTotal * item.gst_rate / 100);
-        }, 0);
-        const totalAmount = subtotal + totalGst;
+          // Fetch customer state
+          let customerState: string | undefined;
+          if (currentCustomerId) {
+            const { data: customerData, error: custErr } = await supabase
+              .from('customers')
+              .select('address')
+              .eq('id', currentCustomerId)
+              .single();
+            if (custErr) {
+              console.warn('Could not fetch customer address for tax calculation', custErr);
+            } else {
+              customerState = customerData?.address?.state;
+            }
+          }
 
-        // Create invoice
-        const invoiceInsertData: any = {
-          customer_id: data.customer_id,
-          order_id: data.id, // Link invoice to order
-          invoice_date: invoiceDate,
-          due_date: dueDate,
-          invoice_type: 'rental',
-          subtotal: subtotal,
-          total_gst: totalGst,
-          total_amount: totalAmount,
-          payment_status: 'pending',
-          notes: orderData.notes || `Invoice for order ${data.order_number}`,
-          created_by: user?.id
-        };
-
-        // Add outlet_id if available
-        if (outletId) {
-          invoiceInsertData.outlet_id = outletId;
-        }
-
-        const { data: invoiceData, error: invoiceError } = await supabase
-          .from('invoices')
-          .insert(invoiceInsertData)
-          .select('id')
-          .maybeSingle();
-
-        if (invoiceError) {
-          console.error('Error creating invoice:', invoiceError);
-          // Don't throw error - invoice creation failure shouldn't fail order creation
-          console.warn('Order created but invoice creation failed. Invoice can be created manually later.');
-        } else if (invoiceData && invoiceItems.length > 0) {
-          // Create invoice items
-          const invoiceItemsData = invoiceItems.map(item => ({
-            invoice_id: invoiceData.id,
-            description: item.description,
-            quantity: item.quantity,
-            rate: item.rate,
-            gst_rate: item.gst_rate,
-            amount: (item.quantity * item.rate) + (item.quantity * item.rate * item.gst_rate / 100)
+          // Build tax lines using order items
+          const taxLines: LineTaxInput[] = orderItems.map((it: any) => ({
+            qty: Number(it.quantity) || 1,
+            rate: Number(it.unit_price) || 0,
+            gstRate: typeof it.gst_rate !== 'undefined' ? Number(it.gst_rate) : 18, // default 18%
+            outletState,
+            customerState
           }));
 
-          const { error: invoiceItemsError } = await supabase
-            .from('invoice_items')
-            .insert(invoiceItemsData);
+          // Central tax calculation
+          const taxResult = calculateInvoiceFromLines(taxLines, 'DOMESTIC', outletState, customerState);
 
-          if (invoiceItemsError) {
-            console.error('Error creating invoice items:', invoiceItemsError);
-            console.warn('Invoice created but items failed. Items can be added manually later.');
-          } else {
-            console.log(`Invoice ${invoiceData.id} created successfully for order ${data.order_number}`);
+          // Calculate invoice dates
+          const invoiceDate = new Date().toISOString().split('T')[0]; // Today's date
+          const eventDateObj = new Date(orderData.event_date);
+          // Due date: 30 days from invoice date, or event date + 7 days, whichever is later
+          const dueDateObj = new Date(eventDateObj);
+          dueDateObj.setDate(dueDateObj.getDate() + 7);
+          const defaultDueDate = new Date();
+          defaultDueDate.setDate(defaultDueDate.getDate() + 30);
+          const dueDate = dueDateObj > defaultDueDate 
+            ? dueDateObj.toISOString().split('T')[0]
+            : defaultDueDate.toISOString().split('T')[0];
+
+          // Prepare invoice payload
+          const invoicePayload: any = {
+            order_id: orderId,
+            customer_id: currentCustomerId,
+            invoice_date: invoiceDate,
+            due_date: dueDate,
+            invoice_type: 'rental',
+            subtotal: roundToTwoDecimals(taxResult.taxable_value), // Legacy field for compatibility
+            taxable_value: roundToTwoDecimals(taxResult.taxable_value),
+            cgst: roundToTwoDecimals(taxResult.cgst),
+            sgst: roundToTwoDecimals(taxResult.sgst),
+            igst: roundToTwoDecimals(taxResult.igst),
+            total_gst: roundToTwoDecimals(taxResult.cgst + taxResult.sgst + taxResult.igst), // Legacy field
+            total_amount: roundToTwoDecimals(taxResult.total_amount),
+            payment_status: 'pending',
+            notes: orderData.notes || `Invoice for order ${data.order_number}`,
+            created_by: currentUserId || null
+          };
+
+          // Add outlet_id if available
+          if (currentOutletId) {
+            invoicePayload.outlet_id = currentOutletId;
           }
+
+          const { data: invoiceData, error: invoiceErr } = await supabase
+            .from('invoices')
+            .insert(invoicePayload)
+            .select()
+            .single();
+
+          if (invoiceErr || !invoiceData) {
+            console.error('Invoice creation failed for order', orderId, invoiceErr);
+            throw invoiceErr || new Error('Invoice creation returned no data');
+          }
+
+          // Prepare invoice items from taxResult.breakdown
+          const invoiceItemsToInsert = taxResult.breakdown.map((line, index) => {
+            const orderItem = orderItems[index];
+            const itemName = orderItem ? itemNameMap.get(orderItem.item_id) || 'Rental Item' : 'Rental Item';
+            const rentalDays = (orderItem as any)?.rental_days || 1;
+            const quantity = orderItem ? orderItem.quantity * rentalDays : taxLines[index]?.qty || 1;
+            
+            return {
+              invoice_id: invoiceData.id,
+              description: itemName,
+              quantity: roundToTwoDecimals(quantity),
+              rate: roundToTwoDecimals(taxLines[index]?.rate || 0),
+              gst_rate: taxLines[index]?.gstRate || 18,
+              amount: roundToTwoDecimals(line.taxable), // Base amount (taxable value before GST)
+              hsn_code: null // Can be added later if needed
+            };
+          });
+
+          if (invoiceItemsToInsert.length > 0) {
+            const { error: invItemsErr } = await supabase
+              .from('invoice_items')
+              .insert(invoiceItemsToInsert);
+            if (invItemsErr) {
+              console.error('Failed to insert invoice items for invoice', invoiceData.id, invItemsErr);
+              // Cleanup - attempt to delete invoice to avoid orphan invoice
+              await supabase.from('invoices').delete().eq('id', invoiceData.id);
+              throw invItemsErr;
+            }
+          }
+
+          console.log(`Invoice ${invoiceData.id} created successfully for order ${data.order_number}`);
+        } catch (err: any) {
+          // Bubble the error up to caller to handle gracefully
+          console.error('Error creating invoice for order:', err);
+          throw new Error(`Failed to create invoice for order: ${err.message || 'Unknown error'}`);
         }
-      } catch (invoiceCreationError: any) {
-        // Log error but don't fail order creation
-        console.error('Unexpected error during invoice creation:', invoiceCreationError);
-        console.warn('Order created successfully but invoice creation encountered an error.');
+        // --- END: Order -> Invoice using tax engine ---
       }
 
       return {

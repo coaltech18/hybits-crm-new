@@ -1,0 +1,25 @@
+*   [33m28d60e1[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Merge chore/security/helmet-headers: add security headers for edge functions
+[31m|[m[32m\[m  
+* [32m\[m   [33m75c183e[m Merge feat/overdue-routine-admin: add manual overdue runner RPC and admin UI
+[33m|[m[34m\[m [32m\[m  
+* [34m\[m [32m\[m   [33m00c9fac[m Merge fix/invoice-error-handling-and-retry: add retry, audit and manual recreate for order->invoice
+[35m|[m[36m\[m [34m\[m [32m\[m  
+* [36m\[m [34m\[m [32m\[m   [33m3ea7408[m Merge fix/order-invoice-tax-default-18: use tax engine for order->invoice, default GST 18%
+[1;31m|[m[1;32m\[m [36m\[m [34m\[m [32m\[m  
+[1;31m|[m [1;32m|[m [36m|[m [34m|[m [32m|[m * [33mdbda60f[m[33m ([m[1;35mrefs/stash[m[33m)[m On chore/security/helmet-headers: WIP: uncommitted changes before merging branches to main
+[1;31m|[m [1;32m|[m [36m|[m [34m|[m [32m|[m[32m/[m[1;34m|[m 
+[1;31m|[m [1;32m|[m [36m|[m [34m|[m [32m|[m * [33m1badc0a[m index on chore/security/helmet-headers: a20d539 docs(security): update headers.md to note Supabase Edge Functions limitation
+[1;31m|[m [1;32m|[m [36m|[m [34m|[m [32m|[m[32m/[m  
+[1;31m|[m [1;32m|[m [36m|[m [34m|[m * [33ma20d539[m[33m ([m[1;32mchore/security/helmet-headers[m[33m)[m docs(security): update headers.md to note Supabase Edge Functions limitation
+[1;31m|[m [1;32m|[m [36m|[m [34m|[m * [33mc4ee898[m fix(security): inline security headers in edge functions (Supabase doesn't support shared modules)
+[1;31m|[m [1;32m|[m [36m|[m [34m|[m * [33m96c3e37[m chore(security): add security headers for edge functions; add docs
+[1;31m|[m [1;32m|[m [36m|[m [34m|[m[34m/[m  
+[1;31m|[m [1;32m|[m [36m|[m * [33m6e87862[m[33m ([m[1;32mfeat/overdue-routine-admin[m[33m)[m fix(inventory): convert storage paths to signed URLs for image display
+[1;31m|[m [1;32m|[m [36m|[m * [33ma030b2b[m feat(overdue): add manual overdue runner RPC and admin UI (no auto-schedule)
+[1;31m|[m [1;32m|[m [36m|[m[36m/[m  
+[1;31m|[m [1;32m|[m * [33m4753c0b[m[33m ([m[1;32mfix/invoice-error-handling-and-retry[m[33m)[m fix(invoice): add retry, audit and manual recreate for order->invoice
+[1;31m|[m [1;32m|[m[1;32m/[m  
+[1;31m|[m * [33mb106992[m[33m ([m[1;32mfix/order-invoice-tax-default-18[m[33m)[m fix(order): use tax engine for order->invoice, default GST 18%
+[1;31m|[m[1;31m/[m  
+* [33m4f1d52f[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m forgot to build the application before deploying
+* [33m5b9c0bc[m hotfixes done, pdf implemented, logics for the accoutning module and everything

@@ -21,9 +21,20 @@ declare const Deno: {
   }
 }
 
+// Security headers - inlined (Supabase Edge Functions don't support shared modules)
+// See supabase/functions/_shared/securityHeaders.ts for reference
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'self'",
+  'Referrer-Policy': 'no-referrer-when-downgrade',
+  'Permissions-Policy': 'geolocation=(), camera=(), microphone=()',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  ...SECURITY_HEADERS
 }
 
 interface InvoiceData {

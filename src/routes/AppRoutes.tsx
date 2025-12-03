@@ -42,6 +42,7 @@ import AddUserPage from '@/pages/users/AddUserPage';
 import SettingsPage from '@/pages/settings/SettingsPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 import GSTReportPage from '@/pages/reports/GSTReportPage';
+import OverdueRunnerPage from '@/pages/admin/OverdueRunnerPage';
 
 // Helper function to get default route based on user role
 const getDefaultRoute = (role: string): string => {
@@ -237,6 +238,14 @@ const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute requireAdmin={true}>
               <SettingsPage />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="admin/overdue-runner" 
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <OverdueRunnerPage />
             </ProtectedRoute>
           } 
         />

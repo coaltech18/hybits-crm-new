@@ -101,6 +101,12 @@ const Sidebar: React.FC<SidebarProps> = ({ user, isCollapsed = false, onToggle }
       href: '/settings',
       icon: 'settings',
       roles: ['admin']
+    },
+    {
+      name: 'Overdue Runner',
+      href: '/admin/overdue-runner',
+      icon: 'clock',
+      roles: ['admin', 'manager']
     }
   ];
 

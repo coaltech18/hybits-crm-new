@@ -22,11 +22,37 @@ export async function uploadImage(file: File, outletId: string, itemCode?: strin
 }
 
 export async function getSignedUrl(key: string, expires: number = 3600): Promise<{ url: string | null; error?: any }> {
+  // Normalize the key - remove any leading slashes or bucket name prefixes
+  let normalizedKey = key.trim();
+  
+  // Remove bucket name prefix if present (e.g., "inventory-images/")
+  if (normalizedKey.startsWith('inventory-images/')) {
+    normalizedKey = normalizedKey.replace('inventory-images/', '');
+  }
+  
+  // Remove leading slash
+  if (normalizedKey.startsWith('/')) {
+    normalizedKey = normalizedKey.substring(1);
+  }
+  
+  // Skip if key is empty or invalid
+  if (!normalizedKey || normalizedKey.length === 0) {
+    console.warn('Invalid storage key for signed URL:', key);
+    return { url: null, error: 'Invalid storage key' };
+  }
+  
+  console.log('Getting signed URL for key:', normalizedKey);
+  
   const { data, error } = await supabase.storage
     .from('inventory-images')
-    .createSignedUrl(key, expires);
+    .createSignedUrl(normalizedKey, expires);
   
-  return { url: data?.signedUrl || null, error };
+  if (error) {
+    console.error('Error creating signed URL for key:', normalizedKey, 'Error:', error);
+    return { url: null, error };
+  }
+  
+  return { url: data?.signedUrl || null, error: null };
 }
 
 export async function deleteImage(key: string): Promise<{ error?: any }> {

@@ -5,6 +5,14 @@
 import { supabase } from '@/lib/supabase';
 import { Order, OrderStatus } from '@/types';
 import { calculateInvoiceFromLines, LineTaxInput, roundToTwoDecimals } from '@/lib/invoiceTax';
+import { Invoice } from '@/services/invoiceService';
+
+// Helper function for exponential backoff delay
+const sleep = (ms: number): Promise<void> => {
+  return new Promise(resolve => setTimeout(resolve, ms));
+};
+
+const MAX_INVOICE_CREATION_ATTEMPTS = 3;
 
 export interface OrderFormData {
   customer_id: string;
@@ -99,13 +107,14 @@ export class OrderService {
           throw new Error(itemsError.message);
         }
 
-        // --- START: Order -> Invoice using tax engine ---
-        try {
-          const currentOutletId = outletId;
-          const currentCustomerId = data.customer_id;
-          const currentUserId = user?.id;
-          const orderId = data.id;
+        // --- START: Order -> Invoice using tax engine with retry and audit ---
+        const currentOutletId = outletId;
+        const currentCustomerId = data.customer_id;
+        const currentUserId = user?.id;
+        const orderId = data.id;
 
+        // Helper function to attempt invoice creation
+        const attemptCreateInvoice = async (attemptNumber: number): Promise<any> => {
           // Fetch inventory item names for invoice descriptions
           const itemIds = orderData.items.map(item => item.item_id);
           const { data: inventoryItems, error: inventoryError } = await supabase
@@ -208,7 +217,6 @@ export class OrderService {
             .single();
 
           if (invoiceErr || !invoiceData) {
-            console.error('Invoice creation failed for order', orderId, invoiceErr);
             throw invoiceErr || new Error('Invoice creation returned no data');
           }
 
@@ -242,13 +250,65 @@ export class OrderService {
             }
           }
 
-          console.log(`Invoice ${invoiceData.id} created successfully for order ${data.order_number}`);
-        } catch (err: any) {
-          // Bubble the error up to caller to handle gracefully
-          console.error('Error creating invoice for order:', err);
-          throw new Error(`Failed to create invoice for order: ${err.message || 'Unknown error'}`);
+          return { success: true, invoice: invoiceData };
+        };
+
+        // Retry logic with exponential backoff and audit
+        let lastErr: any = null;
+        let createdInvoice: any = null;
+
+        for (let attempt = 1; attempt <= MAX_INVOICE_CREATION_ATTEMPTS; attempt++) {
+          try {
+            const result = await attemptCreateInvoice(attempt);
+            createdInvoice = result.invoice;
+
+            // Write audit success record
+            await supabase.from('invoice_creation_audit').insert({
+              order_id: orderId,
+              invoice_id: createdInvoice.id,
+              outlet_id: currentOutletId || null,
+              requester_id: currentUserId || null,
+              attempt_integer: attempt,
+              success: true,
+              error_message: null,
+              metadata: { source: 'orderService.createOrder', order_number: data.order_number }
+            });
+
+            console.log(`Invoice ${createdInvoice.id} created successfully for order ${data.order_number} (attempt ${attempt})`);
+            break;
+          } catch (err: any) {
+            lastErr = err;
+
+            // Write audit failure record
+            await supabase.from('invoice_creation_audit').insert({
+              order_id: orderId,
+              invoice_id: null,
+              outlet_id: currentOutletId || null,
+              requester_id: currentUserId || null,
+              attempt_integer: attempt,
+              success: false,
+              error_message: err?.message ? String(err.message) : String(err),
+              metadata: { 
+                attempt, 
+                timestamp: new Date().toISOString(),
+                source: 'orderService.createOrder',
+                order_number: data.order_number
+              }
+            });
+
+            // Exponential backoff (except on last attempt)
+            if (attempt < MAX_INVOICE_CREATION_ATTEMPTS) {
+              const backoffMs = Math.pow(2, attempt) * 200; // 400ms, 800ms, 1600ms
+              await sleep(backoffMs);
+            }
+          }
         }
-        // --- END: Order -> Invoice using tax engine ---
+
+        if (!createdInvoice) {
+          // After all retries failed, throw clear error
+          throw new Error(`Invoice creation failed after ${MAX_INVOICE_CREATION_ATTEMPTS} attempts: ${lastErr?.message || lastErr}`);
+        }
+        // --- END: Order -> Invoice using tax engine with retry and audit ---
       }
 
       return {
@@ -514,6 +574,258 @@ export class OrderService {
     } catch (error: any) {
       console.error('Error in addOrderItems:', error);
       throw new Error(error.message || 'Failed to add order items');
+    }
+  }
+
+  /**
+   * Recreate invoice for an existing order
+   * Used for manual retry when invoice creation failed
+   */
+  static async recreateInvoiceForOrder(orderId: string): Promise<Invoice> {
+    try {
+      // Get current user for outlet_id and created_by
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      // Fetch the order
+      const order = await this.getOrder(orderId);
+      if (!order) {
+        throw new Error('Order not found');
+      }
+
+      // Check if invoice already exists
+      const { data: existingInvoice } = await supabase
+        .from('invoices')
+        .select('id')
+        .eq('order_id', orderId)
+        .maybeSingle();
+
+      if (existingInvoice) {
+        throw new Error('Invoice already exists for this order');
+      }
+
+      // Get outlet ID
+      const { data: orderData } = await supabase
+        .from('rental_orders')
+        .select('outlet_id, customer_id, event_date, notes, order_number')
+        .eq('id', orderId)
+        .single();
+
+      if (!orderData) {
+        throw new Error('Order data not found');
+      }
+
+      // Get order items
+      const { data: orderItemsData } = await supabase
+        .from('rental_order_items')
+        .select('*')
+        .eq('order_id', orderId);
+
+      if (!orderItemsData || orderItemsData.length === 0) {
+        throw new Error('Order has no items');
+      }
+
+      // Prepare order data for invoice creation
+      const orderFormData: OrderFormData = {
+        customer_id: orderData.customer_id,
+        event_date: order.event_date,
+        event_type: order.event_type || 'other',
+        event_duration: order.event_duration || 0,
+        guest_count: order.guest_count || 0,
+        location_type: order.location_type || 'indoor',
+        items: orderItemsData.map((item: any) => ({
+          item_id: item.item_id,
+          quantity: item.quantity,
+          rate: item.unit_price || item.rate
+        })),
+        status: order.status,
+        notes: orderData.notes || null
+      };
+
+      // Use the same retry logic as createOrder
+      const currentOutletId = orderData.outlet_id;
+      const currentCustomerId = orderData.customer_id;
+      const currentUserId = user?.id;
+
+      // Helper function to attempt invoice creation (same as in createOrder)
+      const attemptCreateInvoice = async (attemptNumber: number): Promise<any> => {
+        // Fetch inventory item names
+        const itemIds = orderFormData.items.map(item => item.item_id);
+        const { data: inventoryItems } = await supabase
+          .from('inventory_items')
+          .select('id, name')
+          .in('id', itemIds);
+
+        const itemNameMap = new Map<string, string>();
+        (inventoryItems || []).forEach((item: any) => {
+          itemNameMap.set(item.id, item.name || 'Unknown Item');
+        });
+
+        // Fetch outlet and customer state
+        let outletState: string | undefined;
+        if (currentOutletId) {
+          const { data: outletData } = await supabase
+            .from('locations')
+            .select('address')
+            .eq('id', currentOutletId)
+            .single();
+          outletState = outletData?.address?.state;
+        }
+
+        let customerState: string | undefined;
+        if (currentCustomerId) {
+          const { data: customerData } = await supabase
+            .from('customers')
+            .select('address')
+            .eq('id', currentCustomerId)
+            .single();
+          customerState = customerData?.address?.state;
+        }
+
+        // Build tax lines
+        const taxLines: LineTaxInput[] = orderItemsData.map((it: any) => ({
+          qty: Number(it.quantity) || 1,
+          rate: Number(it.unit_price) || 0,
+          gstRate: typeof it.gst_rate !== 'undefined' ? Number(it.gst_rate) : 18,
+          outletState,
+          customerState
+        }));
+
+        const taxResult = calculateInvoiceFromLines(taxLines, 'DOMESTIC', outletState, customerState);
+
+        // Calculate dates
+        const invoiceDate = new Date().toISOString().split('T')[0];
+        const eventDateObj = new Date(orderFormData.event_date);
+        const dueDateObj = new Date(eventDateObj);
+        dueDateObj.setDate(dueDateObj.getDate() + 7);
+        const defaultDueDate = new Date();
+        defaultDueDate.setDate(defaultDueDate.getDate() + 30);
+        const dueDate = dueDateObj > defaultDueDate 
+          ? dueDateObj.toISOString().split('T')[0]
+          : defaultDueDate.toISOString().split('T')[0];
+
+        // Create invoice
+        const invoicePayload: any = {
+          order_id: orderId,
+          customer_id: currentCustomerId,
+          invoice_date: invoiceDate,
+          due_date: dueDate,
+          invoice_type: 'rental',
+          subtotal: roundToTwoDecimals(taxResult.taxable_value),
+          taxable_value: roundToTwoDecimals(taxResult.taxable_value),
+          cgst: roundToTwoDecimals(taxResult.cgst),
+          sgst: roundToTwoDecimals(taxResult.sgst),
+          igst: roundToTwoDecimals(taxResult.igst),
+          total_gst: roundToTwoDecimals(taxResult.cgst + taxResult.sgst + taxResult.igst),
+          total_amount: roundToTwoDecimals(taxResult.total_amount),
+          payment_status: 'pending',
+          notes: orderFormData.notes || `Invoice for order ${orderData.order_number}`,
+          created_by: currentUserId || null
+        };
+
+        if (currentOutletId) {
+          invoicePayload.outlet_id = currentOutletId;
+        }
+
+        const { data: invoiceData, error: invoiceErr } = await supabase
+          .from('invoices')
+          .insert(invoicePayload)
+          .select()
+          .single();
+
+        if (invoiceErr || !invoiceData) {
+          throw invoiceErr || new Error('Invoice creation returned no data');
+        }
+
+        // Create invoice items
+        const invoiceItemsToInsert = taxResult.breakdown.map((line, index) => {
+          const orderItem = orderItemsData[index];
+          const itemName = orderItem ? itemNameMap.get(orderItem.item_id) || 'Rental Item' : 'Rental Item';
+          const rentalDays = (orderItem as any)?.rental_days || 1;
+          const quantity = orderItem ? orderItem.quantity * rentalDays : taxLines[index]?.qty || 1;
+          
+          return {
+            invoice_id: invoiceData.id,
+            description: itemName,
+            quantity: roundToTwoDecimals(quantity),
+            rate: roundToTwoDecimals(taxLines[index]?.rate || 0),
+            gst_rate: taxLines[index]?.gstRate || 18,
+            amount: roundToTwoDecimals(line.taxable),
+            hsn_code: null
+          };
+        });
+
+        if (invoiceItemsToInsert.length > 0) {
+          const { error: invItemsErr } = await supabase
+            .from('invoice_items')
+            .insert(invoiceItemsToInsert);
+          if (invItemsErr) {
+            await supabase.from('invoices').delete().eq('id', invoiceData.id);
+            throw invItemsErr;
+          }
+        }
+
+        return { success: true, invoice: invoiceData };
+      };
+
+      // Retry logic with audit
+      let lastErr: any = null;
+      let createdInvoice: any = null;
+
+      for (let attempt = 1; attempt <= MAX_INVOICE_CREATION_ATTEMPTS; attempt++) {
+        try {
+          const result = await attemptCreateInvoice(attempt);
+          createdInvoice = result.invoice;
+
+          // Write audit success
+          await supabase.from('invoice_creation_audit').insert({
+            order_id: orderId,
+            invoice_id: createdInvoice.id,
+            outlet_id: currentOutletId || null,
+            requester_id: currentUserId || null,
+            attempt_integer: attempt,
+            success: true,
+            error_message: null,
+            metadata: { source: 'orderService.recreateInvoiceForOrder', order_number: orderData.order_number }
+          });
+
+          break;
+        } catch (err: any) {
+          lastErr = err;
+
+          // Write audit failure
+          await supabase.from('invoice_creation_audit').insert({
+            order_id: orderId,
+            invoice_id: null,
+            outlet_id: currentOutletId || null,
+            requester_id: currentUserId || null,
+            attempt_integer: attempt,
+            success: false,
+            error_message: err?.message ? String(err.message) : String(err),
+            metadata: { 
+              attempt, 
+              timestamp: new Date().toISOString(),
+              source: 'orderService.recreateInvoiceForOrder',
+              order_number: orderData.order_number
+            }
+          });
+
+          if (attempt < MAX_INVOICE_CREATION_ATTEMPTS) {
+            const backoffMs = Math.pow(2, attempt) * 200;
+            await sleep(backoffMs);
+          }
+        }
+      }
+
+      if (!createdInvoice) {
+        throw new Error(`Invoice recreation failed after ${MAX_INVOICE_CREATION_ATTEMPTS} attempts: ${lastErr?.message || lastErr}`);
+      }
+
+      // Fetch and return the full invoice
+      const { InvoiceService } = await import('@/services/invoiceService');
+      return await InvoiceService.getInvoice(createdInvoice.id);
+    } catch (error: any) {
+      console.error('Error in recreateInvoiceForOrder:', error);
+      throw new Error(error.message || 'Failed to recreate invoice for order');
     }
   }
 }

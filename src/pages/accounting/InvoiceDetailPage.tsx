@@ -7,6 +7,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { InvoiceService, Invoice } from '@/services/invoiceService';
 import { PaymentService, Payment } from '@/services/paymentService';
+import { OrderService } from '@/services/orderService';
+import { AuditService, InvoiceCreationAudit } from '@/services/auditService';
 import RecordPaymentModal from '@/components/accounting/RecordPaymentModal';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/AppIcon';
@@ -20,10 +22,15 @@ const InvoiceDetailPage: React.FC = () => {
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false);
-    const [generatingPdf, setGeneratingPdf] = useState(false);
-    const [pdfError, setPdfError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showRecordPaymentModal, setShowRecordPaymentModal] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
+  const [hasFailedAttempts, setHasFailedAttempts] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const [auditEntries, setAuditEntries] = useState<InvoiceCreationAudit[]>([]);
 
   useEffect(() => {
     if (id) {
@@ -31,6 +38,34 @@ const InvoiceDetailPage: React.FC = () => {
       loadPayments();
     }
   }, [id]);
+
+  useEffect(() => {
+    // Check for order_id and failed attempts when invoice loads
+    if (invoice) {
+      checkOrderAndFailedAttempts();
+    }
+  }, [invoice]);
+
+  const checkOrderAndFailedAttempts = async () => {
+    if (!invoice) return;
+
+    try {
+      // Fetch invoice with order_id
+      const { data: invoiceData } = await supabase
+        .from('invoices')
+        .select('order_id')
+        .eq('id', invoice.id)
+        .single();
+
+      if (invoiceData?.order_id) {
+        setOrderId(invoiceData.order_id);
+        const hasFailed = await AuditService.hasFailedInvoiceCreation(invoiceData.order_id);
+        setHasFailedAttempts(hasFailed);
+      }
+    } catch (err) {
+      console.error('Error checking order and failed attempts:', err);
+    }
+  };
 
   const loadInvoice = async () => {
     if (!id) return;
@@ -40,9 +75,31 @@ const InvoiceDetailPage: React.FC = () => {
       setError(null);
       const invoiceData = await InvoiceService.getInvoice(id);
       setInvoice(invoiceData);
+      
+      // Check for order_id after invoice loads
+      if (invoiceData) {
+        const { data: invoiceWithOrder } = await supabase
+          .from('invoices')
+          .select('order_id')
+          .eq('id', id)
+          .single();
+        
+        if (invoiceWithOrder?.order_id) {
+          setOrderId(invoiceWithOrder.order_id);
+          const hasFailed = await AuditService.hasFailedInvoiceCreation(invoiceWithOrder.order_id);
+          setHasFailedAttempts(hasFailed);
+        }
+      }
     } catch (err: any) {
       console.error('Error loading invoice:', err);
       setError(err.message || 'Failed to load invoice');
+      
+      // If invoice not found, check if there's an order_id in URL params or check for order
+      // This handles the case where invoice creation failed
+      if (err.message?.includes('not found')) {
+        // Try to find order_id from URL or other means
+        // For now, we'll rely on the user to provide order_id via URL param if needed
+      }
     } finally {
       setLoading(false);
     }
@@ -63,6 +120,47 @@ const InvoiceDetailPage: React.FC = () => {
     setShowRecordPaymentModal(false);
     loadInvoice();
     loadPayments();
+  };
+
+  const handleRetryInvoiceCreation = async () => {
+    if (!orderId) return;
+
+    try {
+      setIsRetrying(true);
+      await OrderService.recreateInvoiceForOrder(orderId);
+      
+      // Show success message
+      alert('Invoice recreated successfully');
+      
+      // Reload invoice
+      await loadInvoice();
+      await checkOrderAndFailedAttempts();
+    } catch (err: any) {
+      const errorMsg = err?.message || 'Failed to recreate invoice';
+      alert(`Invoice recreate failed: ${errorMsg.substring(0, 200)}`);
+      
+      // Open audit modal
+      await loadAuditEntries();
+      setShowAuditModal(true);
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
+  const loadAuditEntries = async () => {
+    if (!orderId) return;
+
+    try {
+      const entries = await AuditService.fetchInvoiceCreationAuditForOrder(orderId, 5);
+      setAuditEntries(entries);
+    } catch (err) {
+      console.error('Error loading audit entries:', err);
+    }
+  };
+
+  const handleOpenAuditModal = async () => {
+    await loadAuditEntries();
+    setShowAuditModal(true);
   };
 
   const handleGeneratePdf = async () => {
@@ -239,8 +337,102 @@ const InvoiceDetailPage: React.FC = () => {
             <Icon name="plus" size={20} className="mr-2" />
             Record Payment
           </Button>
+
+          {/* Retry Invoice Creation Button - Show if order exists and has failed attempts or no invoice */}
+          {orderId && (hasFailedAttempts || !invoice) && (
+            <>
+              <Button 
+                onClick={handleRetryInvoiceCreation} 
+                disabled={isRetrying}
+                variant="outline"
+              >
+                {isRetrying ? (
+                  <>
+                    <Icon name="loader" size={20} className="mr-2 animate-spin" />
+                    Retrying...
+                  </>
+                ) : (
+                  <>
+                    <Icon name="refresh-cw" size={20} className="mr-2" />
+                    Retry Invoice Creation
+                  </>
+                )}
+              </Button>
+              <Button 
+                onClick={handleOpenAuditModal}
+                variant="outline"
+              >
+                <Icon name="file-text" size={20} className="mr-2" />
+                View Audit Log
+              </Button>
+            </>
+          )}
          </div>
       </div>
+
+      {/* Audit Modal */}
+      {showAuditModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-foreground">Invoice Creation Audit Log</h2>
+              <button
+                onClick={() => setShowAuditModal(false)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Icon name="x" size={24} />
+              </button>
+            </div>
+            
+            {auditEntries.length === 0 ? (
+              <p className="text-muted-foreground">No audit entries found.</p>
+            ) : (
+              <div className="space-y-4">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left p-2 text-foreground">Attempt</th>
+                      <th className="text-left p-2 text-foreground">Status</th>
+                      <th className="text-left p-2 text-foreground">Error</th>
+                      <th className="text-left p-2 text-foreground">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditEntries.map((entry) => (
+                      <tr key={entry.id} className="border-b border-border">
+                        <td className="p-2 text-foreground">{entry.attempt_integer}</td>
+                        <td className="p-2">
+                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                            entry.success 
+                              ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' 
+                              : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+                          }`}>
+                            {entry.success ? 'Success' : 'Failed'}
+                          </span>
+                        </td>
+                        <td className="p-2 text-muted-foreground text-xs">
+                          {entry.error_message ? (
+                            <span title={entry.error_message}>
+                              {entry.error_message.length > 50 
+                                ? entry.error_message.substring(0, 50) + '...' 
+                                : entry.error_message}
+                            </span>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="p-2 text-muted-foreground">
+                          {new Date(entry.created_at).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Invoice Details */}
       <div className="bg-card border border-border rounded-lg p-6">

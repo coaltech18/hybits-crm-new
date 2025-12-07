@@ -10,50 +10,37 @@ class InventoryService {
   /**
    * Get all inventory items (with outlet filtering for non-admin users)
    */
-  async getInventoryItems(options?: { outletId?: string }): Promise<InventoryItem[]> {
+  async getInventoryItems(options?: { 
+    outletId?: string; 
+    userRole?: 'admin' | 'manager' | 'accountant';
+    includeSharedItems?: boolean;
+  }): Promise<InventoryItem[]> {
     try {
       console.log('Fetching inventory items from database...', 'Options:', options);
       let query = supabase
         .from('inventory_items')
         .select('*');
 
-      // Filter by outlet_id if provided (for manager)
-      // If outletId is provided, show items for that outlet OR items with NULL outlet_id (shared items)
+      // Filter by outlet_id if provided
       if (options?.outletId) {
-        // Use PostgREST filter: items matching outlet_id OR items with NULL outlet_id
-        // Format: "column.eq.value,column.is.null"
-        query = query.or(`outlet_id.eq.${options.outletId},outlet_id.is.null`);
+        // Only admins with explicit flag can see NULL outlet_id items (shared items)
+        if (options.userRole === 'admin' && options.includeSharedItems) {
+          query = query.or(`outlet_id.eq.${options.outletId},outlet_id.is.null`);
+        } else {
+          // Managers and admins without flag: strict outlet filtering (no NULL items)
+          query = query.eq('outlet_id', options.outletId);
+        }
       }
       // If no outletId provided (admin/accountant), show all items including NULL outlet_id
 
       const { data, error } = await query.order('created_at', { ascending: false });
       
-      let itemsData = data;
-      
       if (error) {
         console.error('Error in query:', error);
-        // If the OR query fails, try fetching all items as fallback
-        if (options?.outletId) {
-          console.log('Falling back to fetch all items...');
-          const { data: allData, error: allError } = await supabase
-            .from('inventory_items')
-            .select('*')
-            .order('created_at', { ascending: false });
-          
-          if (allError) {
-            throw new Error(allError.message);
-          }
-          
-          // Filter client-side: items matching outlet OR NULL outlet_id
-          itemsData = (allData || []).filter((item: any) => 
-            !item.outlet_id || item.outlet_id === options.outletId
-          );
-          
-          console.log('Fallback fetch - filtered items:', itemsData.length);
-        } else {
-          throw new Error(error.message);
-        }
+        throw new Error(error.message);
       }
+      
+      const itemsData = data;
 
       console.log('Raw data from database:', itemsData);
       console.log('Number of items found:', itemsData?.length || 0);

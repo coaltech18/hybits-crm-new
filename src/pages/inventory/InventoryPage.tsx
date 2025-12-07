@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import Icon from '@/components/AppIcon';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -143,6 +144,7 @@ const mockInventoryItems: InventoryItem[] = [
 
 const InventoryPage: React.FC = () => {
   const navigate = useNavigate();
+  const { user, getCurrentOutletId } = useAuth();
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +158,16 @@ const InventoryPage: React.FC = () => {
       setLoading(true);
       setError(null);
       console.log('Loading inventory items...');
-      const inventoryItems = await InventoryService.getInventoryItems();
+      // For managers, filter by their outlet. For admins/accountants, show all items
+      const currentOutletId = user?.role === 'manager' ? getCurrentOutletId() : undefined;
+      const options: { outletId?: string; userRole?: 'admin' | 'manager' | 'accountant' } = {};
+      if (currentOutletId) {
+        options.outletId = currentOutletId;
+      }
+      if (user?.role && (user.role === 'admin' || user.role === 'manager' || user.role === 'accountant')) {
+        options.userRole = user.role;
+      }
+      const inventoryItems = await InventoryService.getInventoryItems(options);
       console.log('Loaded items:', inventoryItems);
       setItems(inventoryItems);
     } catch (err: any) {

@@ -161,7 +161,14 @@ const NewOrderPage: React.FC = () => {
         const currentOutletId = user?.role === 'manager' ? getCurrentOutletId() : undefined;
         
         // Fetch items with proper outlet filtering at service level
-        const items = await inventoryService.getInventoryItems(currentOutletId ? { outletId: currentOutletId } : undefined);
+        const options: { outletId?: string; userRole?: 'admin' | 'manager' | 'accountant' } = {};
+        if (currentOutletId) {
+          options.outletId = currentOutletId;
+        }
+        if (user?.role && (user.role === 'admin' || user.role === 'manager' || user.role === 'accountant')) {
+          options.userRole = user.role;
+        }
+        const items = await inventoryService.getInventoryItems(options);
         
         setInventoryItems(items);
         

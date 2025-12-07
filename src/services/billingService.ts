@@ -802,6 +802,29 @@ export class BillingService {
     }
   }
 
+  /**
+   * Delete vendor subscription (soft delete by setting status to cancelled)
+   */
+  static async deleteVendorSubscription(subscriptionId: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('vendor_subscriptions')
+        .update({ 
+          status: 'cancelled',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', subscriptionId);
+
+      if (error) {
+        console.error('Error deleting vendor subscription:', error);
+        throw new Error(error.message || 'Failed to delete vendor subscription');
+      }
+    } catch (error: any) {
+      console.error('Error in deleteVendorSubscription:', error);
+      throw new Error(error.message || 'Failed to delete vendor subscription');
+    }
+  }
+
   // ============================================================================
   // VENDOR PAYMENT METHODS
   // ============================================================================
@@ -1133,6 +1156,29 @@ export class BillingService {
     } catch (error: any) {
       console.error('Error in updateCustomerSubscription:', error);
       throw new Error(error.message || 'Failed to update subscription');
+    }
+  }
+
+  /**
+   * Delete customer subscription (soft delete by setting status to cancelled)
+   */
+  static async deleteCustomerSubscription(id: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('customer_subscriptions')
+        .update({ 
+          status: 'cancelled',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error deleting customer subscription:', error);
+        throw new Error(error.message || 'Failed to delete subscription');
+      }
+    } catch (error: any) {
+      console.error('Error in deleteCustomerSubscription:', error);
+      throw new Error(error.message || 'Failed to delete subscription');
     }
   }
 

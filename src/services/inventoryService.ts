@@ -62,32 +62,86 @@ class InventoryService {
       // Also convert storage paths to signed URLs for images
       const mappedItems = await Promise.all((itemsData || []).map(async (item: any) => {
         // Convert image_url from storage path to signed URL if it's a storage path
-        let imageUrl = item.image_url;
-        let thumbnailUrl = item.thumbnail_url;
+        let imageUrl = item.image_url || null;
+        let thumbnailUrl = item.thumbnail_url || null;
         
-        // Check if image_url is a storage path (not a full URL)
-        if (imageUrl && !imageUrl.startsWith('http') && !imageUrl.startsWith('/')) {
+        // Log raw database values for debugging
+        console.log(`[${item.item_code || item.id}] Raw DB values - image_url:`, imageUrl, 'thumbnail_url:', thumbnailUrl);
+        
+        // Helper function to check if URL needs conversion
+        const needsConversion = (url: string | null): boolean => {
+          if (!url || url.trim() === '') {
+            console.log(`  → URL is empty/null, skipping conversion`);
+            return false;
+          }
+          // If it's already a full URL (http/https) or a public asset path, don't convert
+          if (url.startsWith('http://') || url.startsWith('https://')) {
+            console.log(`  → URL is already a full URL, skipping conversion`);
+            return false;
+          }
+          if (url.startsWith('/assets/') || url.startsWith('/public/')) {
+            console.log(`  → URL is a public asset, skipping conversion`);
+            return false;
+          }
+          // If it's a storage path (contains slashes but not starting with http), convert it
+          console.log(`  → URL needs conversion (storage path)`);
+          return true;
+        };
+        
+        // Convert image_url from storage path to signed URL
+        if (needsConversion(imageUrl)) {
           try {
-            const signedResult = await getSignedUrl(imageUrl, 3600); // 1 hour expiry
+            // Log what's stored in database
+            console.log(`[${item.item_code || item.id}] Database image_url:`, imageUrl);
+            
+            // Remove leading slash if present
+            let cleanPath = imageUrl.startsWith('/') ? imageUrl.substring(1) : imageUrl;
+            
+            // Handle old format paths: inventory/default/filename -> try to find actual path
+            const signedResult = await getSignedUrl(cleanPath, 3600 * 24); // 24 hour expiry
+            
             if (signedResult.url) {
               imageUrl = signedResult.url;
+              console.log(`✓ [${item.item_code || item.id}] Converted image URL:`, cleanPath, '->', signedResult.url.substring(0, 50) + '...');
+            } else {
+              const errorMsg = signedResult.error?.message || 'Unknown error';
+              const errorStatus = signedResult.error?.statusCode || signedResult.error?.status;
+              console.warn(`✗ [${item.item_code || item.id}] Failed to get signed URL for image:`, cleanPath);
+              console.warn('  Error:', errorMsg, 'Status:', errorStatus);
+              console.warn('  Full error:', signedResult.error);
+              
+              // If it's a 400/404 error, the file likely doesn't exist at that path
+              if (errorStatus === 400 || errorStatus === 404) {
+                console.warn('  → File not found in storage. Path may be incorrect or file was deleted.');
+                console.warn('  → Check Supabase Storage to verify the file exists and update the database path if needed.');
+              }
+              
+              imageUrl = null; // Set to null so fallback image shows
             }
-          } catch (err) {
-            console.warn('Failed to get signed URL for image:', imageUrl, err);
-            // Keep original path, will show fallback image
+          } catch (err: any) {
+            console.warn(`✗ [${item.item_code || item.id}] Error getting signed URL for image:`, imageUrl, 'Error:', err?.message || err);
+            imageUrl = null; // Set to null so fallback image shows
           }
         }
         
         // Convert thumbnail_url if it exists and is a storage path
-        if (thumbnailUrl && !thumbnailUrl.startsWith('http') && !thumbnailUrl.startsWith('/')) {
+        if (needsConversion(thumbnailUrl)) {
           try {
-            const signedResult = await getSignedUrl(thumbnailUrl, 3600);
+            // Remove leading slash if present
+            let cleanPath = thumbnailUrl.startsWith('/') ? thumbnailUrl.substring(1) : thumbnailUrl;
+            const signedResult = await getSignedUrl(cleanPath, 3600 * 24); // 24 hour expiry
+            
             if (signedResult.url) {
               thumbnailUrl = signedResult.url;
+              console.log('✓ Converted thumbnail URL:', cleanPath, '->', signedResult.url.substring(0, 50) + '...');
+            } else {
+              const errorMsg = signedResult.error?.message || 'Unknown error';
+              console.warn('✗ Failed to get signed URL for thumbnail:', cleanPath, 'Error:', errorMsg);
+              thumbnailUrl = imageUrl; // Fallback to main image
             }
-          } catch (err) {
-            console.warn('Failed to get signed URL for thumbnail:', thumbnailUrl, err);
-            // Keep original path
+          } catch (err: any) {
+            console.warn('✗ Error getting signed URL for thumbnail:', thumbnailUrl, 'Error:', err?.message || err);
+            thumbnailUrl = imageUrl; // Fallback to main image
           }
         }
 
@@ -98,8 +152,8 @@ class InventoryService {
           location_id: item.outlet_id || 'main-warehouse',
           condition: item.condition || 'excellent',
           last_movement: item.updated_at,
-          image_url: imageUrl,
-          thumbnail_url: thumbnailUrl || imageUrl
+          image_url: imageUrl || undefined,
+          thumbnail_url: thumbnailUrl || imageUrl || undefined
         };
       }));
 
@@ -133,30 +187,54 @@ class InventoryService {
       }
 
       // Convert image_url from storage path to signed URL if it's a storage path
-      let imageUrl = data.image_url;
-      let thumbnailUrl = data.thumbnail_url;
+      let imageUrl = data.image_url || null;
+      let thumbnailUrl = data.thumbnail_url || null;
       
-      // Check if image_url is a storage path (not a full URL)
-      if (imageUrl && !imageUrl.startsWith('http') && !imageUrl.startsWith('/')) {
+      // Helper function to check if URL needs conversion
+      const needsConversion = (url: string | null): boolean => {
+        if (!url || url.trim() === '') return false;
+        // If it's already a full URL (http/https) or a public asset path, don't convert
+        if (url.startsWith('http://') || url.startsWith('https://')) return false;
+        if (url.startsWith('/assets/') || url.startsWith('/public/')) return false;
+        // If it's a storage path (contains slashes but not starting with http), convert it
+        return true;
+      };
+      
+      // Convert image_url from storage path to signed URL
+      if (needsConversion(imageUrl)) {
         try {
-          const signedResult = await getSignedUrl(imageUrl, 3600); // 1 hour expiry
+          // Remove leading slash if present
+          const cleanPath = imageUrl.startsWith('/') ? imageUrl.substring(1) : imageUrl;
+          const signedResult = await getSignedUrl(cleanPath, 3600 * 24); // 24 hour expiry
           if (signedResult.url) {
             imageUrl = signedResult.url;
+            console.log('Converted image URL:', cleanPath, '->', signedResult.url);
+          } else {
+            console.warn('Failed to get signed URL for image:', cleanPath, signedResult.error);
+            imageUrl = null; // Set to null so fallback image shows
           }
         } catch (err) {
-          console.warn('Failed to get signed URL for image:', imageUrl, err);
+          console.warn('Error getting signed URL for image:', imageUrl, err);
+          imageUrl = null; // Set to null so fallback image shows
         }
       }
       
       // Convert thumbnail_url if it exists and is a storage path
-      if (thumbnailUrl && !thumbnailUrl.startsWith('http') && !thumbnailUrl.startsWith('/')) {
+      if (needsConversion(thumbnailUrl)) {
         try {
-          const signedResult = await getSignedUrl(thumbnailUrl, 3600);
+          // Remove leading slash if present
+          const cleanPath = thumbnailUrl.startsWith('/') ? thumbnailUrl.substring(1) : thumbnailUrl;
+          const signedResult = await getSignedUrl(cleanPath, 3600 * 24); // 24 hour expiry
           if (signedResult.url) {
             thumbnailUrl = signedResult.url;
+            console.log('Converted thumbnail URL:', cleanPath, '->', signedResult.url);
+          } else {
+            console.warn('Failed to get signed URL for thumbnail:', cleanPath, signedResult.error);
+            thumbnailUrl = imageUrl; // Fallback to main image
           }
         } catch (err) {
-          console.warn('Failed to get signed URL for thumbnail:', thumbnailUrl, err);
+          console.warn('Error getting signed URL for thumbnail:', thumbnailUrl, err);
+          thumbnailUrl = imageUrl; // Fallback to main image
         }
       }
 
@@ -168,8 +246,8 @@ class InventoryService {
         location_id: data.outlet_id || 'main-warehouse',
         condition: data.condition || 'excellent',
         last_movement: data.updated_at,
-        image_url: imageUrl,
-        thumbnail_url: thumbnailUrl || imageUrl
+        image_url: imageUrl || undefined,
+        thumbnail_url: thumbnailUrl || imageUrl || undefined
       };
     } catch (error: any) {
       console.error('Error in getInventoryItem:', error);
@@ -294,9 +372,27 @@ class InventoryService {
 
   /**
    * Delete inventory item
+   * Checks if item is referenced in orders before deleting
    */
   async deleteInventoryItem(id: string): Promise<void> {
     try {
+      // First, check if this item is referenced in any orders
+      const { data: orderItems, error: checkError } = await supabase
+        .from('rental_order_items')
+        .select('id')
+        .eq('item_id', id)
+        .limit(1);
+
+      if (checkError) {
+        console.error('Error checking item references:', checkError);
+        throw new Error(checkError.message);
+      }
+
+      if (orderItems && orderItems.length > 0) {
+        throw new Error('Cannot delete item: It is currently used in rental orders. Please remove it from all orders first.');
+      }
+
+      // If not referenced, proceed with deletion
       const { error } = await supabase
         .from('inventory_items')
         .delete()

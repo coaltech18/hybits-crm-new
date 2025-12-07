@@ -104,6 +104,21 @@ const OutletsPage: React.FC = () => {
       : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
   };
 
+  const handleDeleteOutlet = async (outletId: string, outletName: string) => {
+    if (!window.confirm(`Are you sure you want to delete outlet "${outletName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await OutletService.deleteOutlet(outletId);
+      await loadOutlets();
+      alert('Outlet deleted successfully');
+    } catch (err: any) {
+      console.error('Error deleting outlet:', err);
+      alert(err.message || 'Failed to delete outlet');
+    }
+  };
+
   if (!user || !hasPermission(user.role, 'outlets', 'read')) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -221,7 +236,12 @@ const OutletsPage: React.FC = () => {
                   </Button>
                 )}
                 {hasPermission(user.role, 'outlets', 'delete') && (
-                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => handleDeleteOutlet(outlet.id, outlet.name)}
+                  >
                     <Icon name="trash" size={14} />
                   </Button>
                 )}

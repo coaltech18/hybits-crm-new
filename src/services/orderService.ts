@@ -114,7 +114,7 @@ export class OrderService {
         const orderId = data.id;
 
         // Helper function to attempt invoice creation
-        const attemptCreateInvoice = async (attemptNumber: number): Promise<any> => {
+        const attemptCreateInvoice = async (_attemptNumber: number): Promise<any> => {
           // Fetch inventory item names for invoice descriptions
           const itemIds = orderData.items.map(item => item.item_id);
           const { data: inventoryItems, error: inventoryError } = await supabase
@@ -167,8 +167,8 @@ export class OrderService {
             qty: Number(it.quantity) || 1,
             rate: Number(it.unit_price) || 0,
             gstRate: typeof it.gst_rate !== 'undefined' ? Number(it.gst_rate) : 18, // default 18%
-            outletState,
-            customerState
+            outletState: outletState || '',
+            customerState: customerState || ''
           }));
 
           // Central tax calculation
@@ -647,7 +647,7 @@ export class OrderService {
       const currentUserId = user?.id;
 
       // Helper function to attempt invoice creation (same as in createOrder)
-      const attemptCreateInvoice = async (attemptNumber: number): Promise<any> => {
+      const attemptCreateInvoice = async (_attemptNumber: number): Promise<any> => {
         // Fetch inventory item names
         const itemIds = orderFormData.items.map(item => item.item_id);
         const { data: inventoryItems } = await supabase
@@ -686,8 +686,8 @@ export class OrderService {
           qty: Number(it.quantity) || 1,
           rate: Number(it.unit_price) || 0,
           gstRate: typeof it.gst_rate !== 'undefined' ? Number(it.gst_rate) : 18,
-          outletState,
-          customerState
+          outletState: outletState || '',
+          customerState: customerState || ''
         }));
 
         const taxResult = calculateInvoiceFromLines(taxLines, 'DOMESTIC', outletState, customerState);
@@ -826,6 +826,34 @@ export class OrderService {
     } catch (error: any) {
       console.error('Error in recreateInvoiceForOrder:', error);
       throw new Error(error.message || 'Failed to recreate invoice for order');
+    }
+  }
+
+  /**
+   * Delete an order (soft delete by setting status to cancelled)
+   * Note: This will also handle related invoices if needed
+   */
+  static async deleteOrder(id: string): Promise<void> {
+    try {
+      // Update order status to cancelled (soft delete)
+      const { error: updateError } = await supabase
+        .from('rental_orders')
+        .update({ 
+          status: 'cancelled',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id);
+
+      if (updateError) {
+        console.error('Error deleting order:', updateError);
+        throw new Error(updateError.message || 'Failed to delete order');
+      }
+
+      // Optionally, you can also delete related invoice if needed
+      // For now, we'll just cancel the order
+    } catch (error: any) {
+      console.error('Error in deleteOrder:', error);
+      throw new Error(error.message || 'Failed to delete order');
     }
   }
 }

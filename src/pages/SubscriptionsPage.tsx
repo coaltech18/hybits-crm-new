@@ -42,6 +42,21 @@ const SubscriptionsPage: React.FC = () => {
     }
   };
 
+  const handleDeleteSubscription = async (subscriptionId: string, vendorName: string) => {
+    if (!window.confirm(`Are you sure you want to cancel subscription for "${vendorName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await BillingService.deleteVendorSubscription(subscriptionId);
+      await loadData();
+      alert('Vendor subscription cancelled successfully');
+    } catch (err: any) {
+      console.error('Error deleting vendor subscription:', err);
+      alert(err.message || 'Failed to cancel vendor subscription');
+    }
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -193,7 +208,7 @@ const SubscriptionsPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {vendorSubscriptions.map((subscription) => (
+                {vendorSubscriptions.filter(sub => sub.status !== 'cancelled').map((subscription) => (
                   <tr key={subscription.id} className="hover:bg-muted/50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
@@ -248,9 +263,16 @@ const SubscriptionsPage: React.FC = () => {
                         <Button variant="ghost" size="sm">
                           <Icon name="edit" size={16} />
                         </Button>
-                        <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700">
-                          <Icon name="trash" size={16} />
-                        </Button>
+                        {subscription.status === 'active' && (
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => handleDeleteSubscription(subscription.id, subscription.vendor_name || 'Unknown Vendor')}
+                          >
+                            <Icon name="trash" size={16} />
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>

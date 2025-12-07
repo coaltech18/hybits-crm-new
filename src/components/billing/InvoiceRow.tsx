@@ -11,6 +11,7 @@ interface InvoiceRowProps {
   invoice: Invoice;
   onView?: (invoice: Invoice) => void;
   onDownload?: (invoice: Invoice) => void;
+  onDelete?: (invoice: Invoice) => void;
   showUserInfo?: boolean;
   userInfo?: {
     user_name?: string;
@@ -22,6 +23,7 @@ const InvoiceRow: React.FC<InvoiceRowProps> = ({
   invoice,
   onView,
   onDownload,
+  onDelete,
   showUserInfo = false,
   userInfo
 }) => {
@@ -144,6 +146,16 @@ const InvoiceRow: React.FC<InvoiceRowProps> = ({
               size="sm"
             >
               <Icon name="check" size={16} />
+            </Button>
+          )}
+          {onDelete && invoice.status !== 'paid' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-red-600 hover:text-red-700"
+              onClick={() => onDelete(invoice)}
+            >
+              <Icon name="trash" size={16} />
             </Button>
           )}
         </div>

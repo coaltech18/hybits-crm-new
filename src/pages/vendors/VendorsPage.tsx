@@ -57,7 +57,10 @@ const VendorsPage: React.FC = () => {
       vendor.phone?.includes(searchTerm) ||
       vendor.email?.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const matchesStatus = !statusFilter || vendor.status === statusFilter;
+    // Filter by status - if no status selected, exclude terminated vendors by default
+    const matchesStatus = !statusFilter 
+      ? vendor.status !== 'terminated'
+      : vendor.status === statusFilter;
     
     return matchesSearch && matchesStatus;
   });

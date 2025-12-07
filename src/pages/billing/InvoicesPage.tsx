@@ -6,6 +6,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Invoice } from '@/types/billing';
 import { BillingService } from '@/services/billingService';
+import { InvoiceService } from '@/services/invoiceService';
 import InvoiceRow from '@/components/billing/InvoiceRow';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -74,6 +75,21 @@ const InvoicesPage: React.FC = () => {
   const handleDownloadInvoice = (invoice: Invoice) => {
     // In a real app, this would download the invoice PDF
     alert(`Downloading invoice ${invoice.invoice_number || invoice.id}`);
+  };
+
+  const handleDeleteInvoice = async (invoice: Invoice) => {
+    if (!window.confirm(`Are you sure you want to delete invoice "${invoice.invoice_number || invoice.id}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await InvoiceService.deleteInvoice(invoice.id);
+      await loadInvoices();
+      alert('Invoice deleted successfully');
+    } catch (err: any) {
+      console.error('Error deleting invoice:', err);
+      alert(err.message || 'Failed to delete invoice');
+    }
   };
 
   const handleExport = () => {
@@ -305,6 +321,7 @@ const InvoicesPage: React.FC = () => {
                     invoice={invoice}
                     onView={handleViewInvoice}
                     onDownload={handleDownloadInvoice}
+                    onDelete={handleDeleteInvoice}
                   />
                 ))}
               </tbody>

@@ -119,7 +119,10 @@ const CustomersPage: React.FC = () => {
                          customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          customer.phone.includes(searchTerm) ||
                          customer.code.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = !selectedStatus || customer.status === selectedStatus;
+    // Filter by status - if no status selected, show only active customers by default
+    const matchesStatus = !selectedStatus 
+      ? customer.status === 'active' 
+      : customer.status === selectedStatus;
     
     return matchesSearch && matchesStatus;
   });
@@ -130,6 +133,23 @@ const CustomersPage: React.FC = () => {
       case 'inactive': return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
       case 'suspended': return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
       default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+    }
+  };
+
+  const handleDeleteCustomer = async (customerId: string, customerName: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${customerName}"? This will set the customer status to inactive.`)) {
+      return;
+    }
+
+    try {
+      await CustomerService.deleteCustomer(customerId);
+      // Reload customers
+      const customersData = await CustomerService.getCustomers(currentOutletId);
+      setCustomers(customersData);
+      alert('Customer deleted successfully');
+    } catch (err: any) {
+      console.error('Error deleting customer:', err);
+      alert(err.message || 'Failed to delete customer');
     }
   };
 
@@ -329,6 +349,14 @@ const CustomersPage: React.FC = () => {
                         </Button>
                         <Button variant="ghost" size="sm">
                           <Icon name="mail" size={16} />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          className="text-red-600 hover:text-red-700"
+                          onClick={() => handleDeleteCustomer(customer.id, customer.name)}
+                        >
+                          <Icon name="trash" size={16} />
                         </Button>
                       </div>
                     </td>

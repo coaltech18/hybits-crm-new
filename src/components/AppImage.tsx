@@ -24,9 +24,23 @@ const AppImage: React.FC<AppImageProps> = ({
   onLoad,
   ...props
 }) => {
-  const [imageSrc, setImageSrc] = useState<string>(src);
+  // Initialize with fallback if src is empty or invalid
+  const [imageSrc, setImageSrc] = useState<string>(src && src.trim() !== '' ? src : fallbackSrc);
   const [hasError, setHasError] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  // Update image source when src prop changes
+  React.useEffect(() => {
+    if (src && src.trim() !== '') {
+      setImageSrc(src);
+      setHasError(false);
+      setIsLoading(true);
+    } else {
+      setImageSrc(fallbackSrc);
+      setHasError(true);
+      setIsLoading(false);
+    }
+  }, [src, fallbackSrc]);
 
   const handleError = () => {
     if (!hasError && fallbackSrc) {

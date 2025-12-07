@@ -331,4 +331,34 @@ export class InvoiceService {
       throw new Error(error.message || 'Failed to create payment');
     }
   }
+
+  /**
+   * Delete an invoice (soft delete by updating status)
+   * Note: This should only be used for invoices that haven't been paid
+   */
+  static async deleteInvoice(id: string): Promise<void> {
+    try {
+      // First, get the invoice to check payment status
+      const invoice = await this.getInvoice(id);
+      
+      // Prevent deletion of paid invoices
+      if (invoice.payment_status === 'paid' || (invoice.payment_received && invoice.payment_received > 0)) {
+        throw new Error('Cannot delete invoice that has been paid');
+      }
+
+      // Soft delete: update status to cancelled or delete the record
+      const { error } = await supabase
+        .from('invoices')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error deleting invoice:', error);
+        throw new Error(error.message || 'Failed to delete invoice');
+      }
+    } catch (error: any) {
+      console.error('Error in deleteInvoice:', error);
+      throw new Error(error.message || 'Failed to delete invoice');
+    }
+  }
 }

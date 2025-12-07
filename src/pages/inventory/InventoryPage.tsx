@@ -263,6 +263,21 @@ const InventoryPage: React.FC = () => {
     }
   };
 
+  const handleDeleteItem = async (itemId: string, itemName: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${itemName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await InventoryService.deleteInventoryItem(itemId);
+      await loadItems();
+      alert('Item deleted successfully');
+    } catch (err: any) {
+      console.error('Error deleting item:', err);
+      alert(err.message || 'Failed to delete item');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -380,6 +395,14 @@ const InventoryPage: React.FC = () => {
                     </Button>
                     <Button variant="ghost" size="sm">
                       <Icon name="eye" size={16} />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      className="text-red-600 hover:text-red-700"
+                      onClick={() => handleDeleteItem(item.id, item.name)}
+                    >
+                      <Icon name="trash" size={16} />
                     </Button>
                   </div>
                 </div>

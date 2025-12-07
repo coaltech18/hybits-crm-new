@@ -1,11 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Order } from '@/types';
 import { formatIndianDate } from '@/utils/format';
 import Icon from '../AppIcon';
-import Button from './Button';
-import { OrderService } from '@/services/orderService';
-import { AuditService, InvoiceCreationAudit } from '@/services/auditService';
-import { supabase } from '@/lib/supabase';
+import { InvoiceCreationAudit } from '@/services/auditService';
 
 interface OrderDetailsModalProps {
   isOpen: boolean;
@@ -14,77 +11,9 @@ interface OrderDetailsModalProps {
 }
 
 const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ isOpen, onClose, order }) => {
-  const [hasInvoice, setHasInvoice] = useState<boolean>(false);
-  const [hasFailedAttempts, setHasFailedAttempts] = useState<boolean>(false);
-  const [isRetrying, setIsRetrying] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
-  const [auditEntries, setAuditEntries] = useState<InvoiceCreationAudit[]>([]);
+  const [auditEntries] = useState<InvoiceCreationAudit[]>([]);
 
-  useEffect(() => {
-    if (order && isOpen) {
-      checkInvoiceAndFailedAttempts();
-    }
-  }, [order, isOpen]);
-
-  const checkInvoiceAndFailedAttempts = async () => {
-    if (!order) return;
-
-    try {
-      // Check if invoice exists for this order
-      const { data: invoiceData } = await supabase
-        .from('invoices')
-        .select('id')
-        .eq('order_id', order.id)
-        .maybeSingle();
-
-      setHasInvoice(!!invoiceData);
-
-      // Check for failed attempts
-      const hasFailed = await AuditService.hasFailedInvoiceCreation(order.id);
-      setHasFailedAttempts(hasFailed);
-    } catch (err) {
-      console.error('Error checking invoice and failed attempts:', err);
-    }
-  };
-
-  const handleRetryInvoiceCreation = async () => {
-    if (!order) return;
-
-    try {
-      setIsRetrying(true);
-      await OrderService.recreateInvoiceForOrder(order.id);
-      
-      alert('Invoice recreated successfully');
-      
-      // Refresh invoice status
-      await checkInvoiceAndFailedAttempts();
-    } catch (err: any) {
-      const errorMsg = err?.message || 'Failed to recreate invoice';
-      alert(`Invoice recreate failed: ${errorMsg.substring(0, 200)}`);
-      
-      // Open audit modal
-      await loadAuditEntries();
-      setShowAuditModal(true);
-    } finally {
-      setIsRetrying(false);
-    }
-  };
-
-  const loadAuditEntries = async () => {
-    if (!order) return;
-
-    try {
-      const entries = await AuditService.fetchInvoiceCreationAuditForOrder(order.id, 5);
-      setAuditEntries(entries);
-    } catch (err) {
-      console.error('Error loading audit entries:', err);
-    }
-  };
-
-  const handleOpenAuditModal = async () => {
-    await loadAuditEntries();
-    setShowAuditModal(true);
-  };
 
   if (!order) return null;
 

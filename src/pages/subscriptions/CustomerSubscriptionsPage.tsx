@@ -65,6 +65,21 @@ const CustomerSubscriptionsPage: React.FC = () => {
     }
   };
 
+  const handleDeleteSubscription = async (subscriptionId: string, subscriptionCode: string) => {
+    if (!window.confirm(`Are you sure you want to cancel subscription "${subscriptionCode}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await BillingService.deleteCustomerSubscription(subscriptionId);
+      await loadSubscriptions();
+      alert('Subscription cancelled successfully');
+    } catch (err: any) {
+      console.error('Error deleting subscription:', err);
+      alert(err.message || 'Failed to cancel subscription');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -201,13 +216,25 @@ const CustomerSubscriptionsPage: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => navigate(`/subscriptions/customer/${sub.id}`)}
-                      >
-                        <Icon name="eye" size={16} />
-                      </Button>
+                      <div className="flex space-x-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => navigate(`/subscriptions/customer/${sub.id}`)}
+                        >
+                          <Icon name="eye" size={16} />
+                        </Button>
+                        {sub.status === 'active' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => handleDeleteSubscription(sub.id, sub.subscription_code)}
+                          >
+                            <Icon name="trash" size={16} />
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -135,6 +135,21 @@ const OrdersPage: React.FC = () => {
     setSelectedOrder(null);
   };
 
+  const handleDeleteOrder = async (orderId: string, orderNumber: string) => {
+    if (!window.confirm(`Are you sure you want to delete order "${orderNumber}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await OrderService.deleteOrder(orderId);
+      await loadOrders();
+      alert('Order deleted successfully');
+    } catch (err: any) {
+      console.error('Error deleting order:', err);
+      alert(err.message || 'Failed to delete order');
+    }
+  };
+
   const handleCloseModals = () => {
     setShowOrderDetails(false);
     setShowEditOrder(false);
@@ -162,7 +177,10 @@ const OrdersPage: React.FC = () => {
   const filteredOrders = orders.filter(order => {
     const matchesSearch = order.order_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          order.customer_name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = !selectedStatus || order.status === selectedStatus;
+    // Filter by status - if no status selected, exclude cancelled orders by default
+    const matchesStatus = !selectedStatus 
+      ? order.status !== 'cancelled'
+      : order.status === selectedStatus;
     const matchesPaymentStatus = !selectedPaymentStatus || order.payment_status === selectedPaymentStatus;
     
     return matchesSearch && matchesStatus && matchesPaymentStatus;
@@ -593,6 +611,15 @@ const OrdersPage: React.FC = () => {
                 <Button variant="outline" size="sm">
                   <Icon name="file-text" size={16} className="mr-2" />
                   Invoice
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
+                  onClick={() => handleDeleteOrder(order.id, order.order_number)}
+                >
+                  <Icon name="trash" size={16} className="mr-2" />
+                  Delete
                 </Button>
               </div>
             </div>

@@ -43,6 +43,24 @@ const LocationsPage: React.FC = () => {
     return matchesSearch;
   });
 
+  const handleDeleteLocation = async (locationId: string, locationName: string) => {
+    if (!window.confirm(`Are you sure you want to delete location "${locationName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await LocationService.deleteLocation(locationId);
+      // Reload locations
+      const data = await LocationService.getLocations();
+      setLocations(data);
+      setError(null);
+      alert('Location deleted successfully');
+    } catch (err: any) {
+      console.error('Error deleting location:', err);
+      alert(err.message || 'Failed to delete location');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -116,6 +134,14 @@ const LocationsPage: React.FC = () => {
                   </Button>
                   <Button variant="ghost" size="sm">
                     <Icon name="eye" size={16} />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    className="text-red-600 hover:text-red-700"
+                    onClick={() => handleDeleteLocation(location.id, location.name)}
+                  >
+                    <Icon name="trash" size={16} />
                   </Button>
                 </div>
               </div>

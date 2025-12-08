@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { supabase } from '@/lib/supabase';
+import logger from '@/lib/logger';
 
 export interface Payment {
   id: string;
@@ -67,7 +68,7 @@ export class PaymentService {
         .maybeSingle();
 
       if (invoiceError) {
-        console.error('Error fetching invoice:', invoiceError);
+        logger.error('Error fetching invoice:', invoiceError);
         throw new Error('Failed to fetch invoice');
       }
 
@@ -100,7 +101,7 @@ export class PaymentService {
         .maybeSingle();
 
       if (paymentError) {
-        console.error('Error creating payment:', paymentError);
+        logger.error('Error creating payment:', paymentError);
         throw new Error('Failed to create payment');
       }
 
@@ -116,7 +117,7 @@ export class PaymentService {
         .is('deleted_at', null);
 
       if (paymentsError) {
-        console.error('Error fetching payments for recalculation:', paymentsError);
+        logger.error('Error fetching payments for recalculation:', paymentsError);
         throw new Error('Failed to recalculate invoice totals');
       }
 
@@ -145,7 +146,7 @@ export class PaymentService {
         .maybeSingle();
 
       if (updateError) {
-        console.error('Error updating invoice:', updateError);
+        logger.error('Error updating invoice:', updateError);
         throw new Error('Failed to update invoice totals');
       }
 
@@ -218,7 +219,7 @@ export class PaymentService {
       const { data, error } = await query;
 
       if (error) {
-        console.error('Error fetching payments:', error);
+        logger.error('Error fetching payments:', error);
         throw new Error(error.message || 'Failed to fetch payments');
       }
 
@@ -258,7 +259,7 @@ export class PaymentService {
         .order('payment_date', { ascending: false });
 
       if (error) {
-        console.error('Error fetching payments for invoice:', error);
+        logger.error('Error fetching payments for invoice:', error);
         throw new Error(error.message || 'Failed to fetch payments');
       }
 
@@ -296,7 +297,7 @@ export class PaymentService {
         .maybeSingle();
 
       if (paymentError) {
-        console.error('Error fetching payment:', paymentError);
+        logger.error('Error fetching payment:', paymentError);
         throw new Error('Failed to fetch payment');
       }
 
@@ -313,7 +314,7 @@ export class PaymentService {
         .maybeSingle();
 
       if (deleteError) {
-        console.error('Error soft deleting payment:', deleteError);
+        logger.error('Error soft deleting payment:', deleteError);
         throw new Error('Failed to delete payment');
       }
 
@@ -329,7 +330,7 @@ export class PaymentService {
         .maybeSingle();
 
       if (invoiceError) {
-        console.error('Error fetching invoice:', invoiceError);
+        logger.error('Error fetching invoice:', invoiceError);
         throw new Error('Failed to fetch invoice');
       }
 
@@ -345,7 +346,7 @@ export class PaymentService {
         .is('deleted_at', null);
 
       if (paymentsError) {
-        console.error('Error fetching payments for recalculation:', paymentsError);
+        logger.error('Error fetching payments for recalculation:', paymentsError);
         throw new Error('Failed to recalculate invoice totals');
       }
 
@@ -386,7 +387,7 @@ export class PaymentService {
         .maybeSingle();
 
       if (updateError) {
-        console.error('Error updating invoice:', updateError);
+        logger.error('Error updating invoice:', updateError);
         throw new Error('Failed to update invoice totals');
       }
 

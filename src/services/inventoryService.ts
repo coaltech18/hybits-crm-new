@@ -5,6 +5,7 @@
 import { supabase } from '@/lib/supabase';
 import { InventoryItem, InventoryItemFormData } from '@/types';
 import { getSignedUrl } from './imageService';
+import logger from '@/lib/logger';
 
 class InventoryService {
   /**
@@ -16,7 +17,7 @@ class InventoryService {
     includeSharedItems?: boolean;
   }): Promise<InventoryItem[]> {
     try {
-      console.log('Fetching inventory items from database...', 'Options:', options);
+      logger.debug('Fetching inventory items from database...', 'Options:', options);
       let query = supabase
         .from('inventory_items')
         .select('*');
@@ -36,14 +37,14 @@ class InventoryService {
       const { data, error } = await query.order('created_at', { ascending: false });
       
       if (error) {
-        console.error('Error in query:', error);
+        logger.error('Error in query:', error);
         throw new Error(error.message);
       }
       
       const itemsData = data;
 
-      console.log('Raw data from database:', itemsData);
-      console.log('Number of items found:', itemsData?.length || 0);
+      logger.debug('Raw data from database:', itemsData);
+      logger.debug('Number of items found:', itemsData?.length || 0);
 
       // Map database fields to interface fields - use new schema
       // Also convert storage paths to signed URLs for images
@@ -53,25 +54,25 @@ class InventoryService {
         let thumbnailUrl = item.thumbnail_url || null;
         
         // Log raw database values for debugging
-        console.log(`[${item.item_code || item.id}] Raw DB values - image_url:`, imageUrl, 'thumbnail_url:', thumbnailUrl);
+        logger.debug(`[${item.item_code || item.id}] Raw DB values - image_url:`, imageUrl, 'thumbnail_url:', thumbnailUrl);
         
         // Helper function to check if URL needs conversion
         const needsConversion = (url: string | null): boolean => {
           if (!url || url.trim() === '') {
-            console.log(`  → URL is empty/null, skipping conversion`);
+            logger.debug(`  → URL is empty/null, skipping conversion`);
             return false;
           }
           // If it's already a full URL (http/https) or a public asset path, don't convert
           if (url.startsWith('http://') || url.startsWith('https://')) {
-            console.log(`  → URL is already a full URL, skipping conversion`);
+            logger.debug(`  → URL is already a full URL, skipping conversion`);
             return false;
           }
           if (url.startsWith('/assets/') || url.startsWith('/public/')) {
-            console.log(`  → URL is a public asset, skipping conversion`);
+            logger.debug(`  → URL is a public asset, skipping conversion`);
             return false;
           }
           // If it's a storage path (contains slashes but not starting with http), convert it
-          console.log(`  → URL needs conversion (storage path)`);
+          logger.debug(`  → URL needs conversion (storage path)`);
           return true;
         };
         
@@ -79,7 +80,7 @@ class InventoryService {
         if (needsConversion(imageUrl)) {
           try {
             // Log what's stored in database
-            console.log(`[${item.item_code || item.id}] Database image_url:`, imageUrl);
+            logger.debug(`[${item.item_code || item.id}] Database image_url:`, imageUrl);
             
             // Remove leading slash if present
             let cleanPath = imageUrl.startsWith('/') ? imageUrl.substring(1) : imageUrl;
@@ -89,24 +90,24 @@ class InventoryService {
             
             if (signedResult.url) {
               imageUrl = signedResult.url;
-              console.log(`✓ [${item.item_code || item.id}] Converted image URL:`, cleanPath, '->', signedResult.url.substring(0, 50) + '...');
+              logger.debug(`✓ [${item.item_code || item.id}] Converted image URL:`, cleanPath, '->', signedResult.url.substring(0, 50) + '...');
             } else {
               const errorMsg = signedResult.error?.message || 'Unknown error';
               const errorStatus = signedResult.error?.statusCode || signedResult.error?.status;
-              console.warn(`✗ [${item.item_code || item.id}] Failed to get signed URL for image:`, cleanPath);
-              console.warn('  Error:', errorMsg, 'Status:', errorStatus);
-              console.warn('  Full error:', signedResult.error);
+              logger.warn(`✗ [${item.item_code || item.id}] Failed to get signed URL for image:`, cleanPath);
+              logger.warn('  Error:', errorMsg, 'Status:', errorStatus);
+              logger.warn('  Full error:', signedResult.error);
               
               // If it's a 400/404 error, the file likely doesn't exist at that path
               if (errorStatus === 400 || errorStatus === 404) {
-                console.warn('  → File not found in storage. Path may be incorrect or file was deleted.');
-                console.warn('  → Check Supabase Storage to verify the file exists and update the database path if needed.');
+                logger.warn('  → File not found in storage. Path may be incorrect or file was deleted.');
+                logger.warn('  → Check Supabase Storage to verify the file exists and update the database path if needed.');
               }
               
               imageUrl = null; // Set to null so fallback image shows
             }
           } catch (err: any) {
-            console.warn(`✗ [${item.item_code || item.id}] Error getting signed URL for image:`, imageUrl, 'Error:', err?.message || err);
+            logger.warn(`✗ [${item.item_code || item.id}] Error getting signed URL for image:`, imageUrl, 'Error:', err?.message || err);
             imageUrl = null; // Set to null so fallback image shows
           }
         }
@@ -120,14 +121,14 @@ class InventoryService {
             
             if (signedResult.url) {
               thumbnailUrl = signedResult.url;
-              console.log('✓ Converted thumbnail URL:', cleanPath, '->', signedResult.url.substring(0, 50) + '...');
+              logger.debug('✓ Converted thumbnail URL:', cleanPath, '->', signedResult.url.substring(0, 50) + '...');
             } else {
               const errorMsg = signedResult.error?.message || 'Unknown error';
-              console.warn('✗ Failed to get signed URL for thumbnail:', cleanPath, 'Error:', errorMsg);
+              logger.warn('✗ Failed to get signed URL for thumbnail:', cleanPath, 'Error:', errorMsg);
               thumbnailUrl = imageUrl; // Fallback to main image
             }
           } catch (err: any) {
-            console.warn('✗ Error getting signed URL for thumbnail:', thumbnailUrl, 'Error:', err?.message || err);
+            logger.warn('✗ Error getting signed URL for thumbnail:', thumbnailUrl, 'Error:', err?.message || err);
             thumbnailUrl = imageUrl; // Fallback to main image
           }
         }
@@ -144,10 +145,10 @@ class InventoryService {
         };
       }));
 
-      console.log('Mapped items:', mappedItems);
+      logger.debug('Mapped items:', mappedItems);
       return mappedItems;
     } catch (error: any) {
-      console.error('Error in getInventoryItems:', error);
+      logger.error('Error in getInventoryItems:', error);
       throw new Error(error.message || 'Failed to fetch inventory items');
     }
   }
@@ -164,12 +165,12 @@ class InventoryService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching inventory_items:', error);
+        logger.error('DB error fetching inventory_items:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('inventory_items row not found for filter id:', id);
+        logger.warn('inventory_items row not found for filter id:', id);
         return null;
       }
 
@@ -195,13 +196,13 @@ class InventoryService {
           const signedResult = await getSignedUrl(cleanPath, 3600 * 24); // 24 hour expiry
           if (signedResult.url) {
             imageUrl = signedResult.url;
-            console.log('Converted image URL:', cleanPath, '->', signedResult.url);
+            logger.debug('Converted image URL:', cleanPath, '->', signedResult.url);
           } else {
-            console.warn('Failed to get signed URL for image:', cleanPath, signedResult.error);
+            logger.warn('Failed to get signed URL for image:', cleanPath, signedResult.error);
             imageUrl = null; // Set to null so fallback image shows
           }
         } catch (err) {
-          console.warn('Error getting signed URL for image:', imageUrl, err);
+          logger.warn('Error getting signed URL for image:', imageUrl, err);
           imageUrl = null; // Set to null so fallback image shows
         }
       }
@@ -214,13 +215,13 @@ class InventoryService {
           const signedResult = await getSignedUrl(cleanPath, 3600 * 24); // 24 hour expiry
           if (signedResult.url) {
             thumbnailUrl = signedResult.url;
-            console.log('Converted thumbnail URL:', cleanPath, '->', signedResult.url);
+            logger.debug('Converted thumbnail URL:', cleanPath, '->', signedResult.url);
           } else {
-            console.warn('Failed to get signed URL for thumbnail:', cleanPath, signedResult.error);
+            logger.warn('Failed to get signed URL for thumbnail:', cleanPath, signedResult.error);
             thumbnailUrl = imageUrl; // Fallback to main image
           }
         } catch (err) {
-          console.warn('Error getting signed URL for thumbnail:', thumbnailUrl, err);
+          logger.warn('Error getting signed URL for thumbnail:', thumbnailUrl, err);
           thumbnailUrl = imageUrl; // Fallback to main image
         }
       }
@@ -237,7 +238,7 @@ class InventoryService {
         thumbnail_url: thumbnailUrl || imageUrl || undefined
       };
     } catch (error: any) {
-      console.error('Error in getInventoryItem:', error);
+      logger.error('Error in getInventoryItem:', error);
       throw new Error(error.message || 'Failed to fetch inventory item');
     }
   }
@@ -247,7 +248,7 @@ class InventoryService {
    */
   async createInventoryItem(itemData: InventoryItemFormData & { outlet_id?: string }): Promise<InventoryItem> {
     try {
-      console.log('Creating inventory item with data:', itemData);
+      logger.debug('Creating inventory item with data:', itemData);
       
       // Item code will be auto-generated by database trigger (ITEM-OUTCODE-001)
       
@@ -287,7 +288,7 @@ class InventoryService {
         insertData.image_alt_text = itemData.image_alt_text;
       }
 
-      console.log('Insert data prepared:', insertData);
+      logger.debug('Insert data prepared:', insertData);
 
       const { data, error } = await supabase
         .from('inventory_items')
@@ -296,16 +297,16 @@ class InventoryService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching inventory_items:', error);
+        logger.error('DB error fetching inventory_items:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('inventory_items row not found after insert');
+        logger.warn('inventory_items row not found after insert');
         throw new Error('Failed to create inventory item');
       }
 
-      console.log('Item created successfully:', data);
+      logger.debug('Item created successfully:', data);
 
       // Map the response to match our interface
       const mappedItem = {
@@ -317,10 +318,10 @@ class InventoryService {
         last_movement: data.updated_at
       };
 
-      console.log('Mapped item for return:', mappedItem);
+      logger.debug('Mapped item for return:', mappedItem);
       return mappedItem;
     } catch (error: any) {
-      console.error('Error in createInventoryItem:', error);
+      logger.error('Error in createInventoryItem:', error);
       throw new Error(error.message || 'Failed to create inventory item');
     }
   }
@@ -341,18 +342,18 @@ class InventoryService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching inventory_items:', error);
+        logger.error('DB error fetching inventory_items:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('inventory_items row not found for filter id:', id);
+        logger.warn('inventory_items row not found for filter id:', id);
         throw new Error('Inventory item not found');
       }
 
       return data;
     } catch (error: any) {
-      console.error('Error in updateInventoryItem:', error);
+      logger.error('Error in updateInventoryItem:', error);
       throw new Error(error.message || 'Failed to update inventory item');
     }
   }
@@ -371,7 +372,7 @@ class InventoryService {
         .limit(1);
 
       if (checkError) {
-        console.error('Error checking item references:', checkError);
+        logger.error('Error checking item references:', checkError);
         throw new Error(checkError.message);
       }
 
@@ -386,11 +387,11 @@ class InventoryService {
         .eq('id', id);
 
       if (error) {
-        console.error('Error deleting inventory item:', error);
+        logger.error('Error deleting inventory item:', error);
         throw new Error(error.message);
       }
     } catch (error: any) {
-      console.error('Error in deleteInventoryItem:', error);
+      logger.error('Error in deleteInventoryItem:', error);
       throw new Error(error.message || 'Failed to delete inventory item');
     }
   }
@@ -424,7 +425,7 @@ class InventoryService {
         available_quantity: newQuantity - item.reserved_quantity,
       });
     } catch (error: any) {
-      console.error('Error in updateStock:', error);
+      logger.error('Error in updateStock:', error);
       throw new Error(error.message || 'Failed to update stock');
     }
   }

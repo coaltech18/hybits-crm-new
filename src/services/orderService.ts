@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { Order, OrderStatus } from '@/types';
 import { calculateInvoiceFromLines, LineTaxInput, roundToTwoDecimals } from '@/lib/invoiceTax';
 import { Invoice } from '@/services/invoiceService';
+import logger from '@/lib/logger';
 
 // Helper function for exponential backoff delay
 const sleep = (ms: number): Promise<void> => {
@@ -60,7 +61,7 @@ export class OrderService {
           computedOrderGst = roundToTwoDecimals((taxResult.cgst || 0) + (taxResult.sgst || 0) + (taxResult.igst || 0));
         }
       } catch (err) {
-        console.warn('Order GST compute failed — proceeding with gst_amount=0', err);
+        logger.warn('Order GST compute failed — proceeding with gst_amount=0', err);
         computedOrderGst = 0;
       }
 
@@ -95,13 +96,13 @@ export class OrderService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error creating rental_orders:', error);
-        console.error('Error details:', JSON.stringify(error, null, 2));
+        logger.error('DB error creating rental_orders:', error);
+        logger.error('Error details:', JSON.stringify(error, null, 2));
         throw new Error(error.message || 'Database error: ' + (error.details || error.hint || 'Unknown error'));
       }
 
       if (!data) {
-        console.warn('rental_orders row not found after insert');
+        logger.warn('rental_orders row not found after insert');
         throw new Error('Failed to create order');
       }
 
@@ -122,7 +123,7 @@ export class OrderService {
           .insert(orderItems);
 
         if (itemsError) {
-          console.error('Error creating order items:', itemsError);
+          logger.error('Error creating order items:', itemsError);
           throw new Error(itemsError.message);
         }
 
@@ -142,7 +143,7 @@ export class OrderService {
             .in('id', itemIds);
 
           if (inventoryError) {
-            console.warn('Error fetching inventory items for invoice:', inventoryError);
+            logger.warn('Error fetching inventory items for invoice:', inventoryError);
           }
 
           // Create a map of item_id to item_name
@@ -160,7 +161,7 @@ export class OrderService {
               .eq('id', currentOutletId)
               .single();
             if (outletErr) {
-              console.warn('Could not fetch outlet location for tax calculation', outletErr);
+              logger.warn('Could not fetch outlet location for tax calculation', outletErr);
             } else {
               outletState = outletData?.address?.state;
             }
@@ -175,7 +176,7 @@ export class OrderService {
               .eq('id', currentCustomerId)
               .single();
             if (custErr) {
-              console.warn('Could not fetch customer address for tax calculation', custErr);
+              logger.warn('Could not fetch customer address for tax calculation', custErr);
             } else {
               customerState = customerData?.address?.state;
             }
@@ -262,7 +263,7 @@ export class OrderService {
               .from('invoice_items')
               .insert(invoiceItemsToInsert);
             if (invItemsErr) {
-              console.error('Failed to insert invoice items for invoice', invoiceData.id, invItemsErr);
+              logger.error('Failed to insert invoice items for invoice', invoiceData.id, invItemsErr);
               // Cleanup - attempt to delete invoice to avoid orphan invoice
               await supabase.from('invoices').delete().eq('id', invoiceData.id);
               throw invItemsErr;
@@ -293,7 +294,7 @@ export class OrderService {
               metadata: { source: 'orderService.createOrder', order_number: data.order_number }
             });
 
-            console.log(`Invoice ${createdInvoice.id} created successfully for order ${data.order_number} (attempt ${attempt})`);
+            logger.debug(`Invoice ${createdInvoice.id} created successfully for order ${data.order_number} (attempt ${attempt})`);
             break;
           } catch (err: any) {
             lastErr = err;
@@ -357,7 +358,7 @@ export class OrderService {
         }))
       };
     } catch (error: any) {
-      console.error('Error in createOrder:', error);
+      logger.error('Error in createOrder:', error);
       throw new Error(error.message || 'Failed to create order');
     }
   }
@@ -386,7 +387,7 @@ export class OrderService {
       const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error fetching orders:', error);
+        logger.error('Error fetching orders:', error);
         throw new Error(error.message);
       }
 
@@ -417,7 +418,7 @@ export class OrderService {
         }))
       }));
     } catch (error: any) {
-      console.error('Error in getOrders:', error);
+      logger.error('Error in getOrders:', error);
       throw new Error(error.message || 'Failed to fetch orders');
     }
   }
@@ -441,12 +442,12 @@ export class OrderService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching rental_orders:', error);
+        logger.error('DB error fetching rental_orders:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('rental_orders row not found for filter id:', id);
+        logger.warn('rental_orders row not found for filter id:', id);
         throw new Error('Order not found');
       }
 
@@ -476,7 +477,7 @@ export class OrderService {
         }))
       };
     } catch (error: any) {
-      console.error('Error in getOrder:', error);
+      logger.error('Error in getOrder:', error);
       throw new Error(error.message || 'Failed to fetch order');
     }
   }
@@ -486,7 +487,7 @@ export class OrderService {
    */
   static async updateOrderStatus(id: string, status: OrderStatus): Promise<Order> {
     try {
-      console.log(`Updating order ${id} status to ${status}`);
+      logger.debug(`Updating order ${id} status to ${status}`);
       
       const { data, error } = await supabase
         .from('rental_orders')
@@ -514,12 +515,12 @@ export class OrderService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching rental_orders:', error);
+        logger.error('DB error fetching rental_orders:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('rental_orders row not found for filter id:', id);
+        logger.warn('rental_orders row not found for filter id:', id);
         throw new Error('Order not found');
       }
 
@@ -550,7 +551,7 @@ export class OrderService {
         }))
       };
     } catch (error: any) {
-      console.error('Error in updateOrderStatus:', error);
+      logger.error('Error in updateOrderStatus:', error);
       throw new Error(error.message || 'Failed to update order status');
     }
   }
@@ -560,7 +561,7 @@ export class OrderService {
    */
   static async addOrderItems(orderId: string, items: OrderItemFormData[]): Promise<void> {
     try {
-      console.log(`Adding ${items.length} items to order ${orderId}`);
+      logger.debug(`Adding ${items.length} items to order ${orderId}`);
       
       const orderItems = items.map(item => ({
         order_id: orderId,
@@ -576,7 +577,7 @@ export class OrderService {
         .insert(orderItems);
 
       if (error) {
-        console.error('Error adding order items:', error);
+        logger.error('Error adding order items:', error);
         throw new Error(error.message);
       }
 
@@ -591,7 +592,7 @@ export class OrderService {
         .eq('id', orderId);
 
     } catch (error: any) {
-      console.error('Error in addOrderItems:', error);
+      logger.error('Error in addOrderItems:', error);
       throw new Error(error.message || 'Failed to add order items');
     }
   }
@@ -843,7 +844,7 @@ export class OrderService {
       const { InvoiceService } = await import('@/services/invoiceService');
       return await InvoiceService.getInvoice(createdInvoice.id);
     } catch (error: any) {
-      console.error('Error in recreateInvoiceForOrder:', error);
+      logger.error('Error in recreateInvoiceForOrder:', error);
       throw new Error(error.message || 'Failed to recreate invoice for order');
     }
   }
@@ -864,14 +865,14 @@ export class OrderService {
         .eq('id', id);
 
       if (updateError) {
-        console.error('Error deleting order:', updateError);
+        logger.error('Error deleting order:', updateError);
         throw new Error(updateError.message || 'Failed to delete order');
       }
 
       // Optionally, you can also delete related invoice if needed
       // For now, we'll just cancel the order
     } catch (error: any) {
-      console.error('Error in deleteOrder:', error);
+      logger.error('Error in deleteOrder:', error);
       throw new Error(error.message || 'Failed to delete order');
     }
   }

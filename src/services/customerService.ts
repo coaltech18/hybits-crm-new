@@ -5,6 +5,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { Customer, CustomerFormData } from '@/types';
+import logger from '@/lib/logger';
 
 export interface CustomerFilters {
   outletId?: string;
@@ -35,14 +36,14 @@ export class CustomerService {
       const { data, error } = await query;
 
       if (error) {
-        console.error('Error fetching customers:', error);
+        logger.error('Error fetching customers:', error);
         throw new Error(error.message);
       }
 
       // Map database fields to our interface - use new schema fields
       return (data || []).map((customer: any) => this.mapCustomerFromDb(customer));
     } catch (error: any) {
-      console.error('Error in getCustomers:', error);
+      logger.error('Error in getCustomers:', error);
       throw new Error(error.message || 'Failed to fetch customers');
     }
   }
@@ -91,7 +92,7 @@ export class CustomerService {
       const { data, error, count } = await query;
 
       if (error) {
-        console.error('Error fetching customers:', error);
+        logger.error('Error fetching customers:', error);
         throw new Error(error.message);
       }
 
@@ -100,7 +101,7 @@ export class CustomerService {
         total: count || 0
       };
     } catch (error: any) {
-      console.error('Error in getCustomersFiltered:', error);
+      logger.error('Error in getCustomersFiltered:', error);
       throw new Error(error.message || 'Failed to fetch customers');
     }
   }
@@ -118,18 +119,18 @@ export class CustomerService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching customers:', error);
+        logger.error('DB error fetching customers:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('customers row not found for filter id:', id);
+        logger.warn('customers row not found for filter id:', id);
         throw new Error('Customer not found');
       }
 
       return this.mapCustomerFromDb(data);
     } catch (error: any) {
-      console.error('Error in getCustomer:', error);
+      logger.error('Error in getCustomer:', error);
       throw new Error(error.message || 'Failed to fetch customer');
     }
   }
@@ -175,18 +176,18 @@ export class CustomerService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error creating customer:', error);
+        logger.error('DB error creating customer:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('customers row not found after insert');
+        logger.warn('customers row not found after insert');
         throw new Error('Failed to create customer');
       }
 
       return this.mapCustomerFromDb(data);
     } catch (error: any) {
-      console.error('Error in createCustomer:', error);
+      logger.error('Error in createCustomer:', error);
       throw new Error(error.message || 'Failed to create customer');
     }
   }
@@ -222,18 +223,18 @@ export class CustomerService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error updating customer:', error);
+        logger.error('DB error updating customer:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('customers row not found for filter id:', id);
+        logger.warn('customers row not found for filter id:', id);
         throw new Error('Customer not found');
       }
 
       return this.mapCustomerFromDb(data);
     } catch (error: any) {
-      console.error('Error in updateCustomer:', error);
+      logger.error('Error in updateCustomer:', error);
       throw new Error(error.message || 'Failed to update customer');
     }
   }
@@ -249,11 +250,11 @@ export class CustomerService {
         .eq('id', id);
 
       if (error) {
-        console.error('Error deleting customer:', error);
+        logger.error('Error deleting customer:', error);
         throw new Error(error.message);
       }
     } catch (error: any) {
-      console.error('Error in deleteCustomer:', error);
+      logger.error('Error in deleteCustomer:', error);
       throw new Error(error.message || 'Failed to delete customer');
     }
   }

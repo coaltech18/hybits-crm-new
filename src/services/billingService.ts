@@ -23,6 +23,7 @@ import {
   SubscriptionPaymentFormData
 } from '@/types/billing';
 import { supabase } from '@/lib/supabase';
+import logger from '@/lib/logger';
 
 export class BillingService {
   /**
@@ -45,7 +46,7 @@ export class BillingService {
       const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error fetching plans:', error);
+        logger.error('Error fetching plans:', error);
         throw new Error(error.message || 'Failed to fetch plans');
       }
 
@@ -62,7 +63,7 @@ export class BillingService {
         updated_at: plan.updated_at
       }));
     } catch (error: any) {
-      console.error('Error in getPlans:', error);
+      logger.error('Error in getPlans:', error);
       throw new Error(error.message || 'Failed to fetch plans');
     }
   }
@@ -84,7 +85,7 @@ export class BillingService {
       const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error fetching all plans:', error);
+        logger.error('Error fetching all plans:', error);
         throw new Error(error.message || 'Failed to fetch all plans');
       }
 
@@ -100,7 +101,7 @@ export class BillingService {
         updated_at: plan.updated_at
       }));
     } catch (error: any) {
-      console.error('Error in getAllPlans:', error);
+      logger.error('Error in getAllPlans:', error);
       throw new Error(error.message || 'Failed to fetch all plans');
     }
   }
@@ -117,7 +118,7 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching plans:', error);
+        logger.error('DB error fetching plans:', error);
         throw new Error('Database error');
       }
 
@@ -137,7 +138,7 @@ export class BillingService {
         updated_at: data.updated_at
       };
     } catch (error: any) {
-      console.error('Error in getPlan:', error);
+      logger.error('Error in getPlan:', error);
       throw new Error(error.message || 'Failed to fetch plan');
     }
   }
@@ -172,7 +173,7 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error creating plan:', error);
+        logger.error('DB error creating plan:', error);
         throw new Error('Database error');
       }
 
@@ -192,7 +193,7 @@ export class BillingService {
         updated_at: data.updated_at
       };
     } catch (error: any) {
-      console.error('Error in createPlan:', error);
+      logger.error('Error in createPlan:', error);
       throw new Error(error.message || 'Failed to create plan');
     }
   }
@@ -219,7 +220,7 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error updating plan:', error);
+        logger.error('DB error updating plan:', error);
         throw new Error('Database error');
       }
 
@@ -239,7 +240,7 @@ export class BillingService {
         updated_at: data.updated_at
       };
     } catch (error: any) {
-      console.error('Error in updatePlan:', error);
+      logger.error('Error in updatePlan:', error);
       throw new Error(error.message || 'Failed to update plan');
     }
   }
@@ -255,11 +256,11 @@ export class BillingService {
         .eq('id', id);
 
       if (error) {
-        console.error('DB error deleting plan:', error);
+        logger.error('DB error deleting plan:', error);
         throw new Error('Database error');
       }
     } catch (error: any) {
-      console.error('Error in deletePlan:', error);
+      logger.error('Error in deletePlan:', error);
       throw new Error(error.message || 'Failed to delete plan');
     }
   }
@@ -293,7 +294,7 @@ export class BillingService {
         pendingInvoices
       };
     } catch (error: any) {
-      console.error('Error in getBillingStats:', error);
+      logger.error('Error in getBillingStats:', error);
       throw new Error(error.message || 'Failed to fetch billing stats');
     }
   }
@@ -306,7 +307,7 @@ export class BillingService {
    * @deprecated Use getCustomerSubscriptions instead. User subscriptions are not implemented.
    */
   static async getUserSubscription(_userId: string): Promise<Subscription | null> {
-    console.warn('getUserSubscription is deprecated. Use getCustomerSubscriptions instead.');
+    logger.warn('getUserSubscription is deprecated. Use getCustomerSubscriptions instead.');
     return null;
   }
 
@@ -314,7 +315,7 @@ export class BillingService {
    * @deprecated Use getCustomerSubscriptions instead. User subscriptions are not implemented.
    */
   static async getAllSubscriptions(): Promise<(Subscription & { user_name?: string; user_email?: string })[]> {
-    console.warn('getAllSubscriptions is deprecated. Use getCustomerSubscriptions instead.');
+    logger.warn('getAllSubscriptions is deprecated. Use getCustomerSubscriptions instead.');
     return [];
   }
 
@@ -336,7 +337,7 @@ export class BillingService {
    * @deprecated Use getSubscriptionInvoices instead. User subscriptions are not implemented.
    */
   static async getInvoices(_userId: string): Promise<Invoice[]> {
-    console.warn('getInvoices is deprecated. Use getSubscriptionInvoices instead.');
+    logger.warn('getInvoices is deprecated. Use getSubscriptionInvoices instead.');
     return [];
   }
 
@@ -344,7 +345,7 @@ export class BillingService {
    * @deprecated Use InvoiceService.getInvoices instead.
    */
   static async getAllInvoices(): Promise<(Invoice & { user_name?: string; user_email?: string })[]> {
-    console.warn('getAllInvoices is deprecated. Use InvoiceService.getInvoices instead.');
+    logger.warn('getAllInvoices is deprecated. Use InvoiceService.getInvoices instead.');
     return [];
   }
 
@@ -366,7 +367,7 @@ export class BillingService {
 
       return (data || []) as Vendor[];
     } catch (error: any) {
-      console.error('Error in getVendors:', error);
+      logger.error('Error in getVendors:', error);
       throw new Error(error.message || 'Failed to fetch vendors');
     }
   }
@@ -383,18 +384,18 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching vendors:', error);
+        logger.error('DB error fetching vendors:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('vendors row not found for filter id:', vendorId);
+        logger.warn('vendors row not found for filter id:', vendorId);
         throw new Error('Vendor not found');
       }
 
       return data as Vendor;
     } catch (error: any) {
-      console.error('Error in getVendorById:', error);
+      logger.error('Error in getVendorById:', error);
       throw new Error(error.message || 'Failed to fetch vendor');
     }
   }
@@ -433,18 +434,18 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching vendors:', error);
+        logger.error('DB error fetching vendors:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('vendors row not found after insert');
+        logger.warn('vendors row not found after insert');
         throw new Error('Failed to create vendor');
       }
 
       return data as Vendor;
     } catch (error: any) {
-      console.error('Error in createVendor:', error);
+      logger.error('Error in createVendor:', error);
       throw new Error(error.message || 'Failed to create vendor');
     }
   }
@@ -465,18 +466,18 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching vendors:', error);
+        logger.error('DB error fetching vendors:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('vendors row not found for filter id:', vendorId);
+        logger.warn('vendors row not found for filter id:', vendorId);
         throw new Error('Vendor not found');
       }
 
       return data as Vendor;
     } catch (error: any) {
-      console.error('Error in updateVendor:', error);
+      logger.error('Error in updateVendor:', error);
       throw new Error(error.message || 'Failed to update vendor');
     }
   }
@@ -493,7 +494,7 @@ export class BillingService {
 
       if (error) throw error;
     } catch (error: any) {
-      console.error('Error in deleteVendor:', error);
+      logger.error('Error in deleteVendor:', error);
       throw new Error(error.message || 'Failed to delete vendor');
     }
   }
@@ -615,7 +616,7 @@ export class BillingService {
         .maybeSingle();
 
       if (subErr) {
-        console.error('DB error creating vendor_subscriptions:', subErr);
+        logger.error('DB error creating vendor_subscriptions:', subErr);
         // Provide more specific error message
         if (subErr.code === '23502') { // NOT NULL violation
           throw new Error('Missing required field. Please ensure all required fields are filled.');
@@ -628,7 +629,7 @@ export class BillingService {
       }
 
       if (!subInsert || !subInsert.id) {
-        console.warn('vendor_subscriptions row not found after insert');
+        logger.warn('vendor_subscriptions row not found after insert');
         throw new Error('Failed to create vendor subscription');
       }
 
@@ -661,7 +662,7 @@ export class BillingService {
             payment_type: 'deposit',
             payment_mode: 'other' // Default, can be updated later
           });
-        if (paymentErr) console.warn('Failed to record deposit payment:', paymentErr);
+        if (paymentErr) logger.warn('Failed to record deposit payment:', paymentErr);
       }
 
       // Fetch vendor name for return payload
@@ -692,7 +693,7 @@ export class BillingService {
 
       return result;
     } catch (error: any) {
-      console.error('Error in createVendorSubscription:', error);
+      logger.error('Error in createVendorSubscription:', error);
       throw new Error(error.message || 'Failed to create vendor subscription');
     }
   }
@@ -750,7 +751,7 @@ export class BillingService {
             .maybeSingle();
 
           if (vendorError) {
-            console.error('DB error fetching vendors:', vendorError);
+            logger.error('DB error fetching vendors:', vendorError);
           }
 
           return {
@@ -763,7 +764,7 @@ export class BillingService {
 
       return subscriptionsWithItems;
     } catch (error: any) {
-      console.error('Error in getVendorSubscriptions:', error);
+      logger.error('Error in getVendorSubscriptions:', error);
       throw new Error(error.message || 'Failed to fetch vendor subscriptions');
     }
   }
@@ -797,7 +798,7 @@ export class BillingService {
 
       return subscriptionsWithItems;
     } catch (error: any) {
-      console.error('Error in getVendorSubscriptionsByVendorId:', error);
+      logger.error('Error in getVendorSubscriptionsByVendorId:', error);
       throw new Error(error.message || 'Failed to fetch vendor subscriptions');
     }
   }
@@ -816,11 +817,11 @@ export class BillingService {
         .eq('id', subscriptionId);
 
       if (error) {
-        console.error('Error deleting vendor subscription:', error);
+        logger.error('Error deleting vendor subscription:', error);
         throw new Error(error.message || 'Failed to delete vendor subscription');
       }
     } catch (error: any) {
-      console.error('Error in deleteVendorSubscription:', error);
+      logger.error('Error in deleteVendorSubscription:', error);
       throw new Error(error.message || 'Failed to delete vendor subscription');
     }
   }
@@ -868,18 +869,18 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching vendor_payments:', error);
+        logger.error('DB error fetching vendor_payments:', error);
         throw new Error('Database error');
       }
 
       if (!data) {
-        console.warn('vendor_payments row not found after insert');
+        logger.warn('vendor_payments row not found after insert');
         throw new Error('Failed to create vendor payment');
       }
 
       return data as VendorPayment;
     } catch (error: any) {
-      console.error('Error in createVendorPayment:', error);
+      logger.error('Error in createVendorPayment:', error);
       throw new Error(error.message || 'Failed to create vendor payment');
     }
   }
@@ -898,7 +899,7 @@ export class BillingService {
       if (error) throw error;
       return (data || []) as VendorPayment[];
     } catch (error: any) {
-      console.error('Error in getSubscriptionPayments:', error);
+      logger.error('Error in getSubscriptionPayments:', error);
       throw new Error(error.message || 'Failed to fetch subscription payments');
     }
   }
@@ -927,7 +928,7 @@ export class BillingService {
       if (error) throw error;
       return (data || []) as VendorPayment[];
     } catch (error: any) {
-      console.error('Error in getVendorPayments:', error);
+      logger.error('Error in getVendorPayments:', error);
       throw new Error(error.message || 'Failed to fetch vendor payments');
     }
   }
@@ -962,7 +963,7 @@ export class BillingService {
       const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error fetching customer subscriptions:', error);
+        logger.error('Error fetching customer subscriptions:', error);
         throw new Error(error.message || 'Failed to fetch subscriptions');
       }
 
@@ -987,7 +988,7 @@ export class BillingService {
         updated_at: sub.updated_at
       }));
     } catch (error: any) {
-      console.error('Error in getCustomerSubscriptions:', error);
+      logger.error('Error in getCustomerSubscriptions:', error);
       throw new Error(error.message || 'Failed to fetch subscriptions');
     }
   }
@@ -1009,7 +1010,7 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error fetching subscription:', error);
+        logger.error('DB error fetching subscription:', error);
         throw new Error('Database error');
       }
 
@@ -1045,7 +1046,7 @@ export class BillingService {
         }))
       };
     } catch (error: any) {
-      console.error('Error in getCustomerSubscription:', error);
+      logger.error('Error in getCustomerSubscription:', error);
       throw new Error(error.message || 'Failed to fetch subscription');
     }
   }
@@ -1085,7 +1086,7 @@ export class BillingService {
         .maybeSingle();
 
       if (subError) {
-        console.error('DB error creating subscription:', subError);
+        logger.error('DB error creating subscription:', subError);
         throw new Error('Database error');
       }
 
@@ -1107,7 +1108,7 @@ export class BillingService {
           .insert(items);
 
         if (itemsError) {
-          console.error('Error creating subscription items:', itemsError);
+          logger.error('Error creating subscription items:', itemsError);
           // Don't throw - subscription is created, items can be added later
         }
       }
@@ -1115,7 +1116,7 @@ export class BillingService {
       // Fetch the complete subscription with items
       return await this.getCustomerSubscription(subData.id);
     } catch (error: any) {
-      console.error('Error in createCustomerSubscription:', error);
+      logger.error('Error in createCustomerSubscription:', error);
       throw new Error(error.message || 'Failed to create subscription');
     }
   }
@@ -1144,7 +1145,7 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error updating subscription:', error);
+        logger.error('DB error updating subscription:', error);
         throw new Error('Database error');
       }
 
@@ -1154,7 +1155,7 @@ export class BillingService {
 
       return await this.getCustomerSubscription(id);
     } catch (error: any) {
-      console.error('Error in updateCustomerSubscription:', error);
+      logger.error('Error in updateCustomerSubscription:', error);
       throw new Error(error.message || 'Failed to update subscription');
     }
   }
@@ -1173,11 +1174,11 @@ export class BillingService {
         .eq('id', id);
 
       if (error) {
-        console.error('Error deleting customer subscription:', error);
+        logger.error('Error deleting customer subscription:', error);
         throw new Error(error.message || 'Failed to delete subscription');
       }
     } catch (error: any) {
-      console.error('Error in deleteCustomerSubscription:', error);
+      logger.error('Error in deleteCustomerSubscription:', error);
       throw new Error(error.message || 'Failed to delete subscription');
     }
   }
@@ -1201,7 +1202,7 @@ export class BillingService {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('DB error fetching subscription invoices:', error);
+        logger.error('DB error fetching subscription invoices:', error);
         throw new Error('Database error');
       }
 
@@ -1216,7 +1217,7 @@ export class BillingService {
         created_at: si.created_at
       }));
     } catch (error: any) {
-      console.error('Error in getSubscriptionInvoices:', error);
+      logger.error('Error in getSubscriptionInvoices:', error);
       throw new Error(error.message || 'Failed to fetch subscription invoices');
     }
   }
@@ -1255,7 +1256,7 @@ export class BillingService {
         .maybeSingle();
 
       if (error) {
-        console.error('DB error creating subscription payment:', error);
+        logger.error('DB error creating subscription payment:', error);
         throw new Error('Database error');
       }
 
@@ -1277,7 +1278,7 @@ export class BillingService {
         created_at: data.created_at
       };
     } catch (error: any) {
-      console.error('Error in createSubscriptionPayment:', error);
+      logger.error('Error in createSubscriptionPayment:', error);
       throw new Error(error.message || 'Failed to create payment');
     }
   }
@@ -1294,7 +1295,7 @@ export class BillingService {
       });
 
       if (error) {
-        console.error('RPC error generating invoices:', error);
+        logger.error('RPC error generating invoices:', error);
         throw new Error(error.message || 'Failed to generate invoices');
       }
 
@@ -1304,7 +1305,7 @@ export class BillingService {
         amount: Number(row.amount || 0)
       }));
     } catch (error: any) {
-      console.error('Error in rpcGenerateMonthlyInvoices:', error);
+      logger.error('Error in rpcGenerateMonthlyInvoices:', error);
       throw new Error(error.message || 'Failed to generate monthly invoices');
     }
   }

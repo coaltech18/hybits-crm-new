@@ -67,7 +67,7 @@ const LoginPage: React.FC = () => {
             value={data.email}
             onChange={handleChange('email')}
             disabled={isLoading}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors disabled:bg-gray-50 disabled:cursor-not-allowed"
+            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors disabled:bg-gray-50 disabled:cursor-not-allowed text-gray-900 placeholder:text-gray-400 bg-white"
           />
           {errors.email && (
             <p className="text-sm text-red-600 mt-1">{errors.email}</p>
@@ -85,7 +85,7 @@ const LoginPage: React.FC = () => {
             value={data.password}
             onChange={handleChange('password')}
             disabled={isLoading}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors disabled:bg-gray-50 disabled:cursor-not-allowed"
+            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors disabled:bg-gray-50 disabled:cursor-not-allowed text-gray-900 placeholder:text-gray-400 bg-white"
           />
           {errors.password && (
             <p className="text-sm text-red-600 mt-1">{errors.password}</p>

@@ -49,18 +49,48 @@ export class OrderService {
       const { data: { user } } = await supabase.auth.getUser();
       const outletId = orderData.outlet_id || (user?.user_metadata?.outlet_id);
 
-      // Calculate order GST amount using tax engine
+      // Calculate order GST amount using tax engine with actual state information
       let computedOrderGst = 0;
       try {
         if (orderData.items.length > 0) {
+          // Fetch outlet state for accurate GST calculation
+          let outletState: string | undefined;
+          if (outletId) {
+            const { data: outletData, error: outletErr } = await supabase
+              .from('locations')
+              .select('address')
+              .eq('id', outletId)
+              .single();
+            if (outletErr) {
+              logger.warn('Could not fetch outlet location for order GST calculation', outletErr);
+            } else {
+              outletState = outletData?.address?.state;
+            }
+          }
+
+          // Fetch customer state for accurate GST calculation
+          let customerState: string | undefined;
+          if (orderData.customer_id) {
+            const { data: customerData, error: custErr } = await supabase
+              .from('customers')
+              .select('address')
+              .eq('id', orderData.customer_id)
+              .single();
+            if (custErr) {
+              logger.warn('Could not fetch customer address for order GST calculation', custErr);
+            } else {
+              customerState = customerData?.address?.state;
+            }
+          }
+
           const taxLines: LineTaxInput[] = orderData.items.map(item => ({
             qty: Number(item.quantity || 1),
             rate: Number(item.rate || 0),
             gstRate: item.gst_rate !== undefined ? Number(item.gst_rate) : 18,
-            outletState: '', // Empty for order-level quick calc without DB fetch
-            customerState: ''
+            outletState: outletState || '',
+            customerState: customerState || ''
           }));
-          const taxResult = calculateInvoiceFromLines(taxLines, 'DOMESTIC');
+          const taxResult = calculateInvoiceFromLines(taxLines, 'DOMESTIC', outletState, customerState);
           computedOrderGst = roundToTwoDecimals((taxResult.cgst || 0) + (taxResult.sgst || 0) + (taxResult.igst || 0));
         }
       } catch (err) {

@@ -161,12 +161,16 @@ const NewOrderPage: React.FC = () => {
         const currentOutletId = user?.role === 'manager' ? getCurrentOutletId() : undefined;
         
         // Fetch items with proper outlet filtering at service level
-        const options: { outletId?: string; userRole?: 'admin' | 'manager' | 'accountant' } = {};
+        const options: { outletId?: string; userRole?: 'admin' | 'manager' | 'accountant'; includeSharedItems?: boolean } = {};
         if (currentOutletId) {
           options.outletId = currentOutletId;
         }
         if (user?.role && (user.role === 'admin' || user.role === 'manager' || user.role === 'accountant')) {
           options.userRole = user.role;
+          // Admins see shared items (NULL outlet_id) by default
+          if (user.role === 'admin') {
+            options.includeSharedItems = true;
+          }
         }
         const items = await inventoryService.getInventoryItems(options);
         

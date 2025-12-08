@@ -160,12 +160,16 @@ const InventoryPage: React.FC = () => {
       console.log('Loading inventory items...');
       // For managers, filter by their outlet. For admins/accountants, show all items
       const currentOutletId = user?.role === 'manager' ? getCurrentOutletId() : undefined;
-      const options: { outletId?: string; userRole?: 'admin' | 'manager' | 'accountant' } = {};
+      const options: { outletId?: string; userRole?: 'admin' | 'manager' | 'accountant'; includeSharedItems?: boolean } = {};
       if (currentOutletId) {
         options.outletId = currentOutletId;
       }
       if (user?.role && (user.role === 'admin' || user.role === 'manager' || user.role === 'accountant')) {
         options.userRole = user.role;
+        // Admins see shared items (NULL outlet_id) by default
+        if (user.role === 'admin') {
+          options.includeSharedItems = true;
+        }
       }
       const inventoryItems = await InventoryService.getInventoryItems(options);
       console.log('Loaded items:', inventoryItems);

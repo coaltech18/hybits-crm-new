@@ -24,11 +24,18 @@ class InventoryService {
 
       // Filter by outlet_id if provided
       if (options?.outletId) {
-        // Only admins with explicit flag can see NULL outlet_id items (shared items)
-        if (options.userRole === 'admin' && options.includeSharedItems) {
-          query = query.or(`outlet_id.eq.${options.outletId},outlet_id.is.null`);
+        // Admins can see NULL outlet_id items (shared items) by default
+        // Managers: strict outlet filtering (no NULL items)
+        if (options.userRole === 'admin') {
+          // Admins see outlet items + shared items (NULL outlet_id) by default
+          // includeSharedItems flag can be set to false to exclude shared items
+          if (options.includeSharedItems !== false) {
+            query = query.or(`outlet_id.eq.${options.outletId},outlet_id.is.null`);
+          } else {
+            query = query.eq('outlet_id', options.outletId);
+          }
         } else {
-          // Managers and admins without flag: strict outlet filtering (no NULL items)
+          // Managers and other roles: strict outlet filtering (no NULL items)
           query = query.eq('outlet_id', options.outletId);
         }
       }

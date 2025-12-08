@@ -100,6 +100,8 @@ export interface OrderItemFormData {
   item_id: string;
   quantity: number;
   rate: number;
+  rental_days?: number; // Optional, defaults to 1
+  gst_rate?: number; // Optional, defaults to 18
 }
 
 // Invoice Form

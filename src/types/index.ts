@@ -1,404 +1,211 @@
-// ============================================================================
-// HYBITS CRM - COMPREHENSIVE TYPE DEFINITIONS
-// ============================================================================
+// ================================================================
+// DATABASE TYPES
+// ================================================================
+// TypeScript types matching the database schema exactly.
+// These types represent the data structure in Supabase.
+// ================================================================
 
-// ============================================================================
-// CORE USER & AUTHENTICATION TYPES
-// ============================================================================
+// ================================================================
+// ENUMS
+// ================================================================
 
-export interface User {
+export type UserRole = 'admin' | 'manager' | 'accountant';
+export type ClientType = 'corporate' | 'event';
+
+// ================================================================
+// USER & AUTHENTICATION TYPES
+// ================================================================
+
+export interface UserProfile {
   id: string;
   email: string;
   full_name: string;
+  phone: string | null;
   role: UserRole;
-  phone?: string;
-  avatar?: string;
   is_active: boolean;
-  outlet_id?: string; // For managers - limits access to specific outlet
-  outlet_name?: string; // For display purposes
   created_at: string;
   updated_at: string;
-  last_login?: string;
 }
 
-export type UserRole = 'admin' | 'manager' | 'accountant' | 'viewer';
-
-export interface Permission {
-  resource: string;
-  actions: string[];
-}
-
-export interface RolePermissions {
-  [key: string]: Permission[];
-}
-
-export interface AuthContextType {
-  user: User | null;
-  currentOutlet: Outlet | null;
-  availableOutlets: Outlet[];
-  loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
-  register: (userData: RegisterData) => Promise<void>;
-  updateProfile: (updates: Partial<User>) => Promise<void>;
-  switchOutlet: (outletId: string) => Promise<void>;
-}
-
-export interface RegisterData {
-  email: string;
-  password: string;
-  full_name: string;
-  role: UserRole;
-  phone?: string;
-}
-
-export interface CreateUserInput {
-  email: string;
-  password?: string;
-  full_name: string;
-  role: UserRole;
-  phone?: string;
-  outlet_id?: string;
-  is_active?: boolean;
-  send_invite?: boolean;
-}
-
-export interface UpdateUserInput {
-  user_id: string;
-  full_name?: string;
-  role?: UserRole;
-  phone?: string;
-  outlet_id?: string | null;
-  is_active?: boolean;
-}
-
-// ============================================================================
-// LOCATION & ORGANIZATION TYPES
-// ============================================================================
+// ================================================================
+// OUTLET TYPES
+// ================================================================
 
 export interface Outlet {
   id: string;
-  code: string;
   name: string;
-  address: Address;
-  contact_person: string;
-  contact_phone: string;
-  contact_email: string;
-  manager_id?: string;
+  code: string;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+  gstin: string | null;
+  phone: string | null;
+  email: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
 }
 
-// Keep Location for backward compatibility, but it's now an alias for Outlet
-export interface Location extends Outlet {}
+// ================================================================
+// USER OUTLET ASSIGNMENT TYPES
+// ================================================================
 
-export interface Address {
-  street: string;
-  city: string;
-  state: string;
-  pincode: string;
-  country: string;
+export interface UserOutletAssignment {
+  id: string;
+  user_id: string;
+  outlet_id: string;
+  assigned_at: string;
+  assigned_by: string | null;
+  // Joined data
+  outlets?: Outlet;
 }
 
-// ============================================================================
-// CUSTOMER MANAGEMENT TYPES
-// ============================================================================
+// ================================================================
+// CLIENT TYPES
+// ================================================================
 
-export interface Customer {
+export interface Client {
   id: string;
-  code: string;
+  outlet_id: string;
+  client_type: ClientType;
   name: string;
-  email: string;
+  contact_person: string | null;
   phone: string;
-  company?: string;
-  address: Address;
+  email: string | null;
+  gstin: string | null;
+  billing_address: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  // Joined data (when fetching with outlets)
+  outlets?: Outlet;
+  outlet_name?: string;
+  outlet_code?: string;
+  outlet_city?: string;
+}
+
+// ================================================================
+// FORM INPUT TYPES
+// ================================================================
+
+// Create Client Input
+export interface CreateClientInput {
+  outlet_id: string;
+  client_type: ClientType;
+  name: string;
+  contact_person?: string;
+  phone: string;
+  email?: string;
   gstin?: string;
-  status: CustomerStatus;
-  created_at: string;
-  updated_at: string;
+  billing_address?: string;
 }
 
-export type CustomerStatus = 'active' | 'inactive' | 'suspended';
+// Update Client Input (partial updates allowed)
+export interface UpdateClientInput {
+  name?: string;
+  contact_person?: string;
+  phone?: string;
+  email?: string;
+  gstin?: string;
+  billing_address?: string;
+  // Admin-only fields
+  client_type?: ClientType;
+  outlet_id?: string;
+  is_active?: boolean;
+}
 
-// ============================================================================
-// INVENTORY MANAGEMENT TYPES
-// ============================================================================
+// Client Filters for List/Search
+export interface ClientFilters {
+  client_type?: ClientType;
+  outlet_id?: string;
+  search?: string; // Search by name or phone
+  is_active?: boolean;
+}
 
-export interface InventoryItem {
-  id: string;
+// Create Outlet Input
+export interface CreateOutletInput {
+  name: string;
   code: string;
-  name: string;
-  description?: string;
-  category: string;
-  subcategory?: string;
-  location_id: string;
-  condition: ItemCondition;
-  total_quantity: number;
-  available_quantity: number;
-  reserved_quantity: number;
-  reorder_point: number;
-  unit_price: number;
-  last_movement?: string;
-  image_url?: string;
-  thumbnail_url?: string;
-  image_alt_text?: string;
-  created_at: string;
-  updated_at: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  gstin?: string;
+  phone?: string;
+  email?: string;
 }
 
-export type ItemCondition = 'excellent' | 'good' | 'fair' | 'damaged' | 'out_of_service';
+// Update Outlet Input
+export interface UpdateOutletInput {
+  name?: string;
+  code?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  gstin?: string;
+  phone?: string;
+  email?: string;
+  is_active?: boolean;
+}
 
-export interface StockAlert {
+// Create User Profile Input
+export interface CreateUserProfileInput {
+  email: string;
+  full_name: string;
+  phone?: string;
+  role: UserRole;
+  password: string; // For auth.users creation
+}
+
+// Update User Profile Input
+export interface UpdateUserProfileInput {
+  full_name?: string;
+  phone?: string;
+  role?: UserRole;
+  is_active?: boolean;
+}
+
+// Assign Manager to Outlet
+export interface AssignOutletInput {
+  user_id: string;
+  outlet_id: string;
+}
+
+// ================================================================
+// AUTH CONTEXT TYPES
+// ================================================================
+
+export interface AuthUser {
   id: string;
-  item_id: string;
-  item_name: string;
-  alert_type: AlertType;
-  severity: AlertSeverity;
-  current_quantity: number;
-  threshold_quantity: number;
-  message: string;
-  created_at: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  is_active: boolean;
 }
 
-export type AlertType = 'low_stock' | 'out_of_stock' | 'overstock';
-export type AlertSeverity = 'low' | 'medium' | 'high' | 'critical';
-
-export interface Category {
-  id: string;
-  name: string;
-  description?: string;
-  parent_id?: string;
-  item_count: number;
+export interface AuthState {
+  user: AuthUser | null;
+  profile: UserProfile | null;
+  outlets: Outlet[]; // For managers: their assigned outlets
+  selectedOutlet: string | null; // Current outlet filter (for managers)
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  isAdmin: boolean;
+  isManager: boolean;
+  isAccountant: boolean;
 }
 
-// ============================================================================
-// ORDER MANAGEMENT TYPES
-// ============================================================================
-
-export interface Order {
-  id: string;
-  order_number: string;
-  customer_id: string;
-  customer_name: string;
-  event_date: string;
-  event_type: EventType;
-  event_duration: number;
-  guest_count: number;
-  location_type: LocationType;
-  items: OrderItem[];
-  status: OrderStatus;
-  payment_status: PaymentStatus;
-  total_amount: number;
-  notes?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export type EventType = 'wedding' | 'corporate' | 'birthday' | 'anniversary' | 'other';
-export type LocationType = 'indoor' | 'outdoor' | 'both';
-export type OrderStatus = 'pending' | 'confirmed' | 'items_dispatched' | 'items_returned' | 'completed' | 'cancelled';
-export type PaymentStatus = 'pending' | 'partial' | 'paid' | 'overdue';
-
-export interface OrderItem {
-  id: string;
-  item_id: string;
-  item_name: string;
-  quantity: number;
-  rate: number;
-  amount: number;
-}
-
-// ============================================================================
-// INVOICE & BILLING TYPES
-// ============================================================================
-
-export interface Invoice {
-  id: string;
-  invoice_number: string;
-  customer_id: string;
-  customer_name: string;
-  customer_email: string;
-  customer_phone: string;
-  customer_address: Address;
-  customer_gstin?: string;
-  invoice_date: string;
-  due_date: string;
-  items: InvoiceItem[];
-  subtotal: number;
-  gst_amount: number;
-  total_amount: number;
-  status: InvoiceStatus;
-  notes?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
-
-export interface InvoiceItem {
-  id: string;
-  description: string;
-  quantity: number;
-  rate: number;
-  gst_rate: number;
-  amount: number;
-}
-
-// ============================================================================
-// DELIVERY & SCHEDULING TYPES
-// ============================================================================
-
-export interface DeliverySchedule {
-  id: string;
-  order_id: string;
-  delivery_date: string;
-  delivery_window: string;
-  delivery_type: DeliveryType;
-  delivery_address: Address;
-  contact_person: string;
-  contact_phone: string;
-  vehicle_type: VehicleType;
-  estimated_duration: number;
-  driver_name: string;
-  driver_phone: string;
-  status: DeliveryStatus;
-  notes?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export type DeliveryType = 'pickup' | 'delivery' | 'both';
-export type VehicleType = 'small_van' | 'large_van' | 'truck' | 'car';
-export type DeliveryStatus = 'scheduled' | 'in_transit' | 'delivered' | 'failed';
-
-// ============================================================================
-// UI COMPONENT TYPES
-// ============================================================================
-
-export interface ButtonProps {
-  children: React.ReactNode;
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive';
-  size?: 'sm' | 'md' | 'lg';
-  disabled?: boolean;
-  loading?: boolean;
-  onClick?: () => void;
-  type?: 'button' | 'submit' | 'reset';
-  className?: string;
-}
-
-export interface InputProps {
-  type?: 'text' | 'email' | 'password' | 'number' | 'tel' | 'url' | 'search' | 'date';
-  placeholder?: string;
-  value?: string | number;
-  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
-  onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void;
-  className?: string;
-  disabled?: boolean;
-  required?: boolean;
-  error?: string | undefined;
-  label?: string;
-  multiline?: boolean;
-  rows?: number;
-  readOnly?: boolean;
-  min?: number;
-  max?: number;
-  step?: number;
-}
-
-export interface SelectProps {
-  options: SelectOption[];
-  value?: string | number;
-  onChange?: (value: string) => void;
-  placeholder?: string;
-  className?: string;
-  disabled?: boolean;
-  searchable?: boolean;
-  label?: string;
-  required?: boolean;
-  error?: string | undefined;
-}
-
-export interface SelectOption {
-  value: string | number;
-  label: string;
-  disabled?: boolean;
-}
-
-export interface IconProps {
-  name: string;
-  size?: number;
-  color?: string;
-  className?: string;
-  strokeWidth?: number;
-}
-
-// ============================================================================
-// LAYOUT COMPONENT TYPES
-// ============================================================================
-
-export interface HeaderProps {
-  className?: string;
-  user?: User | null;
-  onLogout?: () => void;
-  onRoleSwitch?: () => void;
-  onSearch?: (query: string) => void;
-}
-
-export interface SidebarProps {
-  className?: string;
-  isCollapsed?: boolean;
-  onToggle?: () => void;
-  user?: User | null;
-}
-
-export interface BreadcrumbItem {
-  name: string;
-  path: string;
-}
-
-export interface BreadcrumbProps {
-  items: BreadcrumbItem[];
-  className?: string;
-}
-
-// ============================================================================
-// THEME & CONTEXT TYPES
-// ============================================================================
-
-export interface ThemeContextType {
-  theme: 'light' | 'dark';
-  toggleTheme: () => void;
-}
-
-// ============================================================================
-// NAVIGATION & ROUTING TYPES
-// ============================================================================
-
-export interface NavItem {
-  name: string;
-  href: string;
-  icon: string;
-  roles: UserRole[];
-  children?: NavItem[];
-}
-
-export interface LocationState {
-  from?: string;
-  message?: string;
-  [key: string]: any;
-}
-
-// ============================================================================
-// API & SERVICE TYPES
-// ============================================================================
+// ================================================================
+// API RESPONSE TYPES
+// ================================================================
 
 export interface ApiResponse<T> {
-  data: T;
+  data: T | null;
+  error: string | null;
   success: boolean;
-  message?: string;
-  error?: string;
 }
 
 export interface PaginatedResponse<T> {
@@ -406,83 +213,578 @@ export interface PaginatedResponse<T> {
   total: number;
   page: number;
   limit: number;
-  totalPages: number;
+  hasMore: boolean;
 }
 
-export interface FilterOptions {
-  search?: string;
-  status?: string;
-  dateRange?: string;
-  location?: string;
-  category?: string;
-  [key: string]: any;
-}
+// ================================================================
+// VALIDATION ERROR TYPES
+// ================================================================
 
-export interface SortOptions {
+export interface ValidationError {
   field: string;
-  direction: 'asc' | 'desc';
+  message: string;
 }
-
-// ============================================================================
-// FORM TYPES
-// ============================================================================
 
 export interface FormErrors {
-  [key: string]: string | undefined;
+  [key: string]: string;
 }
 
-export interface FormState<T> {
-  data: T;
-  errors: FormErrors;
-  isSubmitting: boolean;
-  isValid: boolean;
+// ================================================================
+// SUBSCRIPTION TYPES (PHASE 3)
+// ================================================================
+
+export type SubscriptionStatus = 'active' | 'paused' | 'cancelled';
+export type BillingCycle = 'daily' | 'weekly' | 'monthly';
+
+export interface Subscription {
+  id: string;
+  outlet_id: string;
+  client_id: string;
+  billing_cycle: BillingCycle;
+  billing_day: number | null;
+  start_date: string; // ISO date string
+  end_date: string | null;
+  status: SubscriptionStatus;
+  quantity: number;
+  price_per_unit: number;
+  next_billing_date: string; // ISO date string
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  // Joined data (when fetching with details)
+  clients?: Client;
+  outlets?: Outlet;
+  client_name?: string;
+  outlet_name?: string;
+  outlet_code?: string;
+  total_amount?: number; // quantity * price_per_unit
 }
 
-// ============================================================================
-// DASHBOARD & ANALYTICS TYPES
-// ============================================================================
-
-export interface DashboardStats {
-  totalCustomers: number;
-  totalOrders: number;
-  totalRevenue: number;
-  pendingOrders: number;
-  lowStockItems: number;
-  overdueInvoices: number;
+export interface CreateSubscriptionInput {
+  outlet_id: string;
+  client_id: string;
+  billing_cycle: BillingCycle;
+  billing_day?: number; // Required if monthly
+  start_date: string; // ISO date string
+  quantity: number;
+  price_per_unit: number;
+  notes?: string;
 }
 
-export interface ChartData {
-  labels: string[];
-  datasets: {
-    label: string;
-    data: number[];
-    backgroundColor?: string | string[];
-    borderColor?: string | string[];
-  }[];
+export interface UpdateSubscriptionInput {
+  billing_cycle?: BillingCycle;
+  billing_day?: number;
+  quantity?: number;
+  price_per_unit?: number;
+  notes?: string;
+  // Admin-only fields
+  outlet_id?: string;
+  client_id?: string;
 }
 
-// ============================================================================
-// UTILITY TYPES
-// ============================================================================
-
-export type Status = 'idle' | 'loading' | 'success' | 'error';
-
-export interface LoadingState {
-  status: Status;
-  message?: string;
+export interface SubscriptionFilters {
+  client_id?: string;
+  status?: SubscriptionStatus;
+  outlet_id?: string;
 }
 
-export type DateRange = {
-  start: string;
-  end: string;
-};
+// ================================================================
+// EVENT TYPES (PHASE 4)
+// ================================================================
 
-export type SortDirection = 'asc' | 'desc';
+export type EventStatus = 'planned' | 'completed' | 'cancelled';
 
-// ============================================================================
+export interface Event {
+  id: string;
+  outlet_id: string;
+  client_id: string;
+  event_name: string;
+  event_type: string | null;
+  event_date: string; // ISO date string
+  guest_count: number | null;
+  notes: string | null;
+  status: EventStatus;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  // Joined data (when fetching with details)
+  clients?: Client;
+  outlets?: Outlet;
+  client_name?: string;
+  outlet_name?: string;
+  outlet_code?: string;
+}
+
+export interface CreateEventInput {
+  outlet_id: string;
+  client_id: string;
+  event_name: string;
+  event_type?: string;
+  event_date: string; // ISO date string
+  guest_count?: number;
+  notes?: string;
+}
+
+export interface UpdateEventInput {
+  event_name?: string;
+  event_type?: string;
+  event_date?: string; // ISO date string
+  guest_count?: number;
+  notes?: string;
+  status?: EventStatus;
+  // Admin-only fields
+  outlet_id?: string;
+  client_id?: string;
+}
+
+export interface EventFilters {
+  client_id?: string;
+  status?: EventStatus;
+  outlet_id?: string;
+  date_from?: string;
+  date_to?: string;
+}
+
+// ================================================================
+// INVOICE TYPES (PHASE 5)
+// ================================================================
+
+export type InvoiceType = 'subscription' | 'event';
+export type InvoiceStatus = 'draft' | 'issued' | 'cancelled';
+
+export interface InvoiceItem {
+  id: string;
+  invoice_id: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+  tax_rate: number;
+  tax_amount: number;
+  created_at: string;
+}
+
+export interface Invoice {
+  id: string;
+  invoice_number: string;
+  invoice_type: InvoiceType;
+  client_id: string;
+  outlet_id: string;
+  event_id: string | null;
+  status: InvoiceStatus;
+  subtotal: number;
+  tax_total: number;
+  grand_total: number;
+  issued_at: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  // Joined data
+  clients?: Client;
+  outlets?: Outlet;
+  events?: Event;
+  client_name?: string;
+  outlet_name?: string;
+  event_name?: string;
+  invoice_items?: InvoiceItem[];
+}
+
+export interface CreateInvoiceItemInput {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  tax_rate: number;
+}
+
+export interface CreateInvoiceInput {
+  invoice_type: InvoiceType;
+  client_id: string;
+  outlet_id: string;
+  event_id?: string | null;
+  items: CreateInvoiceItemInput[];
+}
+
+export interface UpdateInvoiceInput {
+  status?: InvoiceStatus;
+}
+
+export interface InvoiceFilters {
+  invoice_type?: InvoiceType;
+  status?: InvoiceStatus;
+  client_id?: string;
+  outlet_id?: string;
+}
+
+// Add payment status (derived, not stored in DB)
+export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid';
+
+// Extended invoice with payment info (from view)
+export interface InvoiceWithPaymentStatus extends Invoice {
+  amount_paid: number;
+  balance_due: number;
+  payment_status: PaymentStatus;
+}
+
+// ================================================================
+// PAYMENT TYPES (PHASE 6)
+// ================================================================
+
+export type PaymentMethod = 'cash' | 'upi' | 'bank_transfer' | 'card' | 'cheque';
+
+export interface Payment {
+  id: string;
+  invoice_id: string;
+  amount: number;
+  payment_method: PaymentMethod;
+  payment_date: string; // ISO date string
+  reference_number: string | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  // Joined data (from view)
+  invoice_number?: string;
+  invoice_type?: InvoiceType;
+  invoice_total?: number;
+  invoice_status?: InvoiceStatus;
+  client_name?: string;
+  client_phone?: string;
+  outlet_name?: string;
+  outlet_code?: string;
+  recorded_by_name?: string;
+}
+
+export interface CreatePaymentInput {
+  invoice_id: string;
+  amount: number;
+  payment_method: PaymentMethod;
+  payment_date: string; // ISO date string
+  reference_number?: string;
+  notes?: string;
+}
+
+export interface UpdatePaymentInput {
+  amount?: number;
+  payment_method?: PaymentMethod;
+  payment_date?: string;
+  reference_number?: string;
+  notes?: string;
+}
+
+export interface PaymentFilters {
+  invoice_id?: string;
+  payment_method?: PaymentMethod;
+  date_from?: string;
+  date_to?: string;
+  outlet_id?: string;
+  is_active?: boolean; // Show deleted payments
+}
+
+// ================================================================
+// INVENTORY TYPES (PHASE 8)
+// ================================================================
+
+// Movement type enum
+export type MovementType = 'stock_in' | 'allocation' | 'return' | 'damage' | 'loss' | 'adjustment';
+
+// Reference type enum (already defined, but including for inventory context)
+export type ReferenceType = 'subscription' | 'event' | 'manual';
+
+// Inventory item
+export interface InventoryItem {
+  id: string;
+  outlet_id: string;
+  name: string;
+  category: string;
+  material: string | null;
+  unit: string;
+  total_quantity: number;
+  available_quantity: number;
+  allocated_quantity: number;
+  damaged_quantity: number;
+  lost_quantity: number;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  // Joined data
+  outlet_name?: string;
+  outlet_code?: string;
+}
+
+// Inventory movement
+export interface InventoryMovement {
+  id: string;
+  outlet_id: string;
+  inventory_item_id: string;
+  movement_type: MovementType;
+  quantity: number;
+  reference_type: ReferenceType;
+  reference_id: string | null;
+  notes: string | null;
+  created_by: string;
+  created_at: string;
+  // Joined data
+  item_name?: string;
+  item_category?: string;
+  outlet_name?: string;
+  reference_name?: string;
+  created_by_name?: string;
+}
+
+// Inventory allocation
+export interface InventoryAllocation {
+  id: string;
+  outlet_id: string;
+  inventory_item_id: string;
+  reference_type: ReferenceType;
+  reference_id: string;
+  allocated_quantity: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  // Joined data
+  item_name?: string;
+  item_category?: string;
+  outlet_name?: string;
+  reference_name?: string;
+  outstanding_quantity?: number; // DERIVED from movements
+}
+
+// Create inventory item input
+export interface CreateInventoryItemInput {
+  outlet_id: string;
+  name: string;
+  category: string;
+  material?: string;
+  unit?: string;
+  initial_stock: number; // Creates stock_in movement
+}
+
+// Update inventory item input
+export interface UpdateInventoryItemInput {
+  name?: string;
+  category?: string;
+  material?: string;
+  unit?: string;
+}
+
+// Create stock in input
+export interface CreateStockInInput {
+  outlet_id: string;
+  inventory_item_id: string;
+  quantity: number;
+  notes?: string;
+}
+
+// Allocate inventory input
+export interface AllocateInventoryInput {
+  outlet_id: string;
+  inventory_item_id: string;
+  quantity: number;
+  reference_type: 'subscription' | 'event';
+  reference_id: string;
+  notes?: string;
+}
+
+// Return inventory input
+export interface ReturnInventoryInput {
+  outlet_id: string;
+  inventory_item_id: string;
+  quantity: number;
+  reference_type: 'subscription' | 'event';
+  reference_id: string;
+  notes?: string;
+}
+
+// Mark damage input
+export interface MarkDamageInput {
+  outlet_id: string;
+  inventory_item_id: string;
+  quantity: number;
+  reference_type: 'subscription' | 'event';
+  reference_id: string;
+  notes: string; // Mandatory
+}
+
+// Mark loss input
+export interface MarkLossInput {
+  outlet_id: string;
+  inventory_item_id: string;
+  quantity: number;
+  reference_type: 'subscription' | 'event';
+  reference_id: string;
+  notes: string; // Mandatory
+}
+
+// Adjust inventory input (admin only)
+export interface AdjustInventoryInput {
+  outlet_id: string;
+  inventory_item_id: string;
+  quantity: number;
+  notes: string; // Mandatory
+}
+
+// Inventory filters
+export interface InventoryFilters {
+  outlet_id?: string;
+  category?: string;
+  is_active?: boolean;
+}
+
+// Movement filters
+export interface MovementFilters {
+  outlet_id?: string;
+  inventory_item_id?: string;
+  movement_type?: MovementType;
+  reference_type?: ReferenceType;
+  reference_id?: string;
+  date_from?: string;
+  date_to?: string;
+}
+
+// ================================================================
+// REPORT TYPES (PHASE 7)
+// ================================================================
+
+// Aging buckets for outstanding report
+export type AgingBucket = '0-30' | '31-60' | '61-90' | '90+';
+
+// Report date filters
+export interface ReportDateFilter {
+  date_from?: string;
+  date_to?: string;
+}
+
+// Common report filters
+export interface ReportFilters extends ReportDateFilter {
+  outlet_id?: string;
+}
+
+// Revenue report data
+export interface RevenueReportRow {
+  report_date: string;
+  outlet_id: string;
+  outlet_name: string;
+  invoice_type: InvoiceType;
+  invoice_count: number;
+  total_invoiced: number;
+  total_collected: number;
+  outstanding: number;
+}
+
+// Payments report data
+export interface PaymentsReportRow {
+  report_date: string;
+  invoice_id: string;
+  outlet_id: string;
+  outlet_name: string;
+  payment_method: PaymentMethod;
+  payment_count: number;
+  total_amount: number;
+}
+
+// Outstanding aging report data
+export interface OutstandingAgingRow {
+  invoice_id: string;
+  invoice_number: string;
+  invoice_type: InvoiceType;
+  invoice_date: string;
+  grand_total: number;
+  amount_paid: number;
+  balance_due: number;
+  client_id: string;
+  client_name: string;
+  client_phone: string;
+  outlet_id: string;
+  outlet_name: string;
+  outlet_code: string;
+  days_outstanding: number;
+  aging_bucket: AgingBucket;
+  bucket_order: number;
+}
+
+// Subscription MRR data
+export interface SubscriptionMRRRow {
+  subscription_id: string;
+  outlet_id: string;
+  outlet_name: string;
+  outlet_code: string;
+  client_id: string;
+  client_name: string;
+  billing_cycle: BillingCycle;
+  status: SubscriptionStatus;
+  quantity: number;
+  price_per_unit: number;
+  start_date: string;
+  next_billing_date: string;
+  cycle_amount: number;
+  mrr: number;
+  annual_value: number;
+}
+
+// Client revenue data
+export interface ClientRevenueRow {
+  client_id: string;
+  client_name: string;
+  client_type: ClientType;
+  client_phone: string;
+  client_email: string | null;
+  outlet_id: string;
+  outlet_name: string;
+  outlet_code: string;
+  invoice_count: number;
+  subscription_invoice_count: number;
+  event_invoice_count: number;
+  total_invoiced: number;
+  total_collected: number;
+  outstanding: number;
+  subscription_revenue: number;
+  event_revenue: number;
+  active_subscriptions: number;
+  completed_events: number;
+}
+
+// Outlet performance data
+export interface OutletPerformanceRow {
+  outlet_id: string;
+  outlet_name: string;
+  outlet_code: string;
+  city: string | null;
+  state: string | null;
+  active_clients: number;
+  corporate_clients: number;
+  event_clients: number;
+  total_invoices: number;
+  subscription_invoices: number;
+  event_invoices: number;
+  total_invoiced: number;
+  total_collected: number;
+  outstanding: number;
+  collection_rate_percent: number;
+  active_subscriptions: number;
+  paused_subscriptions: number;
+  cancelled_subscriptions: number;
+  mrr: number;
+  completed_events: number;
+  cancelled_events: number;
+  planned_events: number;
+}
+
+// Chart data point
+export interface ChartDataPoint {
+  name: string;
+  value: number;
+  [key: string]: string | number;
+}
+
+// ================================================================
 // EXPORT ALL TYPES
-// ============================================================================
+// ================================================================
 
-export * from './components';
-export * from './api';
-export * from './forms';
+export type {
+  // Re-export for convenience
+  UserProfile as User,
+};

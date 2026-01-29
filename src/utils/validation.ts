@@ -1,173 +1,212 @@
-// ============================================================================
+// ================================================================
 // VALIDATION UTILITIES
-// ============================================================================
-
-import { ValidationRule, FormErrors } from '@/types/forms';
+// ================================================================
+// Production-grade validation functions for forms and data
+// ================================================================
 
 /**
- * Validates a single field value against validation rules
+ * Validate GSTIN format (15 characters)
+ * Format: 2-digit state code + 10-digit PAN + 1 check digit + Z + 1 alphanumeric
+ * Example: 27AABCU9603R1ZV
  */
-export function validateField(value: any, rules: ValidationRule[]): string | undefined {
-  for (const rule of rules) {
-    const error = validateRule(value, rule);
-    if (error) return error;
+export function validateGSTIN(gstin: string): { valid: boolean; error?: string } {
+  if (!gstin || gstin.trim() === '') {
+    return { valid: true }; // GSTIN is optional
   }
-  return undefined;
+
+  const trimmed = gstin.trim().toUpperCase();
+
+  // Check length
+  if (trimmed.length !== 15) {
+    return {
+      valid: false,
+      error: 'GSTIN must be exactly 15 characters',
+    };
+  }
+
+  // Check format: 2 digits + 5 letters + 4 digits + 1 letter + 1 alphanumeric + Z + 1 alphanumeric
+  const gstinPattern = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+
+  if (!gstinPattern.test(trimmed)) {
+    return {
+      valid: false,
+      error: 'Invalid GSTIN format. Example: 27AABCU9603R1ZV',
+    };
+  }
+
+  return { valid: true };
 }
 
 /**
- * Validates a single rule
+ * Validate Indian phone number
+ * Accepts: 10 digits, with optional +91 or 91 prefix
  */
-function validateRule(value: any, rule: ValidationRule): string | undefined {
-  switch (rule.type) {
-    case 'required':
-      if (!value || (typeof value === 'string' && value.trim() === '')) {
-        return rule.message;
-      }
-      break;
-
-    case 'email':
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (value && !emailRegex.test(value)) {
-        return rule.message;
-      }
-      break;
-
-    case 'min':
-      if (value && value.length < rule.value) {
-        return rule.message;
-      }
-      break;
-
-    case 'max':
-      if (value && value.length > rule.value) {
-        return rule.message;
-      }
-      break;
-
-    case 'pattern':
-      if (value && !rule.value.test(value)) {
-        return rule.message;
-      }
-      break;
-
-    case 'custom':
-      if (rule.validator && !rule.validator(value)) {
-        return rule.message;
-      }
-      break;
+export function validatePhone(phone: string): { valid: boolean; error?: string } {
+  if (!phone || phone.trim() === '') {
+    return { valid: false, error: 'Phone number is required' };
   }
-  return undefined;
+
+  // Remove all spaces, hyphens, and parentheses
+  const cleaned = phone.replace(/[\s\-()]/g, '');
+
+  // Check various formats
+  const patterns = [
+    /^[6-9]\d{9}$/, // 10 digits starting with 6-9
+    /^\+91[6-9]\d{9}$/, // +91 prefix
+    /^91[6-9]\d{9}$/, // 91 prefix
+  ];
+
+  const isValid = patterns.some(pattern => pattern.test(cleaned));
+
+  if (!isValid) {
+    return {
+      valid: false,
+      error: 'Invalid phone number. Must be 10 digits starting with 6-9',
+    };
+  }
+
+  return { valid: true };
 }
 
 /**
- * Validates an entire form object
+ * Normalize phone number to standard format (+91XXXXXXXXXX)
  */
-export function validateForm<T>(
-  data: T,
-  validationRules: Record<keyof T, ValidationRule[]>
-): FormErrors {
-  const errors: FormErrors = {};
+export function normalizePhone(phone: string): string {
+  const cleaned = phone.replace(/[\s\-()]/g, '');
 
-  for (const [field, rules] of Object.entries(validationRules)) {
-    const value = (data as any)[field];
-    const error = validateField(value, rules as ValidationRule[]);
-    if (error) {
-      errors[field] = error;
-    }
+  // If already has +91 prefix
+  if (cleaned.startsWith('+91')) {
+    return cleaned;
   }
 
-  return errors;
+  // If has 91 prefix without +
+  if (cleaned.startsWith('91') && cleaned.length === 12) {
+    return '+' + cleaned;
+  }
+
+  // If just 10 digits, add +91
+  if (cleaned.length === 10) {
+    return '+91' + cleaned;
+  }
+
+  return cleaned;
 }
 
 /**
- * Common validation rules
+ * Validate email format
  */
-export const commonValidationRules = {
-  required: (message: string = 'This field is required'): ValidationRule => ({
-    type: 'required',
-    message,
-  }),
+export function validateEmail(email: string): { valid: boolean; error?: string } {
+  if (!email || email.trim() === '') {
+    return { valid: true }; // Email is optional in most forms
+  }
 
-  email: (message: string = 'Please enter a valid email address'): ValidationRule => ({
-    type: 'email',
-    message,
-  }),
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  minLength: (min: number, message?: string): ValidationRule => ({
-    type: 'min',
-    value: min,
-    message: message || `Must be at least ${min} characters long`,
-  }),
+  if (!emailPattern.test(email.trim())) {
+    return {
+      valid: false,
+      error: 'Invalid email format',
+    };
+  }
 
-  maxLength: (max: number, message?: string): ValidationRule => ({
-    type: 'max',
-    value: max,
-    message: message || `Must be no more than ${max} characters long`,
-  }),
-
-  pattern: (regex: RegExp, message: string): ValidationRule => ({
-    type: 'pattern',
-    value: regex,
-    message,
-  }),
-
-  custom: (validator: (value: any) => boolean, message: string): ValidationRule => ({
-    type: 'custom',
-    validator,
-    message,
-  }),
-};
+  return { valid: true };
+}
 
 /**
- * Phone number validation
+ * Validate required text field
  */
-export const phoneValidation = commonValidationRules.pattern(
-  /^[\+]?[1-9][\d]{0,15}$/,
-  'Please enter a valid phone number'
-);
+export function validateRequired(
+  value: string | null | undefined,
+  fieldName: string
+): { valid: boolean; error?: string } {
+  if (!value || value.trim() === '') {
+    return {
+      valid: false,
+      error: `${fieldName} is required`,
+    };
+  }
+
+  return { valid: true };
+}
 
 /**
- * GSTIN validation
+ * Validate minimum length
  */
-export const gstinValidation = commonValidationRules.pattern(
-  /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/,
-  'Please enter a valid GSTIN'
-);
+export function validateMinLength(
+  value: string,
+  minLength: number,
+  fieldName: string
+): { valid: boolean; error?: string } {
+  if (value.trim().length < minLength) {
+    return {
+      valid: false,
+      error: `${fieldName} must be at least ${minLength} characters`,
+    };
+  }
+
+  return { valid: true };
+}
 
 /**
- * PIN code validation
+ * Validate maximum length
  */
-export const pincodeValidation = commonValidationRules.pattern(
-  /^[1-9][0-9]{5}$/,
-  'Please enter a valid 6-digit PIN code'
-);
+export function validateMaxLength(
+  value: string,
+  maxLength: number,
+  fieldName: string
+): { valid: boolean; error?: string } {
+  if (value.trim().length > maxLength) {
+    return {
+      valid: false,
+      error: `${fieldName} must not exceed ${maxLength} characters`,
+    };
+  }
+
+  return { valid: true };
+}
 
 /**
- * Indian date format validation (DD-MM-YYYY)
+ * Validate pincode (6 digits)
  */
-export const indianDateValidation = commonValidationRules.custom(
-  (value: string) => {
-    if (!value) return true; // Let required validation handle empty values
-    
-    const parts = value.split('-');
-    if (parts.length !== 3) return false;
-    
-    const day = parseInt(parts[0] || '0', 10);
-    const month = parseInt(parts[1] || '0', 10);
-    const year = parseInt(parts[2] || '0', 10);
-    
-    // Check if all parts are valid numbers
-    if (isNaN(day) || isNaN(month) || isNaN(year)) return false;
-    
-    // Check ranges
-    if (day < 1 || day > 31) return false;
-    if (month < 1 || month > 12) return false;
-    if (year < 1900 || year > 2100) return false;
-    
-    // Check if the date is valid
-    const date = new Date(year, month - 1, day);
-    return date.getDate() === day && date.getMonth() === month - 1 && date.getFullYear() === year;
-  },
-  'Please enter a valid date in DD-MM-YYYY format'
-);
+export function validatePincode(pincode: string): { valid: boolean; error?: string } {
+  if (!pincode || pincode.trim() === '') {
+    return { valid: true }; // Pincode is optional
+  }
+
+  const pincodePattern = /^[1-9][0-9]{5}$/;
+
+  if (!pincodePattern.test(pincode.trim())) {
+    return {
+      valid: false,
+      error: 'Invalid pincode. Must be 6 digits',
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Validate password strength
+ */
+export function validatePassword(password: string): { valid: boolean; error?: string } {
+  if (!password || password.length < 8) {
+    return {
+      valid: false,
+      error: 'Password must be at least 8 characters',
+    };
+  }
+
+  // Check for at least one uppercase, one lowercase, one number
+  const hasUpperCase = /[A-Z]/.test(password);
+  const hasLowerCase = /[a-z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
+
+  if (!hasUpperCase || !hasLowerCase || !hasNumber) {
+    return {
+      valid: false,
+      error: 'Password must contain uppercase, lowercase, and number',
+    };
+  }
+
+  return { valid: true };
+}

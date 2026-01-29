@@ -1,194 +1,413 @@
-// ============================================================================
-// INVOICE SERVICE
-// ============================================================================
-
 import { supabase } from '@/lib/supabase';
-import { CodeGeneratorService } from './codeGeneratorService';
+import type {
+  Invoice,
+  InvoiceFilters,
+  CreateInvoiceInput,
+  UpdateInvoiceInput,
+  CreateInvoiceItemInput,
+} from '@/types';
+import { getClientById } from './clientService';
+import { getEventById } from './eventService';
 
-export interface InvoiceFormData {
-  customer_id: string;
-  invoice_date: string;
-  due_date: string;
-  items: InvoiceItemFormData[];
-  notes?: string;
+// ================================================================
+// INVOICE SERVICE
+// ================================================================
+// All CRUD operations for invoices with role-based access control
+// Single source of truth for pricing and GST
+// ================================================================
+
+/**
+ * Calculate line item totals
+ */
+function calculateLineItem(item: CreateInvoiceItemInput) {
+  const line_total = item.quantity * item.unit_price;
+  const tax_amount = Math.round(line_total * (item.tax_rate / 100) * 100) / 100;
+
+  return {
+    ...item,
+    line_total,
+    tax_amount,
+  };
 }
 
-export interface InvoiceItemFormData {
-  description: string;
-  quantity: number;
-  rate: number;
-  gst_rate: number;
+/**
+ * Calculate invoice totals from items
+ */
+function calculateInvoiceTotals(items: CreateInvoiceItemInput[]) {
+  const calculated = items.map(calculateLineItem);
+  const subtotal = calculated.reduce((sum, item) => sum + item.line_total, 0);
+  const tax_total = calculated.reduce((sum, item) => sum + item.tax_amount, 0);
+  const grand_total = subtotal + tax_total;
+
+  return {
+    subtotal: Math.round(subtotal * 100) / 100,
+    tax_total: Math.round(tax_total * 100) / 100,
+    grand_total: Math.round(grand_total * 100) / 100,
+    items: calculated,
+  };
 }
 
-export interface Invoice {
-  id: string;
-  invoice_number: string;
-  customer_id: string;
-  customer_name?: string;
-  invoice_date: string;
-  due_date: string;
-  subtotal: number;
-  total_gst: number;
-  total_amount: number;
-  payment_status: string;
-  notes?: string;
-  created_at: string;
-  updated_at: string;
-  items: InvoiceItemFormData[];
-}
+/**
+ * Get all invoices with filters (role-based)
+ */
+export async function getInvoices(
+  userId: string,
+  filters: InvoiceFilters = {}
+): Promise<Invoice[]> {
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
 
-export class InvoiceService {
-  /**
-   * Create a new invoice
-   */
-  static async createInvoice(invoiceData: InvoiceFormData): Promise<Invoice> {
-    try {
-      // Generate invoice number automatically
-      const invoiceNumber = await CodeGeneratorService.generateCode('invoice');
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
 
-      // Calculate totals
-      const subtotal = invoiceData.items.reduce((sum, item) => sum + (item.quantity * item.rate), 0);
-      const totalGst = invoiceData.items.reduce((sum, item) => {
-        const itemTotal = item.quantity * item.rate;
-        return sum + (itemTotal * item.gst_rate / 100);
-      }, 0);
-      const totalAmount = subtotal + totalGst;
+  let query = supabase
+    .from('invoices')
+    .select(`
+      *,
+      clients (id, name, client_type, phone),
+      outlets (id, name, code, city),
+      events (id, event_name, event_date)
+    `)
+    .order('created_at', { ascending: false });
 
-      const insertData = {
-        invoice_number: invoiceNumber,
-        customer_id: invoiceData.customer_id,
-        invoice_date: invoiceData.invoice_date,
-        due_date: invoiceData.due_date,
-        subtotal: subtotal,
-        total_gst: totalGst,
-        total_amount: totalAmount,
-        payment_status: 'pending',
-        notes: invoiceData.notes || null,
-        created_by: (await supabase.auth.getUser()).data.user?.id
-      };
+  // Role-based outlet filtering
+  if (profile.role === 'manager') {
+    const { data: assignments } = await supabase
+      .from('user_outlet_assignments')
+      .select('outlet_id')
+      .eq('user_id', userId);
 
-      const { data, error } = await supabase
-        .from('invoices')
-        .insert(insertData)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error creating invoice:', error);
-        throw new Error(error.message);
-      }
-
-      // Create invoice items
-      if (invoiceData.items.length > 0) {
-        const invoiceItems = invoiceData.items.map(item => ({
-          invoice_id: data.id,
-          description: item.description,
-          quantity: item.quantity,
-          rate: item.rate,
-          gst_rate: item.gst_rate,
-          total_amount: (item.quantity * item.rate) + (item.quantity * item.rate * item.gst_rate / 100)
-        }));
-
-        const { error: itemsError } = await supabase
-          .from('invoice_items')
-          .insert(invoiceItems);
-
-        if (itemsError) {
-          console.error('Error creating invoice items:', itemsError);
-          throw new Error(itemsError.message);
-        }
-      }
-
-      return {
-        ...data,
-        items: invoiceData.items
-      };
-    } catch (error: any) {
-      console.error('Error in createInvoice:', error);
-      throw new Error(error.message || 'Failed to create invoice');
+    if (assignments && assignments.length > 0) {
+      const outletIds = assignments.map(a => a.outlet_id);
+      query = query.in('outlet_id', outletIds);
+    } else {
+      return [];
     }
   }
 
-  /**
-   * Get all invoices
-   */
-  static async getInvoices(): Promise<Invoice[]> {
-    try {
-      const { data, error } = await supabase
-        .from('invoices')
-        .select(`
-          *,
-          customers(contact_person),
-          invoice_items(*)
-        `)
-        .order('created_at', { ascending: false });
+  // Filters
+  if (filters.outlet_id && ['admin', 'accountant'].includes(profile.role)) {
+    query = query.eq('outlet_id', filters.outlet_id);
+  }
+  if (filters.invoice_type) {
+    query = query.eq('invoice_type', filters.invoice_type);
+  }
+  if (filters.status) {
+    query = query.eq('status', filters.status);
+  }
+  if (filters.client_id) {
+    query = query.eq('client_id', filters.client_id);
+  }
 
-      if (error) {
-        console.error('Error fetching invoices:', error);
-        throw new Error(error.message);
-      }
+  const { data, error } = await query;
 
-      return (data || []).map((invoice: any) => ({
-        id: invoice.id,
-        invoice_number: invoice.invoice_number,
-        customer_id: invoice.customer_id,
-        customer_name: invoice.customers?.contact_person,
-        invoice_date: invoice.invoice_date,
-        due_date: invoice.due_date,
-        subtotal: invoice.subtotal,
-        total_gst: invoice.total_gst,
-        total_amount: invoice.total_amount,
-        payment_status: invoice.payment_status,
-        notes: invoice.notes,
-        created_at: invoice.created_at,
-        updated_at: invoice.updated_at,
-        items: invoice.invoice_items || []
-      }));
-    } catch (error: any) {
-      console.error('Error in getInvoices:', error);
-      throw new Error(error.message || 'Failed to fetch invoices');
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data || [];
+}
+
+/**
+ * Get invoice by ID with items
+ */
+export async function getInvoiceById(invoiceId: string): Promise<Invoice | null> {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select(`
+      *,
+      clients (id, name, client_type, phone, email, gstin, billing_address),
+      outlets (id, name, code, city, state, address, gstin, phone, email),
+      events (id, event_name, event_date, event_type)
+    `)
+    .eq('id', invoiceId)
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      return null;
+    }
+    throw new Error(error.message);
+  }
+
+  // Fetch invoice items
+  const { data: items, error: itemsError } = await supabase
+    .from('invoice_items')
+    .select('*')
+    .eq('invoice_id', invoiceId)
+    .order('created_at', { ascending: true });
+
+  if (itemsError) {
+    throw new Error(itemsError.message);
+  }
+
+  return {
+    ...data,
+    invoice_items: items || [],
+  };
+}
+
+/**
+ * Create new invoice
+ * 
+ * LOCKED RULES:
+ * - Event invoices only for completed events
+ * - Subscription invoices must not have event_id
+ * - Client outlet must match invoice outlet
+ */
+export async function createInvoice(
+  userId: string,
+  input: CreateInvoiceInput
+): Promise<Invoice> {
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
+
+  // Accountants cannot create invoices
+  if (profile.role === 'accountant') {
+    throw new Error('Accountants do not have permission to create invoices');
+  }
+
+  // Validate required fields
+  if (!input.client_id) {
+    throw new Error('Client is required');
+  }
+
+  if (!input.outlet_id) {
+    throw new Error('Outlet is required');
+  }
+
+  if (!input.items || input.items.length === 0) {
+    throw new Error('At least one invoice item is required');
+  }
+
+  // Validate client
+  const client = await getClientById(input.client_id);
+  if (!client) {
+    throw new Error('Client not found');
+  }
+
+  if (client.outlet_id !== input.outlet_id) {
+    throw new Error('Client does not belong to the selected outlet');
+  }
+
+  // Validate event for event invoices
+  if (input.invoice_type === 'event') {
+    if (!input.event_id) {
+      throw new Error('Event invoices must have an event');
+    }
+
+    const event = await getEventById(input.event_id);
+    if (!event) {
+      throw new Error('Event not found');
+    }
+
+    if (event.status !== 'completed') {
+      throw new Error('Only completed events can be invoiced');
+    }
+
+    if (event.outlet_id !== input.outlet_id) {
+      throw new Error('Event does not belong to the selected outlet');
+    }
+
+    if (event.client_id !== input.client_id) {
+      throw new Error('Event does not belong to the selected client');
     }
   }
 
-  /**
-   * Get a single invoice by ID
-   */
-  static async getInvoice(id: string): Promise<Invoice> {
-    try {
-      const { data, error } = await supabase
-        .from('invoices')
-        .select(`
-          *,
-          customers(contact_person),
-          invoice_items(*)
-        `)
-        .eq('id', id)
-        .single();
-
-      if (error) {
-        console.error('Error fetching invoice:', error);
-        throw new Error(error.message);
-      }
-
-      return {
-        id: data.id,
-        invoice_number: data.invoice_number,
-        customer_id: data.customer_id,
-        customer_name: data.customers?.contact_person,
-        invoice_date: data.invoice_date,
-        due_date: data.due_date,
-        subtotal: data.subtotal,
-        total_gst: data.total_gst,
-        total_amount: data.total_amount,
-        payment_status: data.payment_status,
-        notes: data.notes,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-        items: data.invoice_items || []
-      };
-    } catch (error: any) {
-      console.error('Error in getInvoice:', error);
-      throw new Error(error.message || 'Failed to fetch invoice');
+  // Validate subscription invoices
+  if (input.invoice_type === 'subscription') {
+    if (input.event_id) {
+      throw new Error('Subscription invoices cannot have an event');
     }
+  }
+
+  // Manager outlet check
+  if (profile.role === 'manager') {
+    const { data: assignments } = await supabase
+      .from('user_outlet_assignments')
+      .select('outlet_id')
+      .eq('user_id', userId);
+
+    const allowedOutlets = assignments?.map(a => a.outlet_id) || [];
+    if (!allowedOutlets.includes(input.outlet_id)) {
+      throw new Error('You can only create invoices for your assigned outlets');
+    }
+  }
+
+  // Calculate totals
+  const totals = calculateInvoiceTotals(input.items);
+
+  // Create invoice
+  const { data: invoice, error: invoiceError } = await supabase
+    .from('invoices')
+    .insert({
+      invoice_type: input.invoice_type,
+      client_id: input.client_id,
+      outlet_id: input.outlet_id,
+      event_id: input.event_id || null,
+      status: 'draft',
+      subtotal: totals.subtotal,
+      tax_total: totals.tax_total,
+      grand_total: totals.grand_total,
+    })
+    .select()
+    .single();
+
+  if (invoiceError) {
+    throw new Error(invoiceError.message);
+  }
+
+  // Create invoice items
+  const itemsToInsert = totals.items.map(item => ({
+    invoice_id: invoice.id,
+    description: item.description,
+    quantity: item.quantity,
+    unit_price: item.unit_price,
+    line_total: item.line_total,
+    tax_rate: item.tax_rate,
+    tax_amount: item.tax_amount,
+  }));
+
+  const { error: itemsError } = await supabase
+    .from('invoice_items')
+    .insert(itemsToInsert);
+
+  if (itemsError) {
+    // Rollback: delete invoice
+    await supabase.from('invoices').delete().eq('id', invoice.id);
+    throw new Error(itemsError.message);
+  }
+
+  // Fetch complete invoice
+  const completeInvoice = await getInvoiceById(invoice.id);
+  if (!completeInvoice) {
+    throw new Error('Failed to fetch created invoice');
+  }
+
+  return completeInvoice;
+}
+
+/**
+ * Update invoice status
+ * 
+ * LOCKED RULES:
+ * - Issued invoices cannot be edited
+ * - Cancelled invoices cannot be issued
+ */
+export async function updateInvoiceStatus(
+  userId: string,
+  invoiceId: string,
+  updates: UpdateInvoiceInput
+): Promise<Invoice> {
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
+
+  // Accountants cannot update invoices
+  if (profile.role === 'accountant') {
+    throw new Error('Accountants do not have permission to update invoices');
+  }
+
+  // Fetch current invoice
+  const invoice = await getInvoiceById(invoiceId);
+  if (!invoice) {
+    throw new Error('Invoice not found');
+  }
+
+  // Cannot edit issued invoices
+  if (invoice.status === 'issued' && updates.status !== 'cancelled') {
+    throw new Error('Issued invoices cannot be modified');
+  }
+
+  // Cannot issue cancelled invoices
+  if (invoice.status === 'cancelled' && updates.status === 'issued') {
+    throw new Error('Cancelled invoices cannot be issued');
+  }
+
+  // Update invoice
+  const { error } = await supabase
+    .from('invoices')
+    .update(updates)
+    .eq('id', invoiceId)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const updatedInvoice = await getInvoiceById(invoiceId);
+  if (!updatedInvoice) {
+    throw new Error('Failed to fetch updated invoice');
+  }
+
+  return updatedInvoice;
+}
+
+/**
+ * Issue invoice (change status to issued)
+ */
+export async function issueInvoice(userId: string, invoiceId: string): Promise<void> {
+  await updateInvoiceStatus(userId, invoiceId, { status: 'issued' });
+}
+
+/**
+ * Cancel invoice
+ */
+export async function cancelInvoice(userId: string, invoiceId: string): Promise<void> {
+  await updateInvoiceStatus(userId, invoiceId, { status: 'cancelled' });
+}
+
+/**
+ * Delete draft invoice (only drafts can be deleted)
+ */
+export async function deleteInvoice(userId: string, invoiceId: string): Promise<void> {
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
+
+  if (profile.role === 'accountant') {
+    throw new Error('Accountants do not have permission to delete invoices');
+  }
+
+  const invoice = await getInvoiceById(invoiceId);
+  if (!invoice) {
+    throw new Error('Invoice not found');
+  }
+
+  if (invoice.status !== 'draft') {
+    throw new Error('Only draft invoices can be deleted');
+  }
+
+  const { error } = await supabase
+    .from('invoices')
+    .delete()
+    .eq('id', invoiceId);
+
+  if (error) {
+    throw new Error(error.message);
   }
 }

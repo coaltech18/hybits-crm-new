@@ -4,11 +4,7 @@
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true,
-    "allowJs": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "outDir": "./dist-node"
+    "allowSyntheticDefaultImports": true
   },
-  "include": ["vite.config.mjs"]
+  "include": ["vite.config.ts"]
 }

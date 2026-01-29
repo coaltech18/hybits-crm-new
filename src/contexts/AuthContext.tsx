@@ -1,171 +1,198 @@
-// ============================================================================
-// AUTH CONTEXT PROVIDER
-// ============================================================================
-
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { AuthContextType, User, RegisterData, Outlet } from '@/types';
-import { AuthService } from '@/services/AuthService';
-import OutletService from '@/services/outletService';
+import { useNavigate } from 'react-router-dom';
+import type { AuthState, UserProfile, Outlet } from '@/types';
+import * as authService from '@/services/authService';
+import { supabase } from '@/lib/supabase';
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+// ================================================================
+// AUTH CONTEXT
+// ================================================================
+// Manages authentication state and provides role-based access control
+// ================================================================
 
-interface AuthProviderProps {
-  children: React.ReactNode;
+interface AuthContextValue extends AuthState {
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+  setSelectedOutlet: (outletId: string | null) => void;
+  refreshProfile: () => Promise<void>;
 }
 
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [currentOutlet, setCurrentOutlet] = useState<Outlet | null>(null);
-  const [availableOutlets, setAvailableOutlets] = useState<Outlet[]>([]);
-  const [loading, setLoading] = useState(true);
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
+  const [state, setState] = useState<AuthState>({
+    user: null,
+    profile: null,
+    outlets: [],
+    selectedOutlet: null,
+    isLoading: true,
+    isAuthenticated: false,
+    isAdmin: false,
+    isManager: false,
+    isAccountant: false,
+  });
+
+  // Initialize auth state on mount
   useEffect(() => {
-    // Check for existing session on mount
-    checkSession();
-  }, []);
+    checkAuth();
 
-  const checkSession = async () => {
-    try {
-      setLoading(true);
-      const currentUser = await AuthService.getCurrentUser();
-      setUser(currentUser);
-      
-      if (currentUser) {
-        // Load available outlets for the user
-        const outlets = await OutletService.getAllOutlets();
-        setAvailableOutlets(outlets);
-        
-        // Set current outlet
-        if (currentUser.outlet_id) {
-          const outlet = outlets.find((o: any) => o.id === currentUser.outlet_id);
-          setCurrentOutlet(outlet || null);
-        } else if (outlets.length > 0) {
-          // Admin can choose any outlet, default to first one
-          setCurrentOutlet(outlets[0] || null);
+    // Listen for auth changes
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          await loadUserProfile();
+        } else if (event === 'SIGNED_OUT') {
+          setState({
+            user: null,
+            profile: null,
+            outlets: [],
+            selectedOutlet: null,
+            isLoading: false,
+            isAuthenticated: false,
+            isAdmin: false,
+            isManager: false,
+            isAccountant: false,
+          });
         }
       }
-    } catch (error) {
-      console.error('Session check failed:', error);
-      setUser(null);
-      setCurrentOutlet(null);
-      setAvailableOutlets([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+    );
 
-  const login = async (email: string, password: string): Promise<void> => {
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
+  }, []);
+
+  /**
+   * Check if user is already authenticated
+   */
+  async function checkAuth() {
     try {
-      setLoading(true);
-      const { user: loggedInUser } = await AuthService.login(email, password);
-      setUser(loggedInUser);
-      
-      // Load available outlets for the user
-      const outlets = await OutletService.getAllOutlets();
-      setAvailableOutlets(outlets);
-      
-      // Set current outlet
-      if (loggedInUser.outlet_id) {
-        const outlet = outlets.find((o: any) => o.id === loggedInUser.outlet_id);
-        setCurrentOutlet(outlet || null);
-      } else if (outlets.length > 0) {
-        // Admin can choose any outlet, default to first one
-        setCurrentOutlet(outlets[0] || null);
+      const response = await authService.getCurrentUserProfile();
+
+      if (response) {
+        updateAuthState(response.profile, response.outlets, response.selectedOutlet);
+      } else {
+        setState(prev => ({ ...prev, isLoading: false }));
       }
     } catch (error) {
-      console.error('Login failed:', error);
-      throw error;
-    } finally {
-      setLoading(false);
+      console.error('Auth check error:', error);
+      setState(prev => ({ ...prev, isLoading: false }));
     }
-  };
+  }
 
-  const logout = async (): Promise<void> => {
+  /**
+   * Load user profile after authentication
+   */
+  async function loadUserProfile() {
     try {
-      setLoading(true);
-      await AuthService.logout();
-      setUser(null);
-      setCurrentOutlet(null);
-      setAvailableOutlets([]);
-    } catch (error) {
-      console.error('Logout failed:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
+      const response = await authService.getCurrentUserProfile();
 
-  const register = async (userData: RegisterData): Promise<void> => {
-    try {
-      setLoading(true);
-      const { user: newUser } = await AuthService.register(userData);
-      setUser(newUser);
-    } catch (error) {
-      console.error('Registration failed:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateProfile = async (updates: Partial<User>): Promise<void> => {
-    try {
-      if (!user) throw new Error('No user logged in');
-      
-      setLoading(true);
-      const updatedUser = await AuthService.updateProfile(user.id, updates);
-      setUser(updatedUser);
-    } catch (error) {
-      console.error('Profile update failed:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const switchOutlet = async (outletId: string): Promise<void> => {
-    try {
-      if (!user) throw new Error('No user logged in');
-      
-      // Check if user can access this outlet
-      const outlet = availableOutlets.find(o => o.id === outletId);
-      if (!outlet) {
-        throw new Error('Outlet not accessible');
+      if (response) {
+        updateAuthState(response.profile, response.outlets, response.selectedOutlet);
       }
-      
-      setCurrentOutlet(outlet);
-      
-      // Store current outlet in localStorage for persistence
-      localStorage.setItem('current-outlet', outletId);
     } catch (error) {
-      console.error('Outlet switch failed:', error);
+      console.error('Error loading user profile:', error);
+    }
+  }
+
+  /**
+   * Update auth state with profile data
+   */
+  function updateAuthState(
+    profile: UserProfile,
+    outlets: Outlet[],
+    selectedOutlet: string | null
+  ) {
+    setState({
+      user: {
+        id: profile.id,
+        email: profile.email,
+        full_name: profile.full_name,
+        role: profile.role,
+        is_active: profile.is_active,
+      },
+      profile,
+      outlets,
+      selectedOutlet,
+      isLoading: false,
+      isAuthenticated: true,
+      isAdmin: profile.role === 'admin',
+      isManager: profile.role === 'manager',
+      isAccountant: profile.role === 'accountant',
+    });
+  }
+
+  /**
+   * Login user
+   */
+  async function login(email: string, password: string) {
+    try {
+      const response = await authService.login({ email, password });
+      updateAuthState(response.profile, response.outlets, response.selectedOutlet);
+
+      // Redirect based on role - all go to dashboard for now
+      navigate('/dashboard');
+    } catch (error) {
       throw error;
     }
-  };
+  }
 
-  const value: AuthContextType = {
-    user,
-    currentOutlet,
-    availableOutlets,
-    loading,
+  /**
+   * Logout user
+   */
+  async function logout() {
+    try {
+      await authService.logout();
+      setState({
+        user: null,
+        profile: null,
+        outlets: [],
+        selectedOutlet: null,
+        isLoading: false,
+        isAuthenticated: false,
+        isAdmin: false,
+        isManager: false,
+        isAccountant: false,
+      });
+      navigate('/login');
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Set selected outlet (for managers with multiple outlets)
+   */
+  function setSelectedOutlet(outletId: string | null) {
+    setState(prev => ({ ...prev, selectedOutlet: outletId }));
+  }
+
+  /**
+   * Refresh user profile (useful after updates)
+   */
+  async function refreshProfile() {
+    await loadUserProfile();
+  }
+
+  const value: AuthContextValue = {
+    ...state,
     login,
     logout,
-    register,
-    updateProfile,
-    switchOutlet,
+    setSelectedOutlet,
+    refreshProfile,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
 
-export const useAuth = (): AuthContextType => {
+/**
+ * Hook to use auth context
+ */
+export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
-};
+}

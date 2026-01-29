@@ -1,233 +1,343 @@
-// ============================================================================
-// INVENTORY SERVICE
-// ============================================================================
-
 import { supabase } from '@/lib/supabase';
-import { InventoryItem, InventoryItemFormData } from '@/types';
-import { CodeGeneratorService } from './codeGeneratorService';
+import type {
+  InventoryItem,
+  CreateInventoryItemInput,
+  UpdateInventoryItemInput,
+  InventoryFilters,
+} from '@/types';
+import { createStockIn } from './inventoryMovementService';
 
-class InventoryService {
-  /**
-   * Get all inventory items
-   */
-  async getInventoryItems(): Promise<InventoryItem[]> {
-    try {
-      console.log('Fetching inventory items from database...');
-      const { data, error } = await supabase
-        .from('inventory_items')
-        .select('*')
-        .order('created_at', { ascending: false });
+// ================================================================
+// INVENTORY SERVICE (ITEM MASTER)
+// ================================================================
+// RESPONSIBILITY: CRUD for inventory_items
+// NO stock changes here - stock always changes via movements only
+// ================================================================
 
-      if (error) {
-        console.error('Error fetching inventory items:', error);
-        throw new Error(error.message);
-      }
+/**
+ * Get user role and assigned outlets (for managers)
+ */
+async function getUserRoleAndOutlets(userId: string): Promise<{
+  role: string;
+  outletIds: string[] | null;
+}> {
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
 
-      console.log('Raw data from database:', data);
-      console.log('Number of items found:', data?.length || 0);
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
 
-      // Map database fields to interface fields
-      const mappedItems = (data || []).map((item: any) => ({
-        ...item,
-        code: item.item_code,
-        unit_price: item.rental_price_per_day || item.unit_cost || 0,
-        location_id: item.location || 'main-warehouse',
-        condition: item.condition || 'good',
-        last_movement: item.updated_at
-      }));
+  // Managers: Get assigned outlets
+  if (profile.role === 'manager') {
+    const { data: assignments } = await supabase
+      .from('user_outlet_assignments')
+      .select('outlet_id')
+      .eq('user_id', userId);
 
-      console.log('Mapped items:', mappedItems);
-      return mappedItems;
-    } catch (error: any) {
-      console.error('Error in getInventoryItems:', error);
-      throw new Error(error.message || 'Failed to fetch inventory items');
+    const outletIds = assignments?.map(a => a.outlet_id) || [];
+    return { role: profile.role, outletIds };
+  }
+
+  // Admin/Accountant: All outlets
+  return { role: profile.role, outletIds: null };
+}
+
+/**
+ * Get inventory items with filters
+ * 
+ * @param userId - Current user ID
+ * @param filters - Optional filters (outlet_id, category, is_active)
+ * @returns List of inventory items (RLS applies outlet filtering)
+ */
+export async function getInventoryItems(
+  userId: string,
+  filters: InventoryFilters = {}
+): Promise<InventoryItem[]> {
+  await getUserRoleAndOutlets(userId);
+
+  // Accountants are read-only - allowed
+  // Managers and Admins can view their items
+  let query = supabase
+    .from('inventory_items')
+    .select(`
+      *,
+      outlets:outlet_id (
+        name,
+        code
+      )
+    `)
+    .order('name');
+
+  // Apply filters
+  if (filters.outlet_id) {
+    query = query.eq('outlet_id', filters.outlet_id);
+  }
+
+  if (filters.category) {
+    query = query.eq('category', filters.category);
+  }
+
+  if (filters.is_active !== undefined) {
+    query = query.eq('is_active', filters.is_active);
+  } else {
+    // Default: only active items
+    query = query.eq('is_active', true);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  // Transform joined data
+  return (data || []).map((item: any) => ({
+    ...item,
+    outlet_name: item.outlets?.name,
+    outlet_code: item.outlets?.code,
+  }));
+}
+
+/**
+ * Get single inventory item by ID
+ * 
+ * @param userId - Current user ID
+ * @param itemId - Inventory item ID
+ * @returns Single inventory item (RLS applies)
+ */
+export async function getInventoryItemById(
+  _userId: string,
+  itemId: string
+): Promise<InventoryItem> {
+  const { data, error } = await supabase
+    .from('inventory_items')
+    .select(`
+      *,
+      outlets:outlet_id (
+        name,
+        code
+      )
+    `)
+    .eq('id', itemId)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    throw new Error('Inventory item not found');
+  }
+
+  return {
+    ...data,
+    outlet_name: data.outlets?.name,
+    outlet_code: data.outlets?.code,
+  };
+}
+
+/**
+ * Create new inventory item
+ * 
+ * CRITICAL: Initial stock creates a stock_in movement via inventoryMovementService
+ * NEVER updates quantity directly
+ * 
+ * @param userId - Current user ID
+ * @param input - Item details + initial_stock
+ * @returns Created inventory item
+ */
+export async function createInventoryItem(
+  userId: string,
+  input: CreateInventoryItemInput
+): Promise<InventoryItem> {
+  const roleData = await getUserRoleAndOutlets(userId);
+
+  // Accountants are read-only
+  if (roleData.role === 'accountant') {
+    throw new Error('Accountants cannot create inventory items');
+  }
+
+  // Managers: Validate outlet assignment
+  if (roleData.role === 'manager') {
+    if (!roleData.outletIds || !roleData.outletIds.includes(input.outlet_id)) {
+      throw new Error('You can only create items for your assigned outlets');
     }
   }
 
-  /**
-   * Get inventory item by ID
-   */
-  async getInventoryItem(id: string): Promise<InventoryItem | null> {
-    try {
-      const { data, error } = await supabase
-        .from('inventory_items')
-        .select('*')
-        .eq('id', id)
-        .single();
+  // Validate initial stock
+  if (input.initial_stock < 0) {
+    throw new Error('Initial stock cannot be negative');
+  }
 
-      if (error) {
-        console.error('Error fetching inventory item:', error);
-        throw new Error(error.message);
-      }
+  // Create item with zero quantities (quantities will be set by movement trigger)
+  const { data: item, error: itemError } = await supabase
+    .from('inventory_items')
+    .insert({
+      outlet_id: input.outlet_id,
+      name: input.name,
+      category: input.category,
+      material: input.material || null,
+      unit: input.unit || 'pcs',
+      // All quantities start at 0 - will be updated by stock_in movement
+      total_quantity: 0,
+      available_quantity: 0,
+      allocated_quantity: 0,
+      damaged_quantity: 0,
+      lost_quantity: 0,
+      created_by: userId,
+    })
+    .select()
+    .single();
 
-      if (!data) return null;
+  if (itemError) {
+    throw new Error(itemError.message);
+  }
 
-      // Map database fields to interface fields
-      return {
-        ...data,
-        code: data.item_code,
-        unit_price: data.rental_price_per_day || data.unit_cost || 0,
-        location_id: data.location || 'main-warehouse',
-        condition: data.condition || 'good',
-        last_movement: data.updated_at
-      };
-    } catch (error: any) {
-      console.error('Error in getInventoryItem:', error);
-      throw new Error(error.message || 'Failed to fetch inventory item');
+  // If initial stock > 0, create stock_in movement
+  // This will trigger DB function to update quantities
+  if (input.initial_stock > 0) {
+    await createStockIn(userId, {
+      outlet_id: input.outlet_id,
+      inventory_item_id: item.id,
+      quantity: input.initial_stock,
+      notes: 'Initial stock',
+    });
+  }
+
+  // Fetch updated item (quantities now reflect movement)
+  return getInventoryItemById(userId, item.id);
+}
+
+/**
+ * Update inventory item details
+ * 
+ * CRITICAL: Does NOT update quantities
+ * Quantities can ONLY change via movements
+ * 
+ * @param userId - Current user ID
+ * @param itemId - Inventory item ID
+ * @param input - Updated item details (NO quantities)
+ * @returns Updated inventory item
+ */
+export async function updateInventoryItem(
+  userId: string,
+  itemId: string,
+  input: UpdateInventoryItemInput
+): Promise<InventoryItem> {
+  const roleData = await getUserRoleAndOutlets(userId);
+
+  // Accountants are read-only
+  if (roleData.role === 'accountant') {
+    throw new Error('Accountants cannot update inventory items');
+  }
+
+  // Fetch item to check outlet (RLS will enforce, but explicit check for better error)
+  const existingItem = await getInventoryItemById(userId, itemId);
+
+  // Managers: Validate outlet assignment
+  if (roleData.role === 'manager') {
+    if (!roleData.outletIds || !roleData.outletIds.includes(existingItem.outlet_id)) {
+      throw new Error('You can only update items for your assigned outlets');
     }
   }
 
-  /**
-   * Create new inventory item
-   */
-  async createInventoryItem(itemData: InventoryItemFormData): Promise<InventoryItem> {
-    try {
-      console.log('Creating inventory item with data:', itemData);
-      
-      // Generate item code automatically
-      const itemCode = await CodeGeneratorService.generateCode('inventory_item');
-      console.log('Generated item code:', itemCode);
+  // Update item (quantities NOT included)
+  const { error } = await supabase
+    .from('inventory_items')
+    .update({
+      name: input.name,
+      category: input.category,
+      material: input.material,
+      unit: input.unit,
+    })
+    .eq('id', itemId)
+    .select()
+    .single();
 
-      // Only insert fields that exist in the database schema
-      const insertData: any = {
-        item_code: itemCode,
-        name: itemData.name,
-        description: itemData.description,
-        category: itemData.category,
-        location: itemData.location_id, // Map location_id to location
-        condition: itemData.condition,
-        total_quantity: itemData.total_quantity,
-        available_quantity: itemData.available_quantity || itemData.total_quantity,
-        reserved_quantity: 0,
-        reorder_point: itemData.reorder_point,
-        rental_price_per_day: itemData.unit_price,
-        unit_cost: itemData.unit_price,
-      };
+  if (error) {
+    throw new Error(error.message);
+  }
 
-      // Add image fields if they exist in the database (from our migration)
-      if (itemData.image_url) {
-        insertData.image_url = itemData.image_url;
-      }
-      if (itemData.thumbnail_url) {
-        insertData.thumbnail_url = itemData.thumbnail_url;
-      }
-      if (itemData.image_alt_text) {
-        insertData.image_alt_text = itemData.image_alt_text;
-      }
+  return getInventoryItemById(userId, itemId);
+}
 
-      console.log('Insert data prepared:', insertData);
+/**
+ * Deactivate (soft delete) inventory item
+ * 
+ * CRITICAL: DB trigger will PREVENT deactivation if movements exist
+ * DO NOT catch and override this error - it's a safety feature
+ * 
+ * @param userId - Current user ID
+ * @param itemId - Inventory item ID
+ */
+export async function deactivateInventoryItem(
+  userId: string,
+  itemId: string
+): Promise<void> {
+  const roleData = await getUserRoleAndOutlets(userId);
 
-      const { data, error } = await supabase
-        .from('inventory_items')
-        .insert(insertData)
-        .select()
-        .single();
+  // Accountants are read-only
+  if (roleData.role === 'accountant') {
+    throw new Error('Accountants cannot deactivate inventory items');
+  }
 
-      if (error) {
-        console.error('Error creating inventory item:', error);
-        throw new Error(error.message);
-      }
+  // Fetch item to check outlet
+  const existingItem = await getInventoryItemById(userId, itemId);
 
-      console.log('Item created successfully:', data);
-
-      // Map the response to match our interface
-      const mappedItem = {
-        ...data,
-        code: data.item_code,
-        unit_price: data.rental_price_per_day || data.unit_cost || 0,
-        location_id: data.location || 'main-warehouse',
-        condition: data.condition || 'good',
-        last_movement: data.updated_at
-      };
-
-      console.log('Mapped item for return:', mappedItem);
-      return mappedItem;
-    } catch (error: any) {
-      console.error('Error in createInventoryItem:', error);
-      throw new Error(error.message || 'Failed to create inventory item');
+  // Managers: Validate outlet assignment
+  if (roleData.role === 'manager') {
+    if (!roleData.outletIds || !roleData.outletIds.includes(existingItem.outlet_id)) {
+      throw new Error('You can only deactivate items for your assigned outlets');
     }
   }
 
-  /**
-   * Update inventory item
-   */
-  async updateInventoryItem(id: string, itemData: Partial<InventoryItemFormData>): Promise<InventoryItem> {
-    try {
-      const { data, error } = await supabase
-        .from('inventory_items')
-        .update({
-          ...itemData,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id)
-        .select()
-        .single();
+  // Attempt deactivation
+  // DB trigger will FAIL if movements exist - this is intentional
+  const { error } = await supabase
+    .from('inventory_items')
+    .update({ is_active: false })
+    .eq('id', itemId);
 
-      if (error) {
-        console.error('Error updating inventory item:', error);
-        throw new Error(error.message);
-      }
-
-      return data;
-    } catch (error: any) {
-      console.error('Error in updateInventoryItem:', error);
-      throw new Error(error.message || 'Failed to update inventory item');
-    }
-  }
-
-  /**
-   * Delete inventory item
-   */
-  async deleteInventoryItem(id: string): Promise<void> {
-    try {
-      const { error } = await supabase
-        .from('inventory_items')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        console.error('Error deleting inventory item:', error);
-        throw new Error(error.message);
-      }
-    } catch (error: any) {
-      console.error('Error in deleteInventoryItem:', error);
-      throw new Error(error.message || 'Failed to delete inventory item');
-    }
-  }
-
-
-  /**
-   * Update stock quantities
-   */
-  async updateStock(itemId: string, quantity: number, type: 'add' | 'remove' | 'set'): Promise<void> {
-    try {
-      const item = await this.getInventoryItem(itemId);
-      if (!item) {
-        throw new Error('Item not found');
-      }
-
-      let newQuantity = item.total_quantity;
-      switch (type) {
-        case 'add':
-          newQuantity += quantity;
-          break;
-        case 'remove':
-          newQuantity = Math.max(0, newQuantity - quantity);
-          break;
-        case 'set':
-          newQuantity = quantity;
-          break;
-      }
-
-      await this.updateInventoryItem(itemId, {
-        total_quantity: newQuantity,
-        available_quantity: newQuantity - item.reserved_quantity,
-      });
-    } catch (error: any) {
-      console.error('Error in updateStock:', error);
-      throw new Error(error.message || 'Failed to update stock');
-    }
+  if (error) {
+    // Surface DB error directly (e.g., "Cannot deactivate item with movement history")
+    throw new Error(error.message);
   }
 }
 
-export default new InventoryService();
+/**
+ * Get available categories (for dropdowns)
+ * 
+ * @param userId - Current user ID
+ * @returns List of unique categories
+ */
+export async function getInventoryCategories(userId: string): Promise<string[]> {
+  const roleData = await getUserRoleAndOutlets(userId);
+
+  let query = supabase
+    .from('inventory_items')
+    .select('category')
+    .eq('is_active', true);
+
+  // Managers: Filter by assigned outlets
+  if (roleData.role === 'manager' && roleData.outletIds) {
+    if (roleData.outletIds.length > 0) {
+      query = query.in('outlet_id', roleData.outletIds);
+    } else {
+      return [];
+    }
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  // Extract unique categories
+  const categories = [...new Set(data?.map(item => item.category) || [])];
+  return categories.sort();
+}

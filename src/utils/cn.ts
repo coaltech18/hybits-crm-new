@@ -1,14 +1,8 @@
-// ============================================================================
-// CLASS NAME UTILITY FUNCTION
-// ============================================================================
-
-import { type ClassValue, clsx } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { clsx, type ClassValue } from 'clsx';
 
 /**
- * Combines class names using clsx and tailwind-merge
- * This utility ensures proper Tailwind CSS class merging and deduplication
+ * Utility to merge Tailwind CSS classes
  */
-export function cn(...inputs: ClassValue[]): string {
-  return twMerge(clsx(inputs));
+export function cn(...inputs: ClassValue[]) {
+  return clsx(inputs);
 }

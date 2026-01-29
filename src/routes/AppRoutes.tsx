@@ -1,218 +1,331 @@
-// ============================================================================
-// APPLICATION ROUTES
-// ============================================================================
-
-import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
-import { hasPermission } from '@/utils/permissions';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { AuthLayout } from '@/components/layouts/AuthLayout';
+import { MainLayout } from '@/components/layouts/MainLayout';
 
-// Layout Components
-import MainLayout from '@/components/layouts/MainLayout';
-import AuthLayout from '@/components/layouts/AuthLayout';
+// Auth Pages
+import { LoginPage } from '@/pages/auth/LoginPage';
 
-// Page Components
-import LoginPage from '@/pages/auth/LoginPage';
-import DashboardPage from '@/pages/dashboard/DashboardPage';
-import InventoryPage from '@/pages/inventory/InventoryPage';
-import NewItemPage from '@/pages/inventory/NewItemPage';
-import CustomersPage from '@/pages/customers/CustomersPage';
-import NewCustomerPage from '@/pages/customers/NewCustomerPage';
-import OrdersPage from '@/pages/orders/OrdersPage';
-import NewOrderPage from '@/pages/orders/NewOrderPage';
-import BillingPage from '@/pages/billing/BillingPage';
-import NewInvoicePage from '@/pages/billing/NewInvoicePage';
-import InvoicesPage from '@/pages/billing/InvoicesPage';
-import SubscriptionsPage from '@/pages/SubscriptionsPage';
-import AccountingPage from '@/pages/AccountingPage';
-import SubscriptionEntryPage from '@/pages/subscriptions/SubscriptionEntryPage';
-import VendorsPage from '@/pages/vendors/VendorsPage';
-import VendorFormPage from '@/pages/vendors/VendorFormPage';
-import VendorProfilePage from '@/pages/vendors/VendorProfilePage';
-import LocationsPage from '@/pages/locations/LocationsPage';
-import OutletsPage from '@/pages/outlets/OutletsPage';
-import AddOutletPage from '@/pages/outlets/AddOutletPage';
-import UsersPage from '@/pages/users/UsersPage';
-import AddUserPage from '@/pages/users/AddUserPage';
-import SettingsPage from '@/pages/settings/SettingsPage';
-import NotFoundPage from '@/pages/NotFoundPage';
-import GSTReportPage from '@/pages/reports/GSTReportPage';
+// Dashboard
+import { DashboardPage } from '@/pages/dashboard/DashboardPage';
 
-// Protected Route Component
-const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean }> = ({ 
-  children, 
-  requireAdmin = false 
-}) => {
-  const { user, loading } = useAuth();
+// Client Pages
+import { ClientsPage } from '@/pages/clients/ClientsPage';
+import { AddClientPage } from '@/pages/clients/AddClientPage';
+import { ClientDetailPage } from '@/pages/clients/ClientDetailPage';
+import { EditClientPage } from '@/pages/clients/EditClientPage';
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
-      </div>
-    );
-  }
+// Subscription Pages
+import SubscriptionsPage from '@/pages/subscriptions/SubscriptionsPage';
+import AddSubscriptionPage from '@/pages/subscriptions/AddSubscriptionPage';
+import EditSubscriptionPage from '@/pages/subscriptions/EditSubscriptionPage';
+import SubscriptionDetailPage from '@/pages/subscriptions/SubscriptionDetailPage';
 
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
+// Event Pages
+import EventsPage from '@/pages/events/EventsPage';
+import AddEventPage from '@/pages/events/AddEventPage';
+import EditEventPage from '@/pages/events/EditEventPage';
+import EventDetailPage from '@/pages/events/EventDetailPage';
 
-  if (requireAdmin && !hasPermission(user.role, 'settings', 'read')) {
-    return <Navigate to="/dashboard" replace />;
-  }
+// Invoice Pages
+import InvoicesPage from '@/pages/invoices/InvoicesPage';
+import CreateInvoicePage from '@/pages/invoices/CreateInvoicePage';
+import InvoiceDetailPage from '@/pages/invoices/InvoiceDetailPage';
 
-  return <>{children}</>;
-};
+// Payment Pages
+import PaymentsPage from '@/pages/payments/PaymentsPage';
 
-// Public Route Component (redirects to dashboard if already logged in)
-const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, loading } = useAuth();
+// Report Pages
+import ReportsPage from '@/pages/reports/ReportsPage';
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
-      </div>
-    );
-  }
+// Inventory Pages
+import InventoryItemsPage from '@/pages/inventory/InventoryItemsPage';
+import InventoryMovementsPage from '@/pages/inventory/InventoryMovementsPage';
+import InventoryAllocationPage from '@/pages/inventory/InventoryAllocationPage';
+import InventoryReportsPage from '@/pages/inventory/InventoryReportsPage';
 
-  if (user) {
-    return <Navigate to="/dashboard" replace />;
-  }
+// Admin Pages
+import UsersManagementPage from '@/pages/admin/UsersManagementPage';
+import OutletsManagementPage from '@/pages/admin/OutletsManagementPage';
+import AccessMatrixPage from '@/pages/admin/AccessMatrixPage';
+import ActivityLogsPage from '@/pages/admin/ActivityLogsPage';
+import SystemSettingsPage from '@/pages/admin/SystemSettingsPage';
 
-  return <>{children}</>;
-};
-
-const AppRoutes: React.FC = () => {
+export function AppRoutes() {
   return (
     <Routes>
-      {/* Public Routes */}
-      <Route
-        path="/login"
-        element={
-          <PublicRoute>
-            <AuthLayout>
-              <LoginPage />
-            </AuthLayout>
-          </PublicRoute>
-        }
-      />
+      {/* Auth Routes */}
+      <Route element={<AuthLayout />}>
+        <Route path="/login" element={<LoginPage />} />
+      </Route>
 
       {/* Protected Routes */}
       <Route
-        path="/"
         element={
           <ProtectedRoute>
             <MainLayout />
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="inventory" element={<InventoryPage />} />
-        <Route path="inventory/new" element={<NewItemPage />} />
-        <Route path="customers" element={<CustomersPage />} />
-        <Route path="customers/new" element={<NewCustomerPage />} />
-        <Route path="orders" element={<OrdersPage />} />
-        <Route path="orders/new" element={<NewOrderPage />} />
-        <Route path="billing" element={<BillingPage />} />
-        <Route path="billing/invoice/new" element={<NewInvoicePage />} />
-        <Route path="subscriptions" element={<SubscriptionsPage />} />
-        <Route path="subscriptions/new" element={<SubscriptionEntryPage />} />
-        <Route path="vendors" element={<VendorsPage />} />
-        <Route path="vendors/new" element={<VendorFormPage />} />
-        <Route path="vendors/:id/edit" element={<VendorFormPage />} />
-        <Route path="vendors/:id" element={<VendorProfilePage />} />
-        <Route path="accounting" element={<AccountingPage />} />
-        <Route path="accounting/invoices" element={<InvoicesPage />} />
-        <Route path="accounting/invoice/new" element={<NewInvoicePage />} />
-        <Route path="locations" element={<LocationsPage />} />
-        <Route path="outlets" element={<OutletsPage />} />
-        <Route path="outlets/new" element={<AddOutletPage />} />
-        <Route path="users" element={<UsersPage />} />
-        <Route path="users/new" element={<AddUserPage />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="reports/gst" element={<GSTReportPage />} />
-        
-        {/* Admin Routes */}
+        {/* Dashboard */}
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Clients */}
+        <Route
+          path="/clients"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <ClientsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clients/new"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <AddClientPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clients/:id"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <ClientDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clients/:id/edit"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <EditClientPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Subscriptions */}
+        <Route
+          path="/subscriptions"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <SubscriptionsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/subscriptions/add"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <AddSubscriptionPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/subscriptions/:id"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <SubscriptionDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/subscriptions/:id/edit"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <EditSubscriptionPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Events */}
+        <Route
+          path="/events"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <EventsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/events/add"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <AddEventPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/events/:id"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <EventDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/events/:id/edit"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <EditEventPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Invoices */}
+        <Route
+          path="/invoices"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InvoicesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/invoices/create"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <CreateInvoicePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/invoices/:id"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InvoiceDetailPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Payments */}
+        <Route
+          path="/payments"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <PaymentsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Reports */}
+        <Route
+          path="/reports"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <ReportsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Inventory */}
+        <Route
+          path="/inventory"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InventoryItemsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inventory/movements"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InventoryMovementsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inventory/allocate"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <InventoryAllocationPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inventory/reports"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InventoryReportsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Admin Routes - Phase 9 */}
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <UsersManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/outlets"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <OutletsManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/access-matrix"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'accountant']}>
+              <AccessMatrixPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/activity-logs"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <ActivityLogsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/settings"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <SystemSettingsPage />
+            </ProtectedRoute>
+          }
+        />
       </Route>
 
-      {/* Legacy Routes (for backward compatibility) */}
+      {/* Default Redirects */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route
-        path="/executive-dashboard"
+        path="/unauthorized"
         element={
-          <ProtectedRoute>
-            <MainLayout>
-              <DashboardPage />
-            </MainLayout>
-          </ProtectedRoute>
+          <div className="flex items-center justify-center min-h-screen bg-brand-bg">
+            <div className="text-center">
+              <h1 className="text-4xl font-bold text-brand-text">403</h1>
+              <p className="text-brand-text/70 mt-2">You don't have permission to access this page</p>
+            </div>
+          </div>
         }
       />
       <Route
-        path="/inventory-management-system"
+        path="*"
         element={
-          <ProtectedRoute>
-            <MainLayout>
-              <InventoryPage />
-            </MainLayout>
-          </ProtectedRoute>
+          <div className="flex items-center justify-center min-h-screen bg-brand-bg">
+            <div className="text-center">
+              <h1 className="text-4xl font-bold text-brand-text">404</h1>
+              <p className="text-brand-text/70 mt-2">Page not found</p>
+            </div>
+          </div>
         }
       />
-      <Route
-        path="/customer-relationship-management"
-        element={
-          <ProtectedRoute>
-            <MainLayout>
-              <CustomersPage />
-            </MainLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/rental-order-management"
-        element={
-          <ProtectedRoute>
-            <MainLayout>
-              <OrdersPage />
-            </MainLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/gst-compliant-billing-system"
-        element={
-          <ProtectedRoute>
-            <MainLayout>
-              <BillingPage />
-            </MainLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/location-management"
-        element={
-          <ProtectedRoute>
-            <MainLayout>
-              <LocationsPage />
-            </MainLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/user-management"
-        element={
-          <ProtectedRoute>
-            <MainLayout>
-              <UsersPage />
-            </MainLayout>
-          </ProtectedRoute>
-        }
-      />
-
-      {/* 404 Route */}
-      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
-};
-
-export default AppRoutes;
+}

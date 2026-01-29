@@ -1,260 +1,257 @@
-# Hybits CRM - Rental Management System
+# Hybits CRM - Billing & Subscription Management
 
-A comprehensive Customer Relationship Management (CRM) system built specifically for Hybits company's internal operations. This modern web application streamlines rental management, inventory tracking, customer relationships, and business analytics.
+Production-grade B2B billing & accounting system built with React, TypeScript, and Supabase.
 
-## 🏢 About Hybits CRM
+## ✅ Current Status
 
-Hybits CRM is a full-featured internal software solution designed to manage all aspects of Hybits' rental business operations. The system provides real-time insights, automated workflows, and comprehensive management tools for inventory, customers, orders, and financial operations.
+**Development Environment**: Running smoothly on `http://localhost:3000`
+- All dependencies installed and working
+- No compilation or runtime errors
+- Modern, responsive UI with Tailwind CSS
+- All core components and layouts functional
 
-## 🚀 Key Features
+## 🎯 Project Overview
 
-### 📊 Executive Dashboard
-- **Real-time KPI Monitoring**: Revenue tracking, active orders, customer satisfaction metrics
-- **Interactive Charts**: Revenue trends, inventory utilization, and performance analytics
-- **Quick Actions**: Fast access to critical business functions
-- **Activity Feed**: Live updates on system activities and important events
+Hybits is a multi-outlet billing system designed for B2B operations with two distinct billing flows:
 
-### 🏪 Inventory Management System
-- **Multi-location Inventory Tracking**: Manage inventory across multiple warehouses
-- **Real-time Stock Monitoring**: Live updates on stock levels and movements
-- **Category Management**: Organize items by categories and subcategories
-- **Stock Alerts**: Automated notifications for low stock and reorder points
-- **Bulk Operations**: Mass updates, imports, and exports
-- **Barcode Integration**: Support for barcode scanning and management
+1. **Corporate Subscriptions** - Recurring monthly billing for corporate clients
+2. **Event Billing** - One-time invoicing for weddings, functions, and events
 
-### 👥 Customer Relationship Management
-- **Customer Database**: Comprehensive customer profiles and history
-- **Segmentation Tools**: Organize customers by various criteria
-- **Communication Tracking**: Record and track all customer interactions
-- **Customer Analytics**: Insights into customer behavior and preferences
+## 🏗️ Architecture
 
-### 📋 Order Management
-- **Rental Order Processing**: Complete order lifecycle management
-- **Order Tracking**: Real-time status updates and delivery tracking
-- **Payment Management**: Integrated payment processing and tracking
-- **Order Analytics**: Performance metrics and trend analysis
+### Tech Stack
 
-### 💰 GST Compliant Billing System
-- **Automated GST Calculations**: Compliant with Indian tax regulations
-- **Invoice Generation**: Professional invoice creation and management
-- **Payment Tracking**: Monitor payments and outstanding amounts
-- **GST Return Tools**: Simplified GST filing and compliance
-- **Bulk Billing Operations**: Process multiple invoices efficiently
+- **Frontend**: React 18 + TypeScript + Tailwind CSS
+- **Backend**: Supabase (PostgreSQL + Row Level Security)
+- **Build Tool**: Vite
+- **Routing**: React Router v6
+- **Icons**: Lucide React
 
-### 👤 User Management
-- **Role-based Access Control**: Secure access based on user roles
-- **Multi-user Support**: Support for multiple concurrent users
-- **Permission Management**: Granular control over system access
-- **User Activity Tracking**: Monitor user actions and system usage
+### Phase-Based Development
 
-### 📍 Location Management
-- **Multi-location Support**: Manage multiple business locations
-- **Location-specific Inventory**: Track inventory by location
-- **Location Analytics**: Performance metrics by location
+The system is being built in phases to ensure stability and production-readiness:
 
-## 🛠️ Technology Stack
+#### ✅ Phase 1: Authentication, Roles & Outlets
+- User authentication with Supabase Auth
+- Role-based access control (Admin, Manager, Accountant)
+- Multi-outlet support with strict isolation
+- Database tables: `user_profiles`, `outlets`, `user_outlet_assignments`
 
-### Frontend
-- **React 18**: Modern React with concurrent features and improved performance
-- **TypeScript**: Type-safe JavaScript with enhanced developer experience
-- **Vite**: Lightning-fast build tool and development server
-- **Tailwind CSS**: Utility-first CSS framework with custom design system
-- **React Router v6**: Declarative routing for single-page application
-- **Recharts**: Powerful data visualization library for charts and graphs
-- **Lucide React**: Beautiful, customizable SVG icons
-- **Framer Motion**: Smooth animations and transitions
+#### ✅ Phase 2: Clients (CURRENT)
+- Client management with corporate/event separation
+- Outlet-based client isolation
+- Role-based CRUD operations
+- GSTIN validation for corporate clients
+- Database table: `clients`
 
-### Backend & Database
-- **Supabase**: Backend-as-a-Service with PostgreSQL database
-- **Real-time Subscriptions**: Live data updates across the application
-- **Row Level Security**: Secure data access and user permissions
-- **Authentication**: Built-in user authentication and session management
-
-### State Management
-- **React Context API**: Global state management for authentication and themes
-- **Local State**: Component-level state with React hooks
-- **Supabase Client**: Real-time data synchronization
-
-### Development Tools
-- **TypeScript**: Static type checking and enhanced IDE support
-- **ESLint**: Code linting and quality assurance with TypeScript support
-- **Prettier**: Code formatting and consistency
-- **Git**: Version control and collaboration
-
-## 📁 Project Structure
-
-```
-hybits-crm-new/
-├── public/                          # Static assets and images
-│   ├── assets/images/              # Application images
-│   ├── favicon.ico                 # Site favicon
-│   ├── manifest.json               # PWA manifest
-│   └── robots.txt                  # SEO robots file
-├── src/
-│   ├── components/                 # Reusable UI components
-│   │   ├── ui/                    # Base UI components
-│   │   │   ├── Button.jsx         # Custom button component
-│   │   │   ├── Input.jsx          # Form input component
-│   │   │   ├── Select.jsx         # Dropdown select component
-│   │   │   ├── Header.jsx         # Application header
-│   │   │   ├── Sidebar.jsx        # Navigation sidebar
-│   │   │   ├── Breadcrumb.jsx     # Navigation breadcrumbs
-│   │   │   └── ...
-│   │   ├── AppIcon.jsx            # Icon component wrapper
-│   │   ├── AppImage.jsx           # Image component wrapper
-│   │   ├── ErrorBoundary.jsx      # Error handling component
-│   │   ├── ProtectedRoute.jsx     # Route protection component
-│   │   └── ScrollToTop.jsx        # Scroll behavior component
-│   ├── contexts/                   # React Context providers
-│   │   ├── AuthContext.jsx        # Authentication context
-│   │   └── ThemeContext.jsx       # Theme management context
-│   ├── pages/                      # Page components
-│   │   ├── executive-dashboard/   # Executive dashboard module
-│   │   ├── inventory-management-system/ # Inventory management
-│   │   ├── customer-relationship-management/ # Customer management
-│   │   ├── rental-order-management/ # Order management
-│   │   ├── gst-compliant-billing-system/ # Billing system
-│   │   ├── user-management/       # User management
-│   │   ├── location-management/   # Location management
-│   │   └── authentication-role-selection/ # Authentication
-│   ├── services/                   # API and service layer
-│   │   ├── authService.js         # Authentication services
-│   │   ├── customerService.js     # Customer data services
-│   │   ├── inventoryService.js    # Inventory data services
-│   │   ├── locationService.js     # Location data services
-│   │   └── orderService.js        # Order data services
-│   ├── styles/                     # Global styles
-│   │   ├── index.css              # Global CSS styles
-│   │   └── tailwind.css           # Tailwind CSS configuration
-│   ├── utils/                      # Utility functions
-│   │   ├── cn.js                  # Class name utility
-│   │   └── importExport.js        # Import/export utilities
-│   ├── lib/                        # External library configurations
-│   │   └── supabase.js            # Supabase client configuration
-│   ├── App.jsx                     # Main application component
-│   ├── Routes.jsx                  # Application routing
-│   └── index.jsx                   # Application entry point
-├── supabase/                       # Database migrations
-│   └── migrations/                 # SQL migration files
-├── package.json                    # Project dependencies
-├── tailwind.config.js              # Tailwind CSS configuration
-├── vite.config.mjs                 # Vite build configuration
-└── README.md                       # Project documentation
-```
+#### 🔜 Phase 3: Subscriptions (Corporate Flow)
+#### 🔜 Phase 4: Events (Event Flow)
+#### 🔜 Phase 5: Invoices (Subscription + Event)
+#### 🔜 Phase 6: Payments & Accounting
+#### 🔜 Phase 7: Reports (Combined + Outlet-wise)
+#### 🔜 Phase 8: Inventory
+#### 🔜 Phase 9: Admin Utilities
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- **Node.js** (v16.x or higher)
-- **npm** or **yarn** package manager
-- **TypeScript** (v4.9.x or higher)
-- **Supabase Account** (for backend services)
+
+- Node.js 18+ and npm
+- Supabase account
+- Git
 
 ### Installation
 
-1. **Clone the repository:**
+1. **Clone the repository**
    ```bash
    git clone <repository-url>
    cd hybits-crm-new
    ```
 
-2. **Install dependencies:**
+2. **Install dependencies**
    ```bash
    npm install
-   # or
-   yarn install
    ```
 
-3. **Environment Setup:**
-   Create a `.env.local` file in the root directory:
-   ```env
-   VITE_SUPABASE_URL=your_supabase_url
+3. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   ```
+   
+   Edit `.env` and add your Supabase credentials:
+   ```
+   VITE_SUPABASE_URL=your_supabase_project_url
    VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
    ```
 
-4. **Database Setup:**
-   - Run the SQL migrations in the `supabase/migrations/` directory
-   - Set up Row Level Security policies
-   - Configure authentication settings
+4. **Run database migrations**
+   
+   Execute the SQL files in order in your Supabase SQL editor:
+   - `supabase/001_phase1_auth_roles_outlets.sql`
+   - `supabase/002_phase2_clients.sql`
 
-5. **Start the development server:**
-   ```bash
-   npm start
-   # or
-   yarn start
+5. **Create first admin user**
+   
+   a. Sign up via Supabase Auth dashboard or use SQL:
+   ```sql
+   -- This creates the auth.users entry
+   -- Do this via Supabase dashboard: Authentication → Users → Invite User
+   ```
+   
+   b. After user is created in auth.users, add to user_profiles:
+   ```sql
+   INSERT INTO user_profiles (id, email, full_name, role)
+   VALUES (
+     'auth-user-uuid-from-auth-users-table',
+     'admin@yourcompany.com',
+     'Admin User',
+     'admin'
+   );
    ```
 
-6. **Type checking (optional):**
-   ```bash
-   npm run type-check
-   # or
-   yarn type-check
+6. **Create sample outlets (optional)**
+   ```sql
+   INSERT INTO outlets (name, code, city, state, gstin)
+   VALUES 
+     ('Mumbai Office', 'HYB-MUM-01', 'Mumbai', 'Maharashtra', '27AABCU9603R1ZV'),
+     ('Delhi Office', 'HYB-DEL-01', 'New Delhi', 'Delhi', '07AABCU9603R1ZV');
    ```
 
-6. **Access the application:**
-   Open [http://localhost:4028](http://localhost:4028) in your browser
+7. **Start development server**
+   ```bash
+   npm run dev
+   ```
+   
+   Open [http://localhost:3000](http://localhost:3000)
 
-## 🎨 Design System
+## 👥 User Roles
 
-### Color Palette
-- **Primary**: Vibrant green (#1E40AF) for main actions and branding
-- **Secondary**: Soft gray (#220 14% 96%) for sections and backgrounds
-- **Success**: Green (#10B981) for positive actions and states
-- **Warning**: Amber (#F59E0B) for caution and attention
-- **Error**: Red (#EF4444) for errors and destructive actions
-- **Muted**: Gray tones for secondary text and elements
+### Admin
+- Full system access
+- Can see all outlets
+- Manage users, outlets, clients, subscriptions, events
+- Access to all reports
 
-### Typography
-- **Font Family**: Inter (primary), JetBrains Mono (code)
-- **Responsive Typography**: Fluid scaling across device sizes
-- **Font Weights**: 400 (regular), 500 (medium), 600 (semibold), 700 (bold)
+### Manager
+- Outlet-restricted access
+- Can only see/manage data for assigned outlets
+- Manage clients, subscriptions, events, inventory
+- Cannot access accounting or cross-outlet reports
 
-### Components
-- **Consistent Spacing**: 4px base unit with consistent spacing scale
-- **Border Radius**: Rounded corners with consistent radius values
-- **Shadows**: Subtle, pronounced, and luxury shadow variants
-- **Transitions**: Smooth 300ms transitions for interactive elements
+### Accountant
+- Read-only access to operational data
+- Can view all outlets
+- Full access to invoices, payments, accounting module
+- Can generate combined and outlet-wise reports
 
-## 🔐 Authentication & Security
+## 📊 Database Schema
 
-### User Roles
-- **Super Admin**: Full system access and configuration
-- **Admin**: Management access to all modules
-- **Manager**: Department-specific access and oversight
-- **Operator**: Day-to-day operational access
-- **Viewer**: Read-only access for reporting
+### Core Tables (Phase 1)
+- `user_profiles` - User authorization and business identity
+- `outlets` - Business locations/branches
+- `user_outlet_assignments` - Manager-to-outlet mapping
 
-### Security Features
-- **Row Level Security**: Database-level access control
-- **JWT Authentication**: Secure token-based authentication
-- **Session Management**: Automatic session handling and refresh
-- **Input Validation**: Client and server-side validation
-- **XSS Protection**: Sanitized inputs and outputs
+### Clients (Phase 2)
+- `clients` - Client database with corporate/event separation
 
-## 📊 Data Management
+### Future Tables (Phase 3+)
+- `subscriptions` - Corporate recurring billing
+- `subscription_items` - Line items for subscriptions
+- `events` - One-time event records
+- `event_items` - Line items for events
+- `invoices` - Unified invoice table
+- `payments` - Payment tracking
+- `inventory_items` - Product/service catalog
 
-### Real-time Features
-- **Live Updates**: Real-time data synchronization across users
-- **WebSocket Integration**: Instant notifications and updates
-- **Conflict Resolution**: Automatic handling of concurrent edits
-- **Offline Support**: Local caching with sync when reconnected
+## 🔐 Security
 
-### Data Export/Import
-- **CSV Export**: Export data in CSV format for external analysis
-- **Excel Integration**: Import/export Excel files
-- **Bulk Operations**: Mass data operations and updates
-- **Data Backup**: Automated backup and recovery systems
+### Row Level Security (RLS)
+All tables use PostgreSQL RLS policies to enforce:
+- Outlet isolation for managers
+- Read-only access for accountants
+- Full access for admins
 
-## 🚀 Deployment
+### Authentication
+- JWT-based authentication via Supabase Auth
+- Secure password hashing
+- Session management with automatic token refresh
 
-### Production Build
+### Audit Trail
+- `created_by` fields track user actions
+- `created_at` and `updated_at` timestamps on all records
+- Soft deletes via `is_active` flags (no hard deletes)
+
+## 📝 Development Guidelines
+
+### Code Structure
+```
+src/
+├── components/       # Reusable UI components
+│   ├── ui/          # Base components (Button, Input, etc.)
+│   └── layouts/     # Layout components (Sidebar, MainLayout)
+├── contexts/        # React contexts (AuthContext)
+├── lib/             # Third-party library configurations
+├── pages/           # Page components organized by feature
+├── routes/          # Route definitions and guards
+├── services/        # API service layer
+├── types/           # TypeScript type definitions
+└── utils/           # Utility functions
+```
+
+### Naming Conventions
+- Components: PascalCase (`ClientsPage.tsx`)
+- Files: camelCase for utilities, PascalCase for components
+- Functions: camelCase (`getClients`)
+- Types/Interfaces: PascalCase (`Client`, `UserProfile`)
+
+### Best Practices
+- Always use TypeScript strict mode
+- Implement proper error handling
+- Use React hooks effectively
+- Follow role-based access patterns
+- Never bypass RLS policies
+- Document complex business logic
+
+## 🧪 Testing
+
+```bash
+# Run type checking
+npm run build
+
+# Run linter
+npm run lint
+```
+
+## 📦 Build for Production
+
 ```bash
 npm run build
 ```
 
-## 🙏 Acknowledgments
+The build output will be in the `dist` directory.
 
-- Powered by React and Vite
-- Styled with Tailwind CSS
+## 🐛 Troubleshooting
 
-Built with ❤️ for Hybits
+### Common Issues
+
+**Issue**: Login fails with "User profile not found"
+- **Solution**: Ensure user exists in both `auth.users` and `user_profiles` tables
+
+**Issue**: Manager sees no clients
+- **Solution**: Verify manager is assigned to an outlet in `user_outlet_assignments` table
+
+**Issue**: RLS policy errors
+- **Solution**: Check that all migrations have been run in correct order
+
+## 📄 License
+
+Proprietary - All rights reserved
+
+## 👨‍💻 Development Team
+
+Built by CoAl Tech for Hybits
+
+---
+
+**Current Status**: Phase 2 Complete (Clients Module)
+**Next Phase**: Phase 3 - Subscriptions (Corporate Flow)

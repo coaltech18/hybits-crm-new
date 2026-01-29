@@ -1,30 +1,16 @@
-// ============================================================================
-// MAIN APP COMPONENT
-// ============================================================================
 
-import React from 'react';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from '@/contexts/AuthContext';
-import { ThemeProvider } from '@/contexts/ThemeContext';
-import AppRoutes from '@/routes/AppRoutes';
-import ErrorBoundary from '@/components/ErrorBoundary';
-import ScrollToTop from '@/components/ScrollToTop';
+import { AppRoutes } from '@/routes/AppRoutes';
 
-const App: React.FC = () => {
+function App() {
   return (
-    <ErrorBoundary>
-      <BrowserRouter>
-        <ScrollToTop />
-        <ThemeProvider>
-          <AuthProvider>
-            <div className="min-h-screen bg-background text-foreground">
-              <AppRoutes />
-            </div>
-          </AuthProvider>
-        </ThemeProvider>
-      </BrowserRouter>
-    </ErrorBoundary>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
+    </BrowserRouter>
   );
-};
+}
 
 export default App;

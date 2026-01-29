@@ -1,60 +1,15 @@
-// ============================================================================
-// AUTH LAYOUT COMPONENT
-// ============================================================================
+import { Outlet } from 'react-router-dom';
 
-import React from 'react';
-
-interface AuthLayoutProps {
-  children: React.ReactNode;
-}
-
-const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
+export function AuthLayout() {
   return (
-    <div className="min-h-screen bg-white">
-      <div className="flex min-h-screen">
-        {/* Left side - Branding */}
-        <div className="hidden lg:flex lg:w-1/2 bg-white text-gray-900 relative">
-          <div className="flex flex-col justify-center items-center w-full p-16 text-center">
-            <div className="max-w-sm">
-              {/* Logo */}
-              <div className="mb-8">
-                <div className="mb-8">
-                  <img 
-                    src="/assets/LOGO.png" 
-                    alt="Hybits Logo" 
-                    className="h-20 w-auto mx-auto object-contain"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
+    <div className="min-h-screen bg-brand-bg flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <img src="/logo.png" alt="Hybits" className="h-20 mx-auto mb-4" />
+          <p className="text-brand-text/70 mt-2">Production B2B Billing System</p>
         </div>
-
-        {/* Right side - Auth form */}
-        <div className="flex-1 flex items-center justify-center p-8 bg-[#1A8754]">
-          <div className="w-full max-w-md">
-            <div className="lg:hidden mb-8 text-center">
-              <div className="mb-6">
-                <img 
-                  src="/assets/LOGO.png" 
-                  alt="Hybits Logo" 
-                  className="h-16 w-auto mx-auto object-contain filter brightness-0 invert"
-                />
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-2xl shadow-lg p-8 sm:p-10">
-              {children}
-            </div>
-            
-            <div className="mt-6 text-center text-sm text-white/60">
-              <p>© 2024 Hybits Suite. All rights reserved.</p>
-            </div>
-          </div>
-        </div>
+        <Outlet />
       </div>
     </div>
   );
-};
-
-export default AuthLayout;
+}

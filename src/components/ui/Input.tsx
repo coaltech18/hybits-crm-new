@@ -1,93 +1,46 @@
-// ============================================================================
-// INPUT COMPONENT
-// ============================================================================
-
-import React, { forwardRef } from 'react';
+import React from 'react';
 import { cn } from '@/utils/cn';
-import { InputProps } from '@/types';
 
-const Input = forwardRef<HTMLInputElement, InputProps>(
-  (
-    {
-      type = 'text',
-      placeholder,
-      value,
-      onChange,
-      onBlur,
-      onFocus,
-      className,
-      disabled = false,
-      required = false,
-      error,
-      label,
-      multiline = false,
-      rows = 3,
-      readOnly = false,
-      min,
-      max,
-      step,
-      ...props
-    },
-    ref
-  ) => {
-    const baseClasses = 'flex w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-colors';
+interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  label?: string;
+  error?: string;
+  helperText?: string;
+}
 
-    const inputElement = multiline ? (
-      <textarea
-        ref={ref as React.Ref<HTMLTextAreaElement>}
-        placeholder={placeholder}
-        value={value}
-        onChange={onChange as any}
-        onBlur={onBlur as any}
-        onFocus={onFocus as any}
-        disabled={disabled}
-        required={required}
-        readOnly={readOnly}
-        rows={rows}
-        className={cn(
-          baseClasses,
-          'min-h-[80px] resize-none',
-          error && 'border-destructive focus-visible:ring-destructive',
-          className
-        )}
-        {...(props as React.TextareaHTMLAttributes<HTMLTextAreaElement>)}
-      />
-    ) : (
-      <input
-        ref={ref}
-        type={type}
-        placeholder={placeholder}
-        value={value}
-        onChange={onChange}
-        onBlur={onBlur}
-        onFocus={onFocus}
-        disabled={disabled}
-        required={required}
-        readOnly={readOnly}
-        min={min}
-        max={max}
-        step={step}
-        className={cn(
-          baseClasses,
-          'h-10',
-          error && 'border-destructive focus-visible:ring-destructive',
-          className
-        )}
-        {...props}
-      />
-    );
+export const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ label, error, helperText, className, id, ...props }, ref) => {
+    const inputId = id || `input-${Math.random().toString(36).substr(2, 9)}`;
 
     return (
       <div className="w-full">
         {label && (
-          <label className="block text-sm font-medium text-foreground mb-2">
+          <label
+            htmlFor={inputId}
+            className="block text-sm font-medium text-brand-text mb-1"
+          >
             {label}
-            {required && <span className="text-destructive ml-1">*</span>}
+            {props.required && <span className="text-red-500 ml-1">*</span>}
           </label>
         )}
-        {inputElement}
+        <input
+          ref={ref}
+          id={inputId}
+          className={cn(
+            'block w-full px-3 py-2 border rounded-lg shadow-sm',
+            'focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent',
+            'disabled:bg-brand-bg disabled:cursor-not-allowed',
+            error
+              ? 'border-red-300 text-red-900 placeholder-red-300 focus:ring-red-500'
+              : 'border-brand-border text-brand-text placeholder-brand-text/50',
+            className
+          )}
+          {...props}
+        />
         {error && (
-          <p className="mt-1 text-sm text-destructive">{error}</p>
+          <p className="mt-1 text-sm text-red-600">{error}</p>
+        )}
+        {helperText && !error && (
+          <p className="mt-1 text-sm text-brand-text/70">{helperText}</p>
         )}
       </div>
     );
@@ -95,5 +48,3 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
 );
 
 Input.displayName = 'Input';
-
-export default Input;

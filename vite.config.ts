@@ -9,6 +9,9 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    outDir: 'build', // Changed from default 'dist' to 'build' for Render.com
+  },
   server: {
     port: 3000,
   },

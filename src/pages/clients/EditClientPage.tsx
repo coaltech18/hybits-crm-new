@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getClientById, updateClient } from '@/services/clientService';
-import type { Client, UpdateClientInput, ClientType } from '@/types';
+import type { Client, UpdateClientInput, ClientType, ClientGstType } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { Card } from '@/components/ui/Card';
 import { Alert } from '@/components/ui/Alert';
 import { Spinner } from '@/components/ui/Spinner';
@@ -44,6 +45,7 @@ export function EditClientPage() {
           email: data.email || '',
           gstin: data.gstin || '',
           billing_address: data.billing_address || '',
+          gst_type: data.gst_type || null,
         });
       }
     } catch (err: any) {
@@ -243,6 +245,28 @@ export function EditClientPage() {
                 />
               </div>
             )}
+
+            {/* GST Type for Reports */}
+            <div className="md:col-span-2">
+              <Select
+                label="GST Type (for Reports)"
+                value={formData.gst_type || ''}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    gst_type: (e.target.value || null) as ClientGstType | null,
+                  })
+                }
+              >
+                <option value="">-- Select GST Type --</option>
+                <option value="domestic">Domestic</option>
+                <option value="sez">SEZ</option>
+                <option value="export">Export</option>
+              </Select>
+              <p className="text-xs text-brand-text/60 mt-1">
+                Used for GST Working Reports. Select based on client's GST classification.
+              </p>
+            </div>
 
             {/* Billing Address */}
             <div className="md:col-span-2">

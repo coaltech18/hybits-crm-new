@@ -70,6 +70,12 @@ const navItems: NavItem[] = [
     roles: ['admin', 'manager', 'accountant'],
   },
   {
+    to: '/reports/gst-working',
+    icon: FileText,
+    label: 'GST Working',
+    roles: ['admin', 'manager', 'accountant'],
+  },
+  {
     to: '/inventory',
     icon: Package,
     label: 'Inventory',

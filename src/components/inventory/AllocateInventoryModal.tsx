@@ -7,7 +7,6 @@ import { Alert } from '@/components/ui/Alert';
 import { Spinner } from '@/components/ui/Spinner';
 import { getInventoryItems } from '@/services/inventoryService';
 import { allocateInventory } from '@/services/inventoryMovementService';
-import { createAllocation } from '@/services/allocationService';
 import type { InventoryItem, ReferenceType } from '@/types';
 
 // ================================================================
@@ -110,7 +109,8 @@ export default function AllocateInventoryModal({
     try {
       setLoading(true);
 
-      // Step 1: Create allocation movement (DB trigger updates quantities)
+      // Create allocation movement (DB trigger updates quantities AND creates allocation record)
+      // NOTE: sync_allocation_on_movement trigger automatically creates/updates inventory_allocations
       await allocateInventory(userId, {
         outlet_id: outletId,
         inventory_item_id: selectedItemId,
@@ -120,15 +120,7 @@ export default function AllocateInventoryModal({
         notes: notes.trim() || undefined,
       });
 
-      // Step 2: Create allocation record (state tracking)
-      await createAllocation(
-        userId,
-        outletId,
-        selectedItemId,
-        referenceType,
-        referenceId,
-        qty
-      );
+      // No need to call createAllocation - DB trigger handles it
 
       onSuccess();
       onClose();

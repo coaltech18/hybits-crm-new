@@ -76,6 +76,12 @@ export default function ReturnDamageLossModal({
       return;
     }
 
+    // Client-side check (DB will also validate)
+    if (qty > outstandingQuantity) {
+      setError(`Quantity cannot exceed outstanding (${outstandingQuantity})`);
+      return;
+    }
+
     // Notes mandatory for damage/loss
     if ((actionType === 'damage' || actionType === 'loss') && !notes.trim()) {
       setError('Notes are required when marking damage or loss');

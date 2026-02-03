@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Building2, Plus, Edit, Power } from 'lucide-react';
+import { Building2, Plus, Edit, Power, Trash2, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getOutlets,
@@ -8,6 +8,8 @@ import {
   deactivateOutlet,
   activateOutlet,
   canDeactivateOutlet,
+  deleteOutlet,
+  canDeleteOutlet,
   type OutletSummary,
   type CreateOutletInput,
   type UpdateOutletInput,
@@ -25,15 +27,18 @@ export default function OutletsManagementPage() {
   const { user } = useAuth();
   const [outlets, setOutlets] = useState<OutletSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isToggleModalOpen, setIsToggleModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [selectedOutlet, setSelectedOutlet] = useState<OutletSummary | null>(null);
   const [toggleAction, setToggleAction] = useState<'activate' | 'deactivate'>('deactivate');
   const [deactivateWarning, setDeactivateWarning] = useState<string>('');
+  const [deleteWarning, setDeleteWarning] = useState<string>('');
 
   useEffect(() => {
     loadOutlets();
@@ -51,6 +56,20 @@ export default function OutletsManagementPage() {
       setError(err instanceof Error ? err.message : 'Failed to load outlets');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleRefresh() {
+    if (!user?.id) return;
+    try {
+      setRefreshing(true);
+      setError(null);
+      const data = await getOutlets(user.id);
+      setOutlets(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh outlets');
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -100,6 +119,20 @@ export default function OutletsManagementPage() {
     setDeactivateWarning('');
   }
 
+  async function handleDeleteOutlet() {
+    if (!user?.id || !selectedOutlet) return;
+
+    try {
+      await deleteOutlet(user.id, selectedOutlet.outlet_id);
+      await loadOutlets();
+      setIsDeleteModalOpen(false);
+      setSelectedOutlet(null);
+      setDeleteWarning('');
+    } catch (err) {
+      setDeleteWarning(err instanceof Error ? err.message : 'Failed to delete outlet');
+    }
+  }
+
   async function openToggleModal(outlet: OutletSummary, action: 'activate' | 'deactivate') {
     setSelectedOutlet(outlet);
     setToggleAction(action);
@@ -121,6 +154,25 @@ export default function OutletsManagementPage() {
     }
 
     setIsToggleModalOpen(true);
+  }
+
+  async function openDeleteModal(outlet: OutletSummary) {
+    setSelectedOutlet(outlet);
+    setDeleteWarning('');
+
+    // Check if outlet can be deleted
+    if (user?.id) {
+      try {
+        const validation = await canDeleteOutlet(user.id, outlet.outlet_id);
+        if (!validation.canDelete) {
+          setDeleteWarning(validation.reason || 'Cannot delete outlet');
+        }
+      } catch (err) {
+        setDeleteWarning(err instanceof Error ? err.message : 'Failed to validate');
+      }
+    }
+
+    setIsDeleteModalOpen(true);
   }
 
   const totalUsers = outlets.reduce((sum, o) => sum + o.user_count, 0);
@@ -152,13 +204,24 @@ export default function OutletsManagementPage() {
             Manage outlets and operational metrics
           </p>
         </div>
-        <button
-          onClick={() => setIsAddModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark"
-        >
-          <Plus className="w-5 h-5" />
-          Add Outlet
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-4 py-2 border border-brand-border text-brand-text rounded-md hover:bg-brand-bg disabled:opacity-50"
+            title="Refresh from database"
+          >
+            <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark"
+          >
+            <Plus className="w-5 h-5" />
+            Add Outlet
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -268,6 +331,13 @@ export default function OutletsManagementPage() {
                           <Power className="w-4 h-4" />
                         </button>
                       )}
+                      <button
+                        onClick={() => openDeleteModal(outlet)}
+                        className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
+                        title="Delete Outlet"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -316,6 +386,25 @@ export default function OutletsManagementPage() {
         }
         confirmText={toggleAction === 'activate' ? 'Activate' : 'Deactivate'}
         variant={deactivateWarning ? 'warning' : toggleAction === 'activate' ? 'info' : 'danger'}
+      />
+
+      {/* Delete Confirmation */}
+      <ConfirmationModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setSelectedOutlet(null);
+          setDeleteWarning('');
+        }}
+        onConfirm={handleDeleteOutlet}
+        title="Delete Outlet Permanently"
+        message={
+          deleteWarning
+            ? `${deleteWarning}\n\nPlease remove all linked data before deleting.`
+            : `Are you sure you want to permanently delete ${selectedOutlet?.outlet_name}?\n\nThis action cannot be undone.`
+        }
+        confirmText="Delete"
+        variant={deleteWarning ? 'warning' : 'danger'}
       />
     </div>
   );

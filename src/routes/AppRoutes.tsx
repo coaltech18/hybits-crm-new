@@ -37,6 +37,7 @@ import PaymentsPage from '@/pages/payments/PaymentsPage';
 
 // Report Pages
 import ReportsPage from '@/pages/reports/ReportsPage';
+import GSTWorkingReportsPage from '@/pages/reports/GSTWorkingReportsPage';
 
 // Inventory Pages
 import InventoryItemsPage from '@/pages/inventory/InventoryItemsPage';
@@ -221,6 +222,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
               <ReportsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports/gst-working"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <GSTWorkingReportsPage />
             </ProtectedRoute>
           }
         />

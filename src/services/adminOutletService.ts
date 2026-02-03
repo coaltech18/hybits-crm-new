@@ -206,7 +206,7 @@ export async function deactivateOutlet(
 
   // Check if outlet can be deactivated
   const validation = await canDeactivateOutlet(adminUserId, outletId);
-  
+
   if (!validation.canDeactivate) {
     throw new Error(validation.reason || 'Cannot deactivate outlet');
   }
@@ -319,4 +319,110 @@ export async function activateOutlet(
   }
 }
 
+/**
+ * Delete outlet permanently (admin only)
+ * CRITICAL: Only allowed if outlet has NO linked data
+ */
+export async function deleteOutlet(
+  adminUserId: string,
+  outletId: string
+): Promise<void> {
+  await verifyAdminRole(adminUserId);
+
+  // Check for any linked data
+  const validation = await canDeleteOutlet(adminUserId, outletId);
+  if (!validation.canDelete) {
+    throw new Error(validation.reason || 'Cannot delete outlet');
+  }
+
+  // Delete the outlet permanently
+  const { error } = await supabase
+    .from('outlets')
+    .delete()
+    .eq('id', outletId);
+
+  if (error) {
+    throw new Error(`Failed to delete outlet: ${error.message}`);
+  }
+}
+
+/**
+ * Check if an outlet can be permanently deleted
+ * CRITICAL: Only allow if NO data is linked
+ */
+export async function canDeleteOutlet(
+  adminUserId: string,
+  outletId: string
+): Promise<{ canDelete: boolean; reason?: string }> {
+  await verifyAdminRole(adminUserId);
+
+  // Check for clients
+  const { count: clientCount } = await supabase
+    .from('clients')
+    .select('id', { count: 'exact', head: true })
+    .eq('outlet_id', outletId);
+
+  if (clientCount && clientCount > 0) {
+    return {
+      canDelete: false,
+      reason: `Cannot delete: ${clientCount} client(s) linked to this outlet.`,
+    };
+  }
+
+  // Check for subscriptions
+  const { count: subscriptionCount } = await supabase
+    .from('subscriptions')
+    .select('id', { count: 'exact', head: true })
+    .eq('outlet_id', outletId);
+
+  if (subscriptionCount && subscriptionCount > 0) {
+    return {
+      canDelete: false,
+      reason: `Cannot delete: ${subscriptionCount} subscription(s) linked to this outlet.`,
+    };
+  }
+
+  // Check for events
+  const { count: eventCount } = await supabase
+    .from('events')
+    .select('id', { count: 'exact', head: true })
+    .eq('outlet_id', outletId);
+
+  if (eventCount && eventCount > 0) {
+    return {
+      canDelete: false,
+      reason: `Cannot delete: ${eventCount} event(s) linked to this outlet.`,
+    };
+  }
+
+  // Check for inventory items
+  const { count: inventoryCount } = await supabase
+    .from('inventory_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('outlet_id', outletId);
+
+  if (inventoryCount && inventoryCount > 0) {
+    return {
+      canDelete: false,
+      reason: `Cannot delete: ${inventoryCount} inventory item(s) linked to this outlet.`,
+    };
+  }
+
+  // Check for user assignments
+  const { count: userCount } = await supabase
+    .from('user_outlet_assignments')
+    .select('id', { count: 'exact', head: true })
+    .eq('outlet_id', outletId);
+
+  if (userCount && userCount > 0) {
+    return {
+      canDelete: false,
+      reason: `Cannot delete: ${userCount} user(s) assigned to this outlet.`,
+    };
+  }
+
+  return { canDelete: true };
+}
+
 // PHASE 9 STEP 2 COMPLETE (adminOutletService.ts)
+

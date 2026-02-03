@@ -11,6 +11,7 @@
 
 export type UserRole = 'admin' | 'manager' | 'accountant';
 export type ClientType = 'corporate' | 'event';
+export type ClientGstType = 'domestic' | 'sez' | 'export';
 
 // ================================================================
 // USER & AUTHENTICATION TYPES
@@ -69,6 +70,7 @@ export interface Client {
   id: string;
   outlet_id: string;
   client_type: ClientType;
+  gst_type: ClientGstType | null; // GST classification for reports
   name: string;
   contact_person: string | null;
   phone: string;
@@ -110,6 +112,7 @@ export interface UpdateClientInput {
   email?: string;
   gstin?: string;
   billing_address?: string;
+  gst_type?: ClientGstType | null; // GST classification
   // Admin-only fields
   client_type?: ClientType;
   outlet_id?: string;
@@ -778,6 +781,51 @@ export interface ChartDataPoint {
   name: string;
   value: number;
   [key: string]: string | number;
+}
+
+// ================================================================
+// GST WORKING REPORT TYPES (PHASE 10)
+// ================================================================
+
+// Common GST Working Report Row (matches Excel columns)
+export interface GSTWorkingReportRow {
+  invoice_id: string;
+  invoice_date: string; // Column A
+  invoice_number: string; // Column B
+  party_name: string; // Column C
+  gst_number: string; // Column D
+  hsn_sac_code: string; // Column E (HSN/SAC CODE or HSN CODE)
+  as_per_your_invoice: number; // Column F
+  taxable_value: number; // Column G
+  rate: number; // Column H
+  igst: number; // Column I
+  cgst: number; // Column J
+  sgst: number; // Column K
+  total: number; // Column L
+  outlet_id: string;
+  outlet_name: string;
+}
+
+// Export sheet extends base with Currency column
+export interface GSTWorkingExportRow extends GSTWorkingReportRow {
+  currency: string; // Column M (USD)
+}
+
+// Totals row for summary
+export interface GSTWorkingTotalsRow {
+  outlet_id: string;
+  total_taxable_value: number;
+  total_igst: number;
+  total_cgst: number;
+  total_sgst: number;
+  grand_total: number;
+}
+
+// GST Report Filters
+export interface GSTReportFilters {
+  date_from?: string;
+  date_to?: string;
+  outlet_id?: string;
 }
 
 // ================================================================

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { getInvoiceById, issueInvoice, cancelInvoice } from '@/services/invoiceService';
 import { getPaymentSummary } from '@/services/paymentService';
+import { downloadInvoicePDF } from '@/utils/invoicePdfGenerator';
 import type { Invoice, Payment, PaymentStatus } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -12,6 +13,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { formatCurrency } from '@/utils/format';
 import { formatDate } from '@/utils/billingDate';
 import AddPaymentModal from '@/components/payments/AddPaymentModal';
+import { Download } from 'lucide-react';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -23,7 +25,7 @@ export default function InvoiceDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'issue' | 'cancel' | null>(null);
-  
+
   // Payment state
   const [payments, setPayments] = useState<Payment[]>([]);
   const [paymentSummary, setPaymentSummary] = useState<{
@@ -44,7 +46,7 @@ export default function InvoiceDetailPage() {
     try {
       setLoading(true);
       const data = await getInvoiceById(id);
-      
+
       if (!data) {
         setError('Invoice not found or you do not have access');
         return;
@@ -149,6 +151,16 @@ export default function InvoiceDetailPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {/* Download PDF button - always visible for issued invoices */}
+          {invoice.status === 'issued' && (
+            <Button
+              variant="outline"
+              onClick={() => downloadInvoicePDF(invoice)}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Download PDF
+            </Button>
+          )}
           {user?.role !== 'accountant' && invoice.status === 'draft' && (
             <>
               <Button
@@ -208,6 +220,15 @@ export default function InvoiceDetailPage() {
                 {invoice.clients?.billing_address}
               </p>
             )}
+            <p className="text-sm mt-2">
+              <span className="font-medium">GST Type:</span>{' '}
+              <Badge variant={
+                invoice.clients?.gst_type === 'sez' ? 'default' :
+                  invoice.clients?.gst_type === 'export' ? 'secondary' : 'success'
+              }>
+                {invoice.clients?.gst_type?.toUpperCase() || 'DOMESTIC'}
+              </Badge>
+            </p>
           </div>
         </Card>
 

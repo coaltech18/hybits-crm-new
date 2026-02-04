@@ -53,6 +53,7 @@ export interface Outlet {
   gstin: string | null;
   phone: string | null;
   email: string | null;
+  currency: string; // ISO 4217 currency code (default: 'INR')
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -148,6 +149,7 @@ export interface CreateOutletInput {
   gstin?: string;
   phone?: string;
   email?: string;
+  currency?: string; // ISO 4217 currency code (default: 'INR')
 }
 
 // Update Outlet Input
@@ -161,6 +163,7 @@ export interface UpdateOutletInput {
   gstin?: string;
   phone?: string;
   email?: string;
+  currency?: string; // ISO 4217 currency code
   is_active?: boolean;
 }
 

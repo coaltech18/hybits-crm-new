@@ -64,21 +64,67 @@ export function settleBalance(balance: number): number {
 // ================================================================
 
 /**
+ * Default currency code for the application
+ */
+export const DEFAULT_CURRENCY = 'INR';
+
+/**
+ * Supported currency codes and their locales
+ */
+const CURRENCY_CONFIG: Record<string, { locale: string; symbol: string }> = {
+  INR: { locale: 'en-IN', symbol: '₹' },
+  USD: { locale: 'en-US', symbol: '$' },
+  EUR: { locale: 'de-DE', symbol: '€' },
+  GBP: { locale: 'en-GB', symbol: '£' },
+  AED: { locale: 'ar-AE', symbol: 'AED' },
+  SGD: { locale: 'en-SG', symbol: 'S$' },
+};
+
+/**
+ * Format number as currency with a specific currency code.
+ * Always shows exactly 2 decimal places.
+ * 
+ * @param amount - Amount to format
+ * @param currencyCode - ISO 4217 currency code (default: INR)
+ * @returns Formatted currency string (e.g., "₹1,234.56" or "$1,234.56")
+ */
+export function formatCurrencyWithCode(amount: number, currencyCode: string = DEFAULT_CURRENCY): string {
+  // First round to 2 decimals to avoid floating-point display issues
+  const rounded = roundCurrency(amount);
+
+  // Get currency config, fallback to INR if unknown
+  const config = CURRENCY_CONFIG[currencyCode] || CURRENCY_CONFIG.INR;
+
+  return new Intl.NumberFormat(config.locale, {
+    style: 'currency',
+    currency: currencyCode in CURRENCY_CONFIG ? currencyCode : 'INR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(rounded);
+}
+
+/**
  * Format number as Indian currency (INR)
  * Always shows exactly 2 decimal places.
+ * 
+ * NOTE: This is a convenience wrapper that defaults to INR.
+ * For dynamic currency, use formatCurrencyWithCode().
  * 
  * @param amount - Amount to format
  * @returns Formatted currency string (e.g., "₹1,234.56")
  */
 export function formatCurrency(amount: number): string {
-  // First round to 2 decimals to avoid floating-point display issues
-  const rounded = roundCurrency(amount);
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(rounded);
+  return formatCurrencyWithCode(amount, 'INR');
+}
+
+/**
+ * Get the symbol for a currency code.
+ * 
+ * @param currencyCode - ISO 4217 currency code
+ * @returns Currency symbol (e.g., '₹', '$', '€')
+ */
+export function getCurrencySymbol(currencyCode: string = DEFAULT_CURRENCY): string {
+  return CURRENCY_CONFIG[currencyCode]?.symbol || currencyCode;
 }
 
 /**

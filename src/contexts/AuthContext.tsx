@@ -108,12 +108,88 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     hasInitializedRef.current = true;
 
     // Safety timeout - guarantee isLoading resolves even if everything fails
+    // IMPORTANT: This should NOT force logout, just resolve loading state
     const safetyTimeout = setTimeout(() => {
       if (isMountedRef.current && state.isLoading) {
-        console.warn('[AuthContext] Safety timeout triggered - forcing logged out state');
-        setState(LOGGED_OUT_STATE);
+        console.warn('[AuthContext] Safety timeout triggered - resolving loading state');
+        // Check if we have a session before deciding what to do
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (isMountedRef.current) {
+            if (session) {
+              // Session exists but profile failed to load - keep trying, don't logout
+              console.warn('[AuthContext] Session exists but profile load timed out - NOT logging out');
+              // Set a minimal authenticated state to prevent infinite loading
+              setState(prev => ({
+                ...prev,
+                isLoading: false,
+                isAuthenticated: true, // Session is valid
+              }));
+            } else {
+              // No session - safe to set logged out
+              setState(LOGGED_OUT_STATE);
+            }
+          }
+        }).catch(() => {
+          // On error, just resolve loading - don't force logout
+          if (isMountedRef.current) {
+            setState(prev => ({ ...prev, isLoading: false }));
+          }
+        });
       }
     }, 10000);
+
+    /**
+     * CRITICAL: Determine if an error is an AUTH error vs a DATA error
+     * 
+     * AUTH ERRORS (should logout):
+     * - 401 Unauthorized
+     * - 403 Forbidden  
+     * - Session explicitly invalid
+     * - Supabase auth error codes
+     * 
+     * DATA ERRORS (should NOT logout):
+     * - 400 Bad Request
+     * - 404 Not Found
+     * - 500 Internal Server Error
+     * - Network errors
+     * - RLS policy errors on non-auth tables
+     */
+    function isAuthError(error: unknown): boolean {
+      if (!error) return false;
+
+      const errorObj = error as any;
+
+      // Check for HTTP status codes
+      const status = errorObj.status || errorObj.statusCode || errorObj.code;
+      if (status === 401 || status === 403) {
+        return true;
+      }
+
+      // Check for Supabase auth-specific error messages
+      const message = errorObj.message?.toLowerCase() || '';
+      if (
+        message.includes('jwt') ||
+        message.includes('token') ||
+        message.includes('session') ||
+        message.includes('not authenticated') ||
+        message.includes('invalid refresh token') ||
+        message.includes('auth')
+      ) {
+        return true;
+      }
+
+      // Check for Supabase error codes
+      const code = errorObj.code?.toLowerCase() || '';
+      if (
+        code.includes('pgrst') || // PostgREST errors are usually NOT auth errors
+        code === 'pgrst116' // Not found - NOT an auth error
+      ) {
+        return false;
+      }
+
+      // Default: NOT an auth error (don't logout on unknown errors)
+      return false;
+    }
 
     // Main initialization function
     async function initializeAuth() {
@@ -125,6 +201,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (sessionError) {
           console.error('[AuthContext] Session error:', sessionError);
+          // Session error IS an auth error - safe to logout
           if (isMountedRef.current) setState(LOGGED_OUT_STATE);
           return;
         }
@@ -138,20 +215,67 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('[AuthContext] Session found, loading profile...');
 
         // Step 2: Load user profile
-        const response = await authService.getCurrentUserProfile();
+        try {
+          const response = await authService.getCurrentUserProfile();
 
-        if (!isMountedRef.current) return;
+          if (!isMountedRef.current) return;
 
-        if (response && response.profile) {
-          console.log('[AuthContext] Profile loaded successfully');
-          setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
-        } else {
-          console.warn('[AuthContext] No profile found for session');
-          setState(LOGGED_OUT_STATE);
+          if (response && response.profile) {
+            console.log('[AuthContext] Profile loaded successfully');
+            setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
+          } else {
+            // Profile not found but session is valid
+            // This could be a network error or RLS issue - don't logout immediately
+            console.warn('[AuthContext] Profile load returned null - checking if auth error');
+
+            // Verify session is still valid
+            const { data: { session: recheckedSession } } = await supabase.auth.getSession();
+            if (recheckedSession) {
+              console.warn('[AuthContext] Session still valid but profile failed - NOT logging out');
+              // Keep loading or show error, but don't logout
+              setState(prev => ({
+                ...prev,
+                isLoading: false,
+                isAuthenticated: true, // Session is valid, even if profile load failed
+              }));
+            } else {
+              // Session actually invalid
+              setState(LOGGED_OUT_STATE);
+            }
+          }
+        } catch (profileError) {
+          console.error('[AuthContext] Profile load error:', profileError);
+
+          if (!isMountedRef.current) return;
+
+          // CRITICAL: Check if this is an auth error or data error
+          if (isAuthError(profileError)) {
+            console.log('[AuthContext] Auth error detected - logging out');
+            setState(LOGGED_OUT_STATE);
+          } else {
+            console.warn('[AuthContext] Data error detected - NOT logging out');
+            // Keep the session, just mark as not loading
+            // The user can retry or we can show an error UI
+            setState(prev => ({
+              ...prev,
+              isLoading: false,
+              isAuthenticated: true, // Session might still be valid
+            }));
+          }
         }
       } catch (error) {
         console.error('[AuthContext] Initialization error:', error);
-        if (isMountedRef.current) setState(LOGGED_OUT_STATE);
+
+        if (!isMountedRef.current) return;
+
+        // CRITICAL: Check if this is an auth error
+        if (isAuthError(error)) {
+          setState(LOGGED_OUT_STATE);
+        } else {
+          // Non-auth error - don't force logout, just stop loading
+          console.warn('[AuthContext] Non-auth initialization error - NOT logging out');
+          setState(prev => ({ ...prev, isLoading: false }));
+        }
       }
     }
 
@@ -173,9 +297,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!isMountedRef.current) return;
 
         // Handle runtime events
-        if (event === 'SIGNED_OUT' || !session) {
-          console.log('[AuthContext] Signed out');
+        // ONLY logout on explicit SIGNED_OUT event
+        if (event === 'SIGNED_OUT') {
+          console.log('[AuthContext] Signed out event received');
           setState(LOGGED_OUT_STATE);
+          return;
+        }
+
+        // If session becomes null but it's not a SIGNED_OUT event,
+        // verify before logging out (SIGNED_OUT is already handled above)
+        if (!session) {
+          console.warn('[AuthContext] Session null - verifying...');
+          const { data: { session: verifiedSession } } = await supabase.auth.getSession();
+          if (!verifiedSession) {
+            console.log('[AuthContext] Verified no session - logging out');
+            setState(LOGGED_OUT_STATE);
+          } else {
+            console.log('[AuthContext] Session still valid - ignoring null event');
+          }
           return;
         }
 
@@ -189,7 +328,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
           } catch (err) {
             console.error('[AuthContext] Profile reload error:', err);
-            // Don't change state on error - keep existing auth state
+            // CRITICAL: Don't change state on profile reload error
+            // The session is still valid, we just couldn't load the profile
           }
         }
       }

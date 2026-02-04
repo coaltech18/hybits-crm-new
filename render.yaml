@@ -1,0 +1,32 @@
+# ================================================================
+# RENDER.COM STATIC SITE CONFIGURATION
+# ================================================================
+# This file configures Render.com deployment settings for the React SPA.
+#
+# The key configuration is the rewrite rule that sends ALL requests
+# to index.html, enabling React Router client-side routing to work
+# correctly on page refresh and deep links.
+# ================================================================
+
+services:
+  - type: web
+    name: hybits-crm
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    pullRequestPreviewsEnabled: true
+    routes:
+      # CRITICAL: This rewrite rule fixes 404 on page refresh
+      # 
+      # Without this rule:
+      #   User visits /events → 404 Not Found (no events file exists)
+      #
+      # With this rule:
+      #   User visits /events → Rewrite to /index.html → React Router handles /events
+      #
+      # Action: "rewrite" (NOT "redirect")
+      # - Rewrite: URL stays as /events, but serves index.html content
+      # - Redirect: URL would change to /index.html (wrong for SPA)
+      - type: rewrite
+        source: /*
+        destination: /index.html

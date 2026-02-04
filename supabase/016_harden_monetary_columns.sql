@@ -405,9 +405,9 @@ SELECT
     (SELECT tax_rate FROM invoice_items WHERE invoice_id = i.id LIMIT 1),
     0
   ) AS rate,
-  0::numeric(12,2) AS igst,
-  ROUND(i.tax_total / 2, 2) AS cgst,
-  ROUND(i.tax_total / 2, 2) AS sgst,
+  0.00::numeric(12,2) AS igst,
+  ROUND(i.tax_total / 2.0, 2) AS cgst,
+  ROUND(i.tax_total / 2.0, 2) AS sgst,
   i.grand_total AS total,
   i.outlet_id,
   o.name AS outlet_name
@@ -437,8 +437,8 @@ SELECT
     0
   ) AS rate,
   i.tax_total AS igst,
-  0::numeric(12,2) AS cgst,
-  0::numeric(12,2) AS sgst,
+  0.00::numeric(12,2) AS cgst,
+  0.00::numeric(12,2) AS sgst,
   i.grand_total AS total,
   i.outlet_id,
   o.name AS outlet_name
@@ -468,8 +468,8 @@ SELECT
     0
   ) AS rate,
   i.tax_total AS igst,
-  0::numeric(12,2) AS cgst,
-  0::numeric(12,2) AS sgst,
+  0.00::numeric(12,2) AS cgst,
+  0.00::numeric(12,2) AS sgst,
   i.grand_total AS total,
   'USD' AS currency,
   i.outlet_id,

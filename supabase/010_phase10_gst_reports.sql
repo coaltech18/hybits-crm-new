@@ -82,9 +82,10 @@ SELECT
   ) AS rate,
   
   -- GST Breakup (Domestic = CGST + SGST, so IGST = 0)
-  0::numeric(12,2) AS igst,
-  ROUND(i.tax_total / 2, 2) AS cgst,
-  ROUND(i.tax_total / 2, 2) AS sgst,
+  -- FIXED: Use 0.00 and 2.0 for proper decimal types
+  0.00::numeric(12,2) AS igst,
+  ROUND(i.tax_total / 2.0, 2) AS cgst,
+  ROUND(i.tax_total / 2.0, 2) AS sgst,
   
   -- Total (grand_total includes tax)
   i.grand_total AS total,

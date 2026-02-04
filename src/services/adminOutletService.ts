@@ -132,7 +132,7 @@ export async function createOutlet(
     throw new Error(`Outlet code '${input.code}' already exists`);
   }
 
-  // Create outlet
+  // Create outlet (created_by will be set automatically by trigger)
   const { data, error } = await supabase
     .from('outlets')
     .insert({
@@ -143,7 +143,6 @@ export async function createOutlet(
       phone: input.phone || null,
       email: input.email || null,
       is_active: true,
-      created_by: adminUserId,
     })
     .select('id')
     .single();

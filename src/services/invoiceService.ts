@@ -6,8 +6,10 @@ import type {
   UpdateInvoiceInput,
   CreateInvoiceItemInput,
 } from '@/types';
+import { ALLOWED_GST_RATES } from '@/types';
 import { getClientById } from './clientService';
 import { getEventById } from './eventService';
+import { roundCurrency } from '@/utils/format';
 
 // ================================================================
 // INVOICE SERVICE
@@ -17,11 +19,11 @@ import { getEventById } from './eventService';
 // ================================================================
 
 /**
- * Calculate line item totals
+ * Calculate line item totals with currency-safe rounding
  */
 function calculateLineItem(item: CreateInvoiceItemInput) {
-  const line_total = item.quantity * item.unit_price;
-  const tax_amount = Math.round(line_total * (item.tax_rate / 100) * 100) / 100;
+  const line_total = roundCurrency(item.quantity * item.unit_price);
+  const tax_amount = roundCurrency(line_total * (item.tax_rate / 100));
 
   return {
     ...item,
@@ -31,18 +33,24 @@ function calculateLineItem(item: CreateInvoiceItemInput) {
 }
 
 /**
- * Calculate invoice totals from items
+ * Calculate invoice totals from items with currency-safe rounding
  */
 function calculateInvoiceTotals(items: CreateInvoiceItemInput[]) {
   const calculated = items.map(calculateLineItem);
-  const subtotal = calculated.reduce((sum, item) => sum + item.line_total, 0);
-  const tax_total = calculated.reduce((sum, item) => sum + item.tax_amount, 0);
-  const grand_total = subtotal + tax_total;
+
+  // Sum each item's values, then round the totals
+  const subtotal = roundCurrency(
+    calculated.reduce((sum, item) => sum + item.line_total, 0)
+  );
+  const tax_total = roundCurrency(
+    calculated.reduce((sum, item) => sum + item.tax_amount, 0)
+  );
+  const grand_total = roundCurrency(subtotal + tax_total);
 
   return {
-    subtotal: Math.round(subtotal * 100) / 100,
-    tax_total: Math.round(tax_total * 100) / 100,
-    grand_total: Math.round(grand_total * 100) / 100,
+    subtotal,
+    tax_total,
+    grand_total,
     items: calculated,
   };
 }
@@ -189,6 +197,16 @@ export async function createInvoice(
 
   if (!input.items || input.items.length === 0) {
     throw new Error('At least one invoice item is required');
+  }
+
+  // Validate GST rates - must be one of allowed values (0, 5, 12, 18)
+  const invalidRateItems = input.items.filter(
+    item => !ALLOWED_GST_RATES.includes(item.tax_rate as 0 | 5 | 12 | 18)
+  );
+  if (invalidRateItems.length > 0) {
+    throw new Error(
+      `Invalid GST rate. Allowed rates are: ${ALLOWED_GST_RATES.join('%, ')}%`
+    );
   }
 
   // Validate client

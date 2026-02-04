@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Edit } from 'lucide-react';
+import { ArrowLeft, Edit, Power, RotateCcw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getClientById } from '@/services/clientService';
+import { getClientById, deactivateClient, reactivateClient } from '@/services/clientService';
 import type { Client } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -13,10 +13,12 @@ import { Alert } from '@/components/ui/Alert';
 export function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isAccountant } = useAuth();
+  const { user, isAccountant } = useAuth();
   const [client, setClient] = useState<Client | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [isToggling, setIsToggling] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -44,6 +46,28 @@ export function ClientDetailPage() {
     }
   };
 
+  const handleToggleStatus = async () => {
+    if (!user || !client || !id) return;
+
+    setIsToggling(true);
+    setError('');
+
+    try {
+      if (client.is_active) {
+        await deactivateClient(user.id, id);
+      } else {
+        await reactivateClient(user.id, id);
+      }
+      // Reload client to get updated status
+      await loadClient();
+      setShowConfirm(false);
+    } catch (err: any) {
+      setError(err.message || 'Failed to update client status');
+    } finally {
+      setIsToggling(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-12">
@@ -66,6 +90,42 @@ export function ClientDetailPage() {
 
   return (
     <div className="space-y-6">
+      {/* Confirmation Modal */}
+      {showConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-brand-text mb-2">
+              {client.is_active ? 'Deactivate Client?' : 'Reactivate Client?'}
+            </h3>
+            <p className="text-brand-text/70 mb-4">
+              {client.is_active
+                ? 'This client will be marked as inactive. They will not appear in active client lists and cannot be used for new subscriptions or events.'
+                : 'This client will be marked as active again and can be used for subscriptions and events.'}
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowConfirm(false)}
+                disabled={isToggling}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant={client.is_active ? 'danger' : 'primary'}
+                onClick={handleToggleStatus}
+                disabled={isToggling}
+              >
+                {isToggling
+                  ? 'Processing...'
+                  : client.is_active
+                    ? 'Deactivate'
+                    : 'Reactivate'}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="sm" onClick={() => navigate('/clients')}>
@@ -77,12 +137,31 @@ export function ClientDetailPage() {
           </div>
         </div>
         {!isAccountant && (
-          <Link to={`/clients/${client.id}/edit`}>
-            <Button>
-              <Edit className="h-4 w-4 mr-2" />
-              Edit
+          <div className="flex items-center gap-2">
+            <Link to={`/clients/${client.id}/edit`}>
+              <Button>
+                <Edit className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+            </Link>
+            <Button
+              variant={client.is_active ? 'outline' : 'primary'}
+              onClick={() => setShowConfirm(true)}
+              title={client.is_active ? 'Deactivate client' : 'Reactivate client'}
+            >
+              {client.is_active ? (
+                <>
+                  <Power className="h-4 w-4 mr-2" />
+                  Deactivate
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Reactivate
+                </>
+              )}
             </Button>
-          </Link>
+          </div>
         )}
       </div>
 

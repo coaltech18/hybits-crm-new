@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getSubscriptionById, updateSubscription } from '@/services/subscriptionService';
+import { supabase } from '@/lib/supabase';
 import type { Subscription, UpdateSubscriptionInput, BillingCycle } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -19,6 +21,15 @@ export default function EditSubscriptionPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // V1: Track if issued invoices exist (blocks price change)
+  const [hasIssuedInvoices, setHasIssuedInvoices] = useState(false);
+  const [checkingInvoices, setCheckingInvoices] = useState(true);
+
+  // V1: Price change modal
+  const [showPriceChangeModal, setShowPriceChangeModal] = useState(false);
+  const [priceChangeReason, setPriceChangeReason] = useState('');
+  const [originalPrice, setOriginalPrice] = useState<number>(0);
 
   // Form state
   const [formData, setFormData] = useState<UpdateSubscriptionInput>({});
@@ -41,6 +52,7 @@ export default function EditSubscriptionPage() {
       }
 
       setSubscription(data);
+      setOriginalPrice(data.price_per_unit);
 
       // Initialize form with current values
       setFormData({
@@ -50,6 +62,9 @@ export default function EditSubscriptionPage() {
         price_per_unit: data.price_per_unit,
         notes: data.notes || '',
       });
+
+      // V1: Check if issued invoices exist
+      await checkForIssuedInvoices(data.client_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load subscription');
     } finally {
@@ -57,7 +72,35 @@ export default function EditSubscriptionPage() {
     }
   }
 
+  // V1: Check if issued invoices exist for this subscription's client
+  async function checkForIssuedInvoices(clientId: string) {
+    try {
+      setCheckingInvoices(true);
+      const { count, error: countError } = await supabase
+        .from('invoices')
+        .select('id', { count: 'exact', head: true })
+        .eq('invoice_type', 'subscription')
+        .eq('client_id', clientId)
+        .eq('status', 'issued');
+
+      if (!countError && count !== null && count > 0) {
+        setHasIssuedInvoices(true);
+      }
+    } catch {
+      // If check fails, be conservative and block price changes
+      setHasIssuedInvoices(true);
+    } finally {
+      setCheckingInvoices(false);
+    }
+  }
+
   function handleChange(field: keyof UpdateSubscriptionInput, value: any) {
+    // V1: Intercept price changes if issued invoices exist
+    if (field === 'price_per_unit' && hasIssuedInvoices) {
+      setError('Cannot change price: issued invoices exist for this subscription.');
+      return;
+    }
+
     setFormData((prev) => ({ ...prev, [field]: value }));
     // Clear error for this field
     if (errors[field]) {
@@ -66,6 +109,9 @@ export default function EditSubscriptionPage() {
         delete newErrors[field];
         return newErrors;
       });
+    }
+    if (error) {
+      setError(null);
     }
   }
 
@@ -90,22 +136,55 @@ export default function EditSubscriptionPage() {
     return Object.keys(newErrors).length === 0;
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  // V1: Check if price changed and prompt for reason
+  function handleSubmitClick(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!validateForm() || !user?.id || !id) return;
+    if (!validateForm()) return;
+
+    // Check if price changed
+    const priceChanged = formData.price_per_unit !== undefined &&
+      formData.price_per_unit !== originalPrice;
+
+    if (priceChanged) {
+      // Show modal to get reason
+      setShowPriceChangeModal(true);
+    } else {
+      // No price change, submit directly
+      submitForm();
+    }
+  }
+
+  async function submitForm(reason?: string) {
+    if (!user?.id || !id) return;
 
     try {
       setSubmitting(true);
       setError(null);
 
-      await updateSubscription(user.id, id, formData);
+      const updateData = { ...formData };
+
+      // V1: Include price change reason if provided
+      if (reason) {
+        updateData.price_change_reason = reason;
+      }
+
+      await updateSubscription(user.id, id, updateData);
       navigate(`/subscriptions/${id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update subscription');
+      setShowPriceChangeModal(false);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function handlePriceChangeConfirm() {
+    if (!priceChangeReason.trim()) {
+      return; // Button should be disabled, but double-check
+    }
+    setShowPriceChangeModal(false);
+    submitForm(priceChangeReason.trim());
   }
 
   if (loading) {
@@ -124,8 +203,66 @@ export default function EditSubscriptionPage() {
     );
   }
 
+  const priceChanged = formData.price_per_unit !== undefined &&
+    formData.price_per_unit !== originalPrice;
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      {/* Price Change Modal */}
+      {showPriceChangeModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="max-w-md w-full mx-4">
+            <div className="flex items-start gap-3 mb-4">
+              <AlertTriangle className="h-6 w-6 text-amber-500 flex-shrink-0" />
+              <div>
+                <h3 className="text-lg font-semibold">Price Change Confirmation</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  You are changing the subscription price from{' '}
+                  <strong>₹{originalPrice.toFixed(2)}</strong> to{' '}
+                  <strong>₹{formData.price_per_unit?.toFixed(2)}</strong>.
+                </p>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                Reason for Price Change <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={priceChangeReason}
+                onChange={(e) => setPriceChangeReason(e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Explain why this price is being changed (e.g., contract renegotiation, volume adjustment, error correction)..."
+                autoFocus
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                This reason will be recorded in the audit trail.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowPriceChangeModal(false);
+                  setPriceChangeReason('');
+                }}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handlePriceChangeConfirm}
+                disabled={!priceChangeReason.trim() || submitting}
+              >
+                {submitting ? 'Saving...' : 'Confirm Price Change'}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
       <div>
         <h1 className="text-3xl font-bold">Edit Subscription</h1>
         <p className="text-muted-foreground mt-1">
@@ -141,8 +278,16 @@ export default function EditSubscriptionPage() {
         </Alert>
       )}
 
+      {/* V1: Warning about issued invoices blocking price changes */}
+      {hasIssuedInvoices && !checkingInvoices && (
+        <Alert variant="info">
+          <strong>Price Locked:</strong> Issued invoices exist for this subscription.
+          Price changes are not allowed to maintain billing integrity.
+        </Alert>
+      )}
+
       <Card>
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmitClick} className="space-y-6">
           {/* Read-only fields */}
           <div className="space-y-4 p-4 bg-muted rounded-lg">
             <h3 className="font-semibold text-sm text-muted-foreground">Subscription Info (Read-only)</h3>
@@ -223,17 +368,30 @@ export default function EditSubscriptionPage() {
               />
 
               {/* Price Per Unit */}
-              <Input
-                label="Price Per Unit"
-                type="number"
-                min={0}
-                step="0.01"
-                value={formData.price_per_unit}
-                onChange={(e) => handleChange('price_per_unit', parseFloat(e.target.value) || 0)}
-                error={errors.price_per_unit}
-                required
-                helperText="Changes affect future invoices only"
-              />
+              <div>
+                <Input
+                  label="Price Per Unit"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={formData.price_per_unit}
+                  onChange={(e) => handleChange('price_per_unit', parseFloat(e.target.value) || 0)}
+                  error={errors.price_per_unit}
+                  required
+                  disabled={hasIssuedInvoices}
+                  helperText={
+                    hasIssuedInvoices
+                      ? 'Locked - issued invoices exist'
+                      : 'Changes affect future invoices only'
+                  }
+                />
+                {priceChanged && !hasIssuedInvoices && (
+                  <p className="text-amber-600 text-sm mt-1 flex items-center gap-1">
+                    <AlertTriangle className="h-4 w-4" />
+                    Price changed from ₹{originalPrice.toFixed(2)}. You'll be asked for a reason.
+                  </p>
+                )}
+              </div>
 
               {/* Total Display */}
               {formData.quantity && formData.price_per_unit !== undefined && (
@@ -252,7 +410,9 @@ export default function EditSubscriptionPage() {
 
               {/* Notes */}
               <div>
-                <label className="block text-sm font-medium mb-2">Notes (Optional)</label>
+                <label className="block text-sm font-medium mb-2">
+                  Notes <span className="text-muted-foreground">(Optional)</span>
+                </label>
                 <textarea
                   value={formData.notes || ''}
                   onChange={(e) => handleChange('notes', e.target.value)}

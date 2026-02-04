@@ -141,6 +141,11 @@ export async function getSubscriptionById(subscriptionId: string): Promise<Subsc
 /**
  * Create new subscription
  * 
+ * V1 COMMERCIAL LAYER:
+ * - price_per_unit: Manual entry, REQUIRED
+ * - notes: REQUIRED (for pricing justification)
+ * - questionnaire: Optional reference data
+ * 
  * LOCKED RULES ENFORCED:
  * - Client must be corporate
  * - Client outlet must match subscription outlet
@@ -184,8 +189,14 @@ export async function createSubscription(
     throw new Error('Quantity must be greater than 0');
   }
 
+  // V1: Manual pricing - price is required
   if (input.price_per_unit === undefined || input.price_per_unit < 0) {
-    throw new Error('Price per unit must be 0 or greater');
+    throw new Error('Price per unit is required and must be 0 or greater');
+  }
+
+  // V1: Notes required for pricing justification
+  if (!input.notes || input.notes.trim().length === 0) {
+    throw new Error('Notes/reason is required for pricing justification');
   }
 
   // Validate billing day for monthly
@@ -237,6 +248,7 @@ export async function createSubscription(
   );
 
   // Insert subscription (created_by will be set automatically by trigger)
+  // V1: questionnaire is stored for reference only
   const { data, error } = await supabase
     .from('subscriptions')
     .insert({
@@ -248,7 +260,8 @@ export async function createSubscription(
       quantity: input.quantity,
       price_per_unit: input.price_per_unit,
       next_billing_date: nextBillingDate,
-      notes: input.notes || null,
+      notes: input.notes.trim(),
+      questionnaire: input.questionnaire || null,
       status: 'active',
     })
     .select(`
@@ -262,11 +275,42 @@ export async function createSubscription(
     throw new Error(error.message);
   }
 
+  // V1: Create inventory allocations (Standard Dishware Kit)
+  // This is for operational planning only, does NOT affect pricing
+  if (input.inventoryItems && input.inventoryItems.length > 0) {
+    const allocations = input.inventoryItems
+      .filter(item => item.quantity > 0)
+      .map(item => ({
+        outlet_id: input.outlet_id,
+        inventory_item_id: item.inventoryItemId,
+        reference_type: 'subscription' as const,
+        reference_id: data.id,
+        allocated_quantity: item.quantity,
+        is_active: true,
+      }));
+
+    if (allocations.length > 0) {
+      const { error: allocationError } = await supabase
+        .from('inventory_allocations')
+        .insert(allocations);
+
+      if (allocationError) {
+        // Log but don't fail - inventory is optional for ops planning
+        console.warn('Failed to create inventory allocations:', allocationError.message);
+      }
+    }
+  }
+
   return data;
 }
 
 /**
  * Update subscription
+ * 
+ * V1 COMMERCIAL LAYER:
+ * - Price change BLOCKED if issued invoices exist
+ * - price_change_reason REQUIRED when changing price
+ * - Reason is passed to DB trigger via session variable
  * 
  * LOCKED RULES:
  * - Managers cannot change outlet_id or client_id (enforced by trigger)
@@ -303,14 +347,46 @@ export async function updateSubscription(
     }
   }
 
+  // Get current subscription for validation
+  const current = await getSubscriptionById(subscriptionId);
+  if (!current) {
+    throw new Error('Subscription not found');
+  }
+
+  // V1: Price change validation
+  const isPriceChanging = updates.price_per_unit !== undefined &&
+    updates.price_per_unit !== current.price_per_unit;
+
+  if (isPriceChanging) {
+    // Check if issued invoices exist for this subscription
+    const { count: issuedInvoiceCount, error: countError } = await supabase
+      .from('invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('invoice_type', 'subscription')
+      .eq('client_id', current.client_id)
+      .eq('status', 'issued');
+
+    if (countError) {
+      throw new Error(`Failed to check invoices: ${countError.message}`);
+    }
+
+    // Block price change if any issued invoices exist
+    if (issuedInvoiceCount && issuedInvoiceCount > 0) {
+      throw new Error(
+        'Cannot change price: issued invoices exist for this subscription. ' +
+        'Price changes are only allowed before invoices are issued.'
+      );
+    }
+
+    // Require price_change_reason when price changes
+    if (!updates.price_change_reason || updates.price_change_reason.trim().length === 0) {
+      throw new Error('Price change reason is required when updating the price');
+    }
+  }
+
   // If billing_cycle or billing_day changed, recalculate next_billing_date
   let nextBillingDate: string | undefined;
   if (updates.billing_cycle || updates.billing_day !== undefined) {
-    const current = await getSubscriptionById(subscriptionId);
-    if (!current) {
-      throw new Error('Subscription not found');
-    }
-
     const newCycle = updates.billing_cycle || current.billing_cycle;
     const newBillingDay = updates.billing_day !== undefined ? updates.billing_day : current.billing_day;
 
@@ -322,9 +398,15 @@ export async function updateSubscription(
   }
 
   // Build update object
+  // IMPORTANT: Include price_change_reason in payload - trigger will read it and clear it
   const updateData: any = { ...updates };
   if (nextBillingDate) {
     updateData.next_billing_date = nextBillingDate;
+  }
+
+  // Trim price_change_reason if present
+  if (updateData.price_change_reason) {
+    updateData.price_change_reason = updateData.price_change_reason.trim();
   }
 
   // Update subscription
@@ -502,4 +584,51 @@ export async function cancelSubscription(
   if (error) {
     throw new Error(error.message);
   }
+}
+
+/**
+ * Get subscription price change history
+ * 
+ * V1 COMMERCIAL LAYER:
+ * - Returns audit trail of all price changes
+ * - Includes who changed it and why
+ */
+export async function getSubscriptionPriceHistory(
+  subscriptionId: string
+): Promise<Array<{
+  id: string;
+  subscription_id: string;
+  old_price: number;
+  new_price: number;
+  changed_by: string | null;
+  reason: string;
+  created_at: string;
+  changed_by_name?: string;
+}>> {
+  const { data, error } = await supabase
+    .from('subscription_price_history')
+    .select(`
+      *,
+      user_profiles!subscription_price_history_changed_by_fkey (
+        full_name
+      )
+    `)
+    .eq('subscription_id', subscriptionId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to fetch price history: ${error.message}`);
+  }
+
+  // Transform to flatten user profile
+  return (data || []).map((row: any) => ({
+    id: row.id,
+    subscription_id: row.subscription_id,
+    old_price: row.old_price,
+    new_price: row.new_price,
+    changed_by: row.changed_by,
+    reason: row.reason,
+    created_at: row.created_at,
+    changed_by_name: row.user_profiles?.full_name || null,
+  }));
 }

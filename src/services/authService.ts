@@ -52,11 +52,25 @@ export async function login(credentials: LoginCredentials): Promise<LoginRespons
     throw new Error('Your account has been deactivated. Please contact admin.');
   }
 
-  // 3. If manager, fetch assigned outlets
+  // 3. Fetch outlets based on role
   let outlets: Outlet[] = [];
   let selectedOutlet: string | null = null;
 
-  if (profile.role === 'manager') {
+  if (profile.role === 'admin' || profile.role === 'accountant') {
+    // Admin and Accountant: Fetch ALL active outlets
+    const { data: allOutlets, error: outletsError } = await supabase
+      .from('outlets')
+      .select('*')
+      .eq('is_active', true)
+      .order('name');
+
+    if (outletsError) {
+      console.error('Error fetching outlets:', outletsError);
+    } else if (allOutlets) {
+      outlets = allOutlets;
+    }
+  } else if (profile.role === 'manager') {
+    // Manager: Fetch only assigned outlets
     const { data: assignments, error: assignmentsError } = await supabase
       .from('user_outlet_assignments')
       .select('outlet_id, outlets(*)')
@@ -67,7 +81,7 @@ export async function login(credentials: LoginCredentials): Promise<LoginRespons
     } else if (assignments && assignments.length > 0) {
       outlets = assignments
         .map((a: any) => a.outlets)
-        .filter((o: Outlet | null) => o !== null) as Outlet[];
+        .filter((o: Outlet | null) => o !== null && o.is_active) as Outlet[];
 
       // Auto-select first outlet if only one assigned
       if (outlets.length === 1) {
@@ -126,11 +140,25 @@ export async function getCurrentUserProfile(): Promise<LoginResponse | null> {
     return null;
   }
 
-  // If manager, fetch assigned outlets
+  // Fetch outlets based on role
   let outlets: Outlet[] = [];
   let selectedOutlet: string | null = null;
 
-  if (profile.role === 'manager') {
+  if (profile.role === 'admin' || profile.role === 'accountant') {
+    // Admin and Accountant: Fetch ALL active outlets
+    const { data: allOutlets, error: outletsError } = await supabase
+      .from('outlets')
+      .select('*')
+      .eq('is_active', true)
+      .order('name');
+
+    if (outletsError) {
+      console.error('Error fetching outlets:', outletsError);
+    } else if (allOutlets) {
+      outlets = allOutlets;
+    }
+  } else if (profile.role === 'manager') {
+    // Manager: Fetch only assigned outlets
     const { data: assignments } = await supabase
       .from('user_outlet_assignments')
       .select('outlet_id, outlets(*)')
@@ -139,7 +167,7 @@ export async function getCurrentUserProfile(): Promise<LoginResponse | null> {
     if (assignments && assignments.length > 0) {
       outlets = assignments
         .map((a: any) => a.outlets)
-        .filter((o: Outlet | null) => o !== null) as Outlet[];
+        .filter((o: Outlet | null) => o !== null && o.is_active) as Outlet[];
 
       if (outlets.length === 1) {
         selectedOutlet = outlets[0].id;

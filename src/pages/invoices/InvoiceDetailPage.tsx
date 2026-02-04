@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Alert } from '@/components/ui/Alert';
 import { Spinner } from '@/components/ui/Spinner';
-import { formatCurrency } from '@/utils/format';
+import { formatCurrency, roundCurrency } from '@/utils/format';
 import { formatDate } from '@/utils/billingDate';
 import AddPaymentModal from '@/components/payments/AddPaymentModal';
 import { Download } from 'lucide-react';
@@ -387,10 +387,10 @@ export default function InvoiceDetailPage() {
                 </thead>
                 <tbody>
                   {payments.map((payment, index) => {
-                    // Calculate running balance
+                    // Calculate running balance - use roundCurrency to prevent drift
                     const paymentsUpTo = payments.slice(index);
-                    const amountPaid = paymentsUpTo.reduce((sum, p) => sum + p.amount, 0);
-                    const balanceAfter = invoice.grand_total - amountPaid;
+                    const amountPaid = roundCurrency(paymentsUpTo.reduce((sum, p) => sum + p.amount, 0));
+                    const balanceAfter = roundCurrency(invoice.grand_total - amountPaid);
 
                     return (
                       <tr key={payment.id} className="border-b">

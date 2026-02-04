@@ -14,6 +14,16 @@ export type ClientType = 'corporate' | 'event';
 export type ClientGstType = 'domestic' | 'sez' | 'export';
 
 // ================================================================
+// GST RATE CONSTANTS
+// ================================================================
+// Allowed GST rates in India: 0%, 5%, 12%, 18%
+// This is the single source of truth for GST validation
+
+export const ALLOWED_GST_RATES = [0, 5, 12, 18] as const;
+export type GstRate = typeof ALLOWED_GST_RATES[number];
+export const DEFAULT_GST_RATE: GstRate = 18;
+
+// ================================================================
 // USER & AUTHENTICATION TYPES
 // ================================================================
 
@@ -252,6 +262,7 @@ export interface Subscription {
   price_per_unit: number;
   next_billing_date: string; // ISO date string
   notes: string | null;
+  questionnaire: Record<string, any> | null; // V1: Reference-only, not used for pricing
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -271,8 +282,14 @@ export interface CreateSubscriptionInput {
   billing_day?: number; // Required if monthly
   start_date: string; // ISO date string
   quantity: number;
-  price_per_unit: number;
-  notes?: string;
+  price_per_unit: number; // V1: Manual entry, required
+  notes: string; // V1: Required for pricing justification
+  questionnaire?: Record<string, any>; // V1: Optional reference data
+  // V1: Standard dishware kit (optional, for ops planning)
+  inventoryItems?: Array<{
+    inventoryItemId: string;
+    quantity: number;
+  }>;
 }
 
 export interface UpdateSubscriptionInput {
@@ -281,6 +298,8 @@ export interface UpdateSubscriptionInput {
   quantity?: number;
   price_per_unit?: number;
   notes?: string;
+  questionnaire?: Record<string, any>; // V1: Optional reference data
+  price_change_reason?: string; // Required when price_per_unit changes
   // Admin-only fields
   outlet_id?: string;
   client_id?: string;
@@ -290,6 +309,19 @@ export interface SubscriptionFilters {
   client_id?: string;
   status?: SubscriptionStatus;
   outlet_id?: string;
+}
+
+// Subscription price change audit trail
+export interface SubscriptionPriceHistory {
+  id: string;
+  subscription_id: string;
+  old_price: number;
+  new_price: number;
+  changed_by: string | null;
+  reason: string;
+  created_at: string;
+  // Joined data
+  changed_by_name?: string;
 }
 
 // ================================================================

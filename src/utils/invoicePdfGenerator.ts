@@ -24,14 +24,20 @@ interface InvoicePDFData {
 
 /**
  * Format currency for PDF display
+ * 
+ * NOTE: jsPDF's default fonts (Helvetica, Courier, Times) only support Latin-1 characters.
+ * The ₹ (Rupee) symbol is Unicode U+20B9 and is NOT supported, causing broken rendering.
+ * Solution: Use "Rs." prefix which is universally supported and legally valid on invoices.
  */
 function formatCurrency(amount: number): string {
-    return new Intl.NumberFormat('en-IN', {
-        style: 'currency',
-        currency: 'INR',
+    // Format number with Indian locale (lakh/crore separators)
+    const formattedNumber = new Intl.NumberFormat('en-IN', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     }).format(amount);
+
+    // Use "Rs." prefix instead of ₹ symbol for PDF compatibility
+    return `Rs. ${formattedNumber}`;
 }
 
 /**

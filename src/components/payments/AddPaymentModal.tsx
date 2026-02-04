@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Alert } from '@/components/ui/Alert';
-import { formatCurrency } from '@/utils/format';
+import { formatCurrency, roundCurrency } from '@/utils/format';
 
 interface AddPaymentModalProps {
   invoice: Invoice;
@@ -37,7 +37,8 @@ export default function AddPaymentModal({
     e.preventDefault();
     if (!user?.id) return;
 
-    const amountNum = parseFloat(amount);
+    // Round to 2 decimal places immediately to prevent floating-point drift
+    const amountNum = roundCurrency(parseFloat(amount));
 
     // Validation
     if (!amountNum || amountNum <= 0) {

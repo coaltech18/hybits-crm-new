@@ -39,7 +39,7 @@ import type {
   AgingBucket,
   Outlet,
 } from '@/types';
-import { formatCurrency } from '@/utils/format';
+import { formatCurrency, roundCurrency } from '@/utils/format';
 import {
   LineChart,
   Line,
@@ -318,9 +318,9 @@ function RevenueReportTab({ userId, dateFrom, dateTo, outletId, setLoading, setE
     }
   }
 
-  const totalInvoiced = data.reduce((sum, row) => sum + row.total_invoiced, 0);
-  const totalCollected = data.reduce((sum, row) => sum + row.total_collected, 0);
-  const totalOutstanding = data.reduce((sum, row) => sum + row.outstanding, 0);
+  const totalInvoiced = roundCurrency(data.reduce((sum, row) => sum + row.total_invoiced, 0));
+  const totalCollected = roundCurrency(data.reduce((sum, row) => sum + row.total_collected, 0));
+  const totalOutstanding = roundCurrency(data.reduce((sum, row) => sum + row.outstanding, 0));
 
   return (
     <>
@@ -473,7 +473,7 @@ function PaymentsReportTab({ userId, dateFrom, dateTo, outletId, setLoading, set
     }
   }
 
-  const totalAmount = data.reduce((sum, row) => sum + row.total_amount, 0);
+  const totalAmount = roundCurrency(data.reduce((sum, row) => sum + row.total_amount, 0));
   const totalCount = data.reduce((sum, row) => sum + row.payment_count, 0);
 
   return (
@@ -628,7 +628,7 @@ function OutstandingReportTab({ userId, dateFrom, dateTo, outletId, setLoading, 
     }
   }
 
-  const totalOutstanding = data.reduce((sum, row) => sum + row.balance_due, 0);
+  const totalOutstanding = roundCurrency(data.reduce((sum, row) => sum + row.balance_due, 0));
 
   return (
     <>
@@ -778,8 +778,8 @@ function SubscriptionsReportTab({ userId, dateFrom, dateTo, outletId, setLoading
     }
   }
 
-  const totalMRR = data.reduce((sum, row) => sum + row.mrr, 0);
-  const totalAnnual = data.reduce((sum, row) => sum + row.annual_value, 0);
+  const totalMRR = roundCurrency(data.reduce((sum, row) => sum + row.mrr, 0));
+  const totalAnnual = roundCurrency(data.reduce((sum, row) => sum + row.annual_value, 0));
 
   return (
     <>

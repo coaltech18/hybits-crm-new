@@ -5,6 +5,7 @@ import { createInvoice } from '@/services/invoiceService';
 import { getClients } from '@/services/clientService';
 import { getEvents } from '@/services/eventService';
 import type { CreateInvoiceInput, CreateInvoiceItemInput, Client, Event, Outlet, InvoiceType } from '@/types';
+import { DEFAULT_GST_RATE } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -29,7 +30,7 @@ export default function CreateInvoicePage() {
   const [clientId, setClientId] = useState('');
   const [eventId, setEventId] = useState('');
   const [items, setItems] = useState<CreateInvoiceItemInput[]>([
-    { description: '', quantity: 1, unit_price: 0, tax_rate: 18 },
+    { description: '', quantity: 1, unit_price: 0, tax_rate: DEFAULT_GST_RATE },
   ]);
 
   const availableOutlets: Outlet[] = outlets || [];
@@ -69,7 +70,7 @@ export default function CreateInvoicePage() {
   }
 
   function addItem() {
-    setItems([...items, { description: '', quantity: 1, unit_price: 0, tax_rate: 18 }]);
+    setItems([...items, { description: '', quantity: 1, unit_price: 0, tax_rate: DEFAULT_GST_RATE }]);
   }
 
   function removeItem(index: number) {
@@ -168,7 +169,7 @@ export default function CreateInvoicePage() {
         <Alert variant="warning">
           <strong>No outlets found!</strong>
           <p className="mt-2">
-            {user?.role === 'admin' 
+            {user?.role === 'admin'
               ? 'You need to create at least one outlet.'
               : 'No outlets assigned. Contact your administrator.'}
           </p>
@@ -312,16 +313,17 @@ export default function CreateInvoicePage() {
                   />
                 </div>
                 <div className="col-span-3 md:col-span-2">
-                  <Input
+                  <Select
                     label="Tax %"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={item.tax_rate}
-                    onChange={(e) => updateItem(index, 'tax_rate', parseFloat(e.target.value) || 0)}
+                    value={item.tax_rate.toString()}
+                    onChange={(e) => updateItem(index, 'tax_rate', parseFloat(e.target.value))}
                     required
-                  />
+                  >
+                    <option value="0">0%</option>
+                    <option value="5">5%</option>
+                    <option value="12">12%</option>
+                    <option value="18">18%</option>
+                  </Select>
                 </div>
                 <div className="col-span-1">
                   {items.length > 1 && (

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { History } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { getSubscriptionById, pauseSubscription, resumeSubscription, cancelSubscription } from '@/services/subscriptionService';
+import { getSubscriptionById, pauseSubscription, resumeSubscription, cancelSubscription, getSubscriptionPriceHistory } from '@/services/subscriptionService';
 import type { Subscription } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -22,6 +23,18 @@ export default function SubscriptionDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'pause' | 'resume' | 'cancel' | null>(null);
 
+  // V1: Price history for audit trail
+  const [priceHistory, setPriceHistory] = useState<Array<{
+    id: string;
+    subscription_id: string;
+    old_price: number;
+    new_price: number;
+    changed_by: string | null;
+    reason: string;
+    created_at: string;
+    changed_by_name?: string;
+  }>>([]);
+
   useEffect(() => {
     loadSubscription();
   }, [id]);
@@ -32,13 +45,22 @@ export default function SubscriptionDetailPage() {
     try {
       setLoading(true);
       const data = await getSubscriptionById(id);
-      
+
       if (!data) {
         setError('Subscription not found or you do not have access');
         return;
       }
 
       setSubscription(data);
+
+      // V1: Load price history
+      try {
+        const history = await getSubscriptionPriceHistory(id);
+        setPriceHistory(history);
+      } catch {
+        // Price history is optional, don't block on errors
+        console.warn('Could not load price history');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load subscription');
     } finally {
@@ -111,7 +133,7 @@ export default function SubscriptionDetailPage() {
               <Link to={`/subscriptions/${id}/edit`}>
                 <Button variant="outline">Edit</Button>
               </Link>
-              
+
               {subscription.status === 'active' && (
                 <>
                   <Button
@@ -130,7 +152,7 @@ export default function SubscriptionDetailPage() {
                   </Button>
                 </>
               )}
-              
+
               {subscription.status === 'paused' && (
                 <Button
                   onClick={() => setConfirmAction('resume')}
@@ -249,10 +271,52 @@ export default function SubscriptionDetailPage() {
         </div>
       </Card>
 
+      {/* V1: Price History - Audit Trail */}
+      {priceHistory.length > 0 && (
+        <Card>
+          <div className="flex items-center gap-2 mb-4">
+            <History className="h-5 w-5 text-muted-foreground" />
+            <h2 className="text-xl font-semibold">Price Change History</h2>
+          </div>
+
+          <div className="space-y-3">
+            {priceHistory.map((entry) => (
+              <div
+                key={entry.id}
+                className="p-3 bg-muted rounded-lg border-l-4 border-amber-500"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground line-through">
+                      {formatCurrency(entry.old_price)}
+                    </span>
+                    <span className="text-muted-foreground">→</span>
+                    <span className="font-semibold text-primary">
+                      {formatCurrency(entry.new_price)}
+                    </span>
+                  </div>
+                  <span className="text-sm text-muted-foreground">
+                    {new Date(entry.created_at).toLocaleString()}
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  <strong>Reason:</strong> {entry.reason}
+                </p>
+                {entry.changed_by_name && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Changed by: {entry.changed_by_name}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {/* Notes */}
       {subscription.notes && (
         <Card>
-          <h2 className="text-xl font-semibold mb-4">Notes</h2>
+          <h2 className="text-xl font-semibold mb-4">Pricing Notes / Justification</h2>
           <p className="text-muted-foreground whitespace-pre-wrap">{subscription.notes}</p>
         </Card>
       )}

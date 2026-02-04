@@ -6,6 +6,7 @@ import type {
   UpdatePaymentInput,
   InvoiceWithPaymentStatus,
 } from '@/types';
+import { roundCurrency } from '@/utils/format';
 
 // ================================================================
 // PAYMENT SERVICE
@@ -254,12 +255,14 @@ export async function createPayment(
     }
   }
 
-  // Create payment
+  // Create payment - CRITICAL: round amount to avoid floating-point drift
+  const roundedAmount = roundCurrency(input.amount);
+
   const { data: payment, error: paymentError } = await supabase
     .from('payments')
     .insert({
       invoice_id: input.invoice_id,
-      amount: input.amount,
+      amount: roundedAmount,
       payment_method: input.payment_method,
       payment_date: input.payment_date,
       reference_number: input.reference_number || null,
@@ -339,13 +342,16 @@ export async function updatePayment(
 
   // If amount is being updated, validate overpayment
   if (updates.amount !== undefined) {
+    // CRITICAL: Round to avoid floating-point drift
+    updates.amount = roundCurrency(updates.amount);
+
     if (updates.amount <= 0) {
       throw new Error('Payment amount must be greater than zero');
     }
 
-    // Calculate balance if this payment amount changes
-    const currentBalance = invoice.balance_due + payment.amount; // Add back current payment
-    const newBalance = currentBalance - updates.amount; // Subtract new payment
+    // Calculate balance if this payment amount changes - use rounded values
+    const currentBalance = roundCurrency(invoice.balance_due + payment.amount); // Add back current payment
+    const newBalance = roundCurrency(currentBalance - updates.amount); // Subtract new payment
     const tolerance = 1.0; // ₹1 tolerance
 
     if (newBalance < -tolerance) {

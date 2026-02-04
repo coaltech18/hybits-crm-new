@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { roundCurrency } from '@/utils/format';
 
 // ================================================================
 // DASHBOARD SERVICE
@@ -82,14 +83,14 @@ export async function getDashboardStats(_userId: string): Promise<DashboardStats
     if (outstandingResult.error) console.error('Dashboard: outstanding error', outstandingResult.error);
     if (revenueResult.error) console.error('Dashboard: revenue error', revenueResult.error);
 
-    // Calculate outstanding amount (sum of all balance_due)
+    // Calculate outstanding amount (sum of all balance_due) - round to prevent drift
     const outstandingAmount = outstandingResult.data
-        ? outstandingResult.data.reduce((sum, row) => sum + (row.balance_due || 0), 0)
+        ? roundCurrency(outstandingResult.data.reduce((sum, row) => sum + (row.balance_due || 0), 0))
         : 0;
 
-    // Calculate current month revenue (sum of all grand_total)
+    // Calculate current month revenue (sum of all grand_total) - round to prevent drift
     const currentMonthRevenue = revenueResult.data
-        ? revenueResult.data.reduce((sum, row) => sum + (row.grand_total || 0), 0)
+        ? roundCurrency(revenueResult.data.reduce((sum, row) => sum + (row.grand_total || 0), 0))
         : 0;
 
     return {

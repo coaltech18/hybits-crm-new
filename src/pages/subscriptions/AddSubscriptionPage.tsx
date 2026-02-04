@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ChevronDown, ChevronUp, Package, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createSubscription } from '@/services/subscriptionService';
 import { getClients } from '@/services/clientService';
-import type { CreateSubscriptionInput, Client, BillingCycle, Outlet } from '@/types';
+import { getInventoryItems } from '@/services/inventoryService';
+import type { CreateSubscriptionInput, Client, BillingCycle, Outlet, InventoryItem } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -20,6 +22,17 @@ export default function AddSubscriptionPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showQuestionnaire, setShowQuestionnaire] = useState(false);
+
+  // V1: Standard Dishware Kit
+  const [showInventory, setShowInventory] = useState(false);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [loadingInventory, setLoadingInventory] = useState(false);
+  const [selectedInventory, setSelectedInventory] = useState<Array<{
+    inventoryItemId: string;
+    itemName: string;
+    quantity: number;
+  }>>([]);
 
   // Form state
   const [formData, setFormData] = useState<CreateSubscriptionInput>({
@@ -47,9 +60,10 @@ export default function AddSubscriptionPage() {
   }, [user, outlets]);
 
   useEffect(() => {
-    // Reload clients when outlet changes
+    // Reload clients and inventory when outlet changes
     if (formData.outlet_id) {
       loadClients();
+      loadInventoryItems();
     }
   }, [formData.outlet_id]);
 
@@ -74,6 +88,59 @@ export default function AddSubscriptionPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // V1: Load inventory items for selected outlet
+  async function loadInventoryItems() {
+    if (!user?.id || !formData.outlet_id) {
+      setInventoryItems([]);
+      return;
+    }
+
+    try {
+      setLoadingInventory(true);
+      const items = await getInventoryItems(user.id, {
+        outlet_id: formData.outlet_id,
+        is_active: true
+      });
+      setInventoryItems(items);
+    } catch (err) {
+      console.warn('Failed to load inventory items:', err);
+      setInventoryItems([]);
+    } finally {
+      setLoadingInventory(false);
+    }
+  }
+
+  // V1: Add inventory item to selection
+  function handleAddInventoryItem(itemId: string) {
+    const item = inventoryItems.find(i => i.id === itemId);
+    if (!item) return;
+
+    // Check if already selected
+    if (selectedInventory.some(s => s.inventoryItemId === itemId)) {
+      return; // Already selected
+    }
+
+    setSelectedInventory(prev => [...prev, {
+      inventoryItemId: itemId,
+      itemName: item.name,
+      quantity: 1,
+    }]);
+  }
+
+  // V1: Update quantity for selected item
+  function handleUpdateInventoryQuantity(itemId: string, quantity: number) {
+    setSelectedInventory(prev => prev.map(item =>
+      item.inventoryItemId === itemId
+        ? { ...item, quantity: Math.max(1, quantity) }
+        : item
+    ));
+  }
+
+  // V1: Remove inventory item from selection
+  function handleRemoveInventoryItem(itemId: string) {
+    setSelectedInventory(prev => prev.filter(item => item.inventoryItemId !== itemId));
   }
 
   function handleChange(field: keyof CreateSubscriptionInput, value: any) {
@@ -121,6 +188,11 @@ export default function AddSubscriptionPage() {
       newErrors.price_per_unit = 'Price must be 0 or greater';
     }
 
+    // V1: Notes required for pricing justification
+    if (!formData.notes || formData.notes.trim().length === 0) {
+      newErrors.notes = 'Notes/reason is required for pricing justification';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   }
@@ -134,7 +206,18 @@ export default function AddSubscriptionPage() {
       setSubmitting(true);
       setError(null);
 
-      await createSubscription(user.id, formData);
+      // V1: Include inventory items in subscription data
+      const subscriptionData: CreateSubscriptionInput = {
+        ...formData,
+        inventoryItems: selectedInventory.length > 0
+          ? selectedInventory.map(item => ({
+            inventoryItemId: item.inventoryItemId,
+            quantity: item.quantity,
+          }))
+          : undefined,
+      };
+
+      await createSubscription(user.id, subscriptionData);
       navigate('/subscriptions');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create subscription');
@@ -305,16 +388,242 @@ export default function AddSubscriptionPage() {
             </div>
           )}
 
-          {/* Notes */}
+          {/* Notes - REQUIRED for V1 */}
           <div>
-            <label className="block text-sm font-medium mb-2">Notes (Optional)</label>
+            <label className="block text-sm font-medium mb-2">
+              Pricing Notes / Justification <span className="text-red-500">*</span>
+            </label>
             <textarea
               value={formData.notes || ''}
               onChange={(e) => handleChange('notes', e.target.value)}
               rows={3}
-              className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="Additional notes about this subscription"
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary ${errors.notes ? 'border-red-500' : ''
+                }`}
+              placeholder="Explain the pricing basis: negotiations, ESG goals, client size, special terms, etc."
+              required
             />
+            {errors.notes && (
+              <p className="text-red-500 text-sm mt-1">{errors.notes}</p>
+            )}
+            <p className="text-sm text-muted-foreground mt-1">
+              Document the rationale for this pricing for audit and reference.
+            </p>
+          </div>
+
+          {/* Questionnaire Section - Collapsible */}
+          <div className="border rounded-lg">
+            <button
+              type="button"
+              onClick={() => setShowQuestionnaire(!showQuestionnaire)}
+              className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/50 transition-colors"
+            >
+              <div>
+                <span className="font-medium">Client Questionnaire (Optional)</span>
+                <p className="text-sm text-muted-foreground">
+                  Additional reference data for ops planning and ESG reporting
+                </p>
+              </div>
+              {showQuestionnaire ? (
+                <ChevronUp className="h-5 w-5 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-5 w-5 text-muted-foreground" />
+              )}
+            </button>
+
+            {showQuestionnaire && (
+              <div className="border-t p-4 space-y-4 bg-muted/30">
+                <p className="text-sm text-muted-foreground italic">
+                  This data is for reference only. It does NOT affect pricing calculations.
+                </p>
+
+                {/* Usage Volume */}
+                <Input
+                  label="Daily Usage Volume (approximate)"
+                  type="number"
+                  min={0}
+                  placeholder="e.g., 500 meals/day"
+                  onChange={(e) => handleChange('questionnaire', {
+                    ...formData.questionnaire,
+                    daily_volume: parseInt(e.target.value) || 0
+                  })}
+                />
+
+                {/* Peak Challenges */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">Peak Time Challenges</label>
+                  <textarea
+                    rows={2}
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Describe any peak hour challenges..."
+                    onChange={(e) => handleChange('questionnaire', {
+                      ...formData.questionnaire,
+                      peak_challenges: e.target.value
+                    })}
+                  />
+                </div>
+
+                {/* Washing Facility */}
+                <Select
+                  label="Washing Facility Available?"
+                  onChange={(e) => handleChange('questionnaire', {
+                    ...formData.questionnaire,
+                    has_washing_facility: e.target.value === 'yes'
+                  })}
+                >
+                  <option value="">Select...</option>
+                  <option value="yes">Yes - On-site washing</option>
+                  <option value="no">No - Need pickup/delivery</option>
+                </Select>
+
+                {/* ESG Priority */}
+                <Select
+                  label="ESG Priority Level"
+                  onChange={(e) => handleChange('questionnaire', {
+                    ...formData.questionnaire,
+                    esg_priority: e.target.value
+                  })}
+                >
+                  <option value="">Select...</option>
+                  <option value="high">High - Key sustainability initiative</option>
+                  <option value="medium">Medium - Part of broader goals</option>
+                  <option value="low">Low - Cost-driven decision</option>
+                </Select>
+
+                {/* Additional Notes */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">Additional Context</label>
+                  <textarea
+                    rows={2}
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Any other relevant information..."
+                    onChange={(e) => handleChange('questionnaire', {
+                      ...formData.questionnaire,
+                      additional_context: e.target.value
+                    })}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* V1: Standard Dishware Kit Section */}
+          <div className="border rounded-lg">
+            <button
+              type="button"
+              onClick={() => setShowInventory(!showInventory)}
+              className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Package className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <span className="font-medium">Standard Dishware Kit (Optional)</span>
+                  <p className="text-sm text-muted-foreground">
+                    Define inventory items for this subscription
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {selectedInventory.length > 0 && (
+                  <span className="text-sm bg-primary text-primary-foreground px-2 py-1 rounded-full">
+                    {selectedInventory.length} items
+                  </span>
+                )}
+                {showInventory ? (
+                  <ChevronUp className="h-5 w-5 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                )}
+              </div>
+            </button>
+
+            {showInventory && (
+              <div className="border-t p-4 space-y-4 bg-muted/30">
+                <p className="text-sm text-muted-foreground italic">
+                  Select dishware items for operational planning. This does NOT affect pricing.
+                </p>
+
+                {/* Item selector */}
+                {formData.outlet_id ? (
+                  <>
+                    <div className="flex gap-2">
+                      <Select
+                        className="flex-1"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            handleAddInventoryItem(e.target.value);
+                            e.target.value = '';
+                          }
+                        }}
+                        disabled={loadingInventory}
+                      >
+                        <option value="">
+                          {loadingInventory ? 'Loading items...' : 'Select an item to add...'}
+                        </option>
+                        {inventoryItems
+                          .filter(item => !selectedInventory.some(s => s.inventoryItemId === item.id))
+                          .map(item => (
+                            <option key={item.id} value={item.id}>
+                              {item.name} ({item.category}) - {item.available_quantity} available
+                            </option>
+                          ))}
+                      </Select>
+                    </div>
+
+                    {/* Selected items list */}
+                    {selectedInventory.length > 0 ? (
+                      <div className="space-y-2">
+                        {selectedInventory.map((item) => (
+                          <div
+                            key={item.inventoryItemId}
+                            className="flex items-center gap-3 p-3 bg-background rounded-lg border"
+                          >
+                            <div className="flex-1">
+                              <span className="font-medium">{item.itemName}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <label className="text-sm text-muted-foreground">Qty:</label>
+                              <Input
+                                type="number"
+                                min={1}
+                                value={item.quantity}
+                                onChange={(e) => handleUpdateInventoryQuantity(
+                                  item.inventoryItemId,
+                                  parseInt(e.target.value) || 1
+                                )}
+                                className="w-20"
+                              />
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemoveInventoryItem(item.inventoryItemId)}
+                              className="text-destructive hover:bg-destructive/10"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        No items selected. Add items from the dropdown above.
+                      </p>
+                    )}
+
+                    {inventoryItems.length === 0 && !loadingInventory && (
+                      <p className="text-sm text-amber-600 text-center py-2">
+                        No inventory items found for this outlet. Create items in Inventory first.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    Select an outlet first to see available inventory items.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Actions */}

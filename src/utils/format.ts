@@ -24,17 +24,117 @@ export function roundCurrency(amount: number): number {
 }
 
 /**
+ * Settlement tolerance for payment calculations.
+ * Balances within this threshold are treated as fully paid.
+ * 
+ * This prevents UI confusion from tiny remainders like ₹0.01 or ₹0.02
+ * caused by floating-point arithmetic errors.
+ */
+export const SETTLEMENT_TOLERANCE = 0.05;
+
+/**
+ * Check if an invoice is settled (balance within tolerance).
+ * 
+ * @param balance - The balance due amount
+ * @returns true if the invoice should be considered fully paid
+ */
+export function isSettled(balance: number): boolean {
+  return Math.abs(balance) <= SETTLEMENT_TOLERANCE;
+}
+
+/**
+ * Apply settlement rounding to a balance amount.
+ * If balance is within SETTLEMENT_TOLERANCE, returns 0.
+ * 
+ * @param balance - The raw balance due amount
+ * @returns 0 if within tolerance, otherwise the rounded balance
+ */
+export function settleBalance(balance: number): number {
+  const rounded = roundCurrency(balance);
+  return isSettled(rounded) ? 0 : rounded;
+}
+
+// ================================================================
+// UI MONEY DISPLAY RULES
+// ================================================================
+// 1. Always format using fixed 2 decimals (₹xx.xx)
+// 2. Never show fractional paise beyond 2 decimals
+// 3. If balance_due is 0 → show "Paid in Full"
+// 4. Hide tiny rounding balances from UI (< ₹0.05)
+// ================================================================
+
+/**
  * Format number as Indian currency (INR)
+ * Always shows exactly 2 decimal places.
+ * 
  * @param amount - Amount to format
  * @returns Formatted currency string (e.g., "₹1,234.56")
  */
 export function formatCurrency(amount: number): string {
+  // First round to 2 decimals to avoid floating-point display issues
+  const rounded = roundCurrency(amount);
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(amount);
+  }).format(rounded);
+}
+
+/**
+ * Format a balance amount for display, hiding tiny rounding remainders.
+ * 
+ * UI RULE: If balance is within settlement tolerance (₹0.05),
+ * return "₹0.00" instead of showing confusing paise amounts.
+ * 
+ * @param balance - The raw balance amount
+ * @returns Formatted currency string with tiny balances hidden
+ */
+export function formatBalanceAmount(balance: number): string {
+  const settled = settleBalance(balance);
+  return formatCurrency(settled);
+}
+
+/**
+ * Get display status text for a balance.
+ * 
+ * UI RULE: If balance is 0 (or within tolerance), show "Paid in Full"
+ * Otherwise show the formatted balance amount.
+ * 
+ * @param balance - The raw balance due amount
+ * @param showCurrency - If true, show "₹xx.xx" for positive balances; if false, show just the status text
+ * @returns Status text ("Paid in Full") or formatted balance
+ */
+export function formatBalanceStatus(balance: number, showCurrency = true): string {
+  const settled = settleBalance(balance);
+
+  if (settled === 0) {
+    return 'Paid in Full';
+  }
+
+  if (showCurrency) {
+    return formatCurrency(settled);
+  }
+
+  return settled.toFixed(2);
+}
+
+/**
+ * Get CSS class name for balance display styling.
+ * 
+ * @param balance - The balance amount
+ * @returns CSS class name suggestion
+ */
+export function getBalanceStatusClass(balance: number): 'success' | 'warning' | 'danger' {
+  const settled = settleBalance(balance);
+
+  if (settled === 0) {
+    return 'success'; // Paid in full - green
+  } else if (settled > 0) {
+    return 'warning'; // Outstanding - yellow/amber
+  } else {
+    return 'danger'; // Overpaid (should not happen) - red
+  }
 }
 
 /**

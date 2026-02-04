@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Alert } from '@/components/ui/Alert';
-import { formatCurrency, roundCurrency } from '@/utils/format';
+import { formatCurrency, roundCurrency, settleBalance, SETTLEMENT_TOLERANCE } from '@/utils/format';
 
 interface AddPaymentModalProps {
   invoice: Invoice;
@@ -46,9 +46,8 @@ export default function AddPaymentModal({
       return;
     }
 
-    if (amountNum > maxAmount + 1) {
-      // Allow ₹1 tolerance
-      setError(`Payment amount cannot exceed balance due (${formatCurrency(maxAmount)})`);
+    if (amountNum > maxAmount + SETTLEMENT_TOLERANCE) {
+      setError(`Payment amount cannot exceed balance due (${formatCurrency(settleBalance(maxAmount))})`);
       return;
     }
 
@@ -95,7 +94,7 @@ export default function AddPaymentModal({
             </div>
             <div>
               <p className="text-muted-foreground">Balance Due</p>
-              <p className="font-semibold text-orange-600">{formatCurrency(maxAmount)}</p>
+              <p className="font-semibold text-orange-600">{formatCurrency(settleBalance(maxAmount))}</p>
             </div>
           </div>
         </div>
@@ -114,7 +113,7 @@ export default function AddPaymentModal({
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0.00"
             required
-            helperText={`Maximum: ${formatCurrency(maxAmount)}`}
+            helperText={`Maximum: ${formatCurrency(settleBalance(maxAmount))}`}
           />
 
           {/* Payment Method */}

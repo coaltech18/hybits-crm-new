@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Alert } from '@/components/ui/Alert';
 import { Spinner } from '@/components/ui/Spinner';
-import { formatCurrency, roundCurrency } from '@/utils/format';
+import { formatCurrency, roundCurrency, settleBalance, isSettled } from '@/utils/format';
 import { formatDate } from '@/utils/billingDate';
 import AddPaymentModal from '@/components/payments/AddPaymentModal';
 import { Download } from 'lucide-react';
@@ -302,7 +302,7 @@ export default function InvoiceDetailPage() {
                   <td className="text-right py-2 px-2">{item.tax_rate}%</td>
                   <td className="text-right py-2 px-2">{formatCurrency(item.tax_amount)}</td>
                   <td className="text-right py-2 px-2 font-medium">
-                    {formatCurrency(item.line_total + item.tax_amount)}
+                    {formatCurrency(roundCurrency(item.line_total + item.tax_amount))}
                   </td>
                 </tr>
               ))}
@@ -339,7 +339,7 @@ export default function InvoiceDetailPage() {
                 </div>
               )}
             </div>
-            {user?.role !== 'accountant' && paymentSummary && paymentSummary.balance_due > 0 && (
+            {user?.role !== 'accountant' && paymentSummary && !isSettled(paymentSummary.balance_due) && (
               <Button onClick={() => setShowAddPayment(true)}>
                 Record Payment
               </Button>
@@ -359,7 +359,7 @@ export default function InvoiceDetailPage() {
                 <div>
                   <p className="text-sm text-muted-foreground">Balance Due</p>
                   <p className="text-lg font-semibold text-orange-600">
-                    {formatCurrency(paymentSummary.balance_due)}
+                    {formatCurrency(settleBalance(paymentSummary.balance_due))}
                   </p>
                 </div>
                 <div>

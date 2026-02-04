@@ -90,12 +90,16 @@ export default function CreateInvoicePage() {
     let taxTotal = 0;
 
     items.forEach(item => {
-      const lineTotal = item.quantity * item.unit_price;
+      // Step 1: Round line_total (qty * unit_price) to 2 decimals
+      const lineTotal = Math.round(item.quantity * item.unit_price * 100) / 100;
+      // Step 2: Calculate tax from the ROUNDED line_total, then round
       const taxAmount = Math.round(lineTotal * (item.tax_rate / 100) * 100) / 100;
+      // Step 3: Accumulate rounded values
       subtotal += lineTotal;
       taxTotal += taxAmount;
     });
 
+    // Step 4: Round the sums (in case of floating-point accumulation errors)
     return {
       subtotal: Math.round(subtotal * 100) / 100,
       taxTotal: Math.round(taxTotal * 100) / 100,

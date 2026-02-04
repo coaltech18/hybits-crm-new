@@ -6,7 +6,7 @@ import type {
   UpdatePaymentInput,
   InvoiceWithPaymentStatus,
 } from '@/types';
-import { roundCurrency } from '@/utils/format';
+import { roundCurrency, settleBalance, SETTLEMENT_TOLERANCE } from '@/utils/format';
 
 // ================================================================
 // PAYMENT SERVICE
@@ -234,9 +234,8 @@ export async function createPayment(
     throw new Error('Cannot record payment for cancelled invoice');
   }
 
-  // Check overpayment (frontend validation)
-  const tolerance = 1.0; // ₹1 tolerance
-  if (input.amount > invoice.balance_due + tolerance) {
+  // Check overpayment (frontend validation) - use settlement tolerance
+  if (input.amount > invoice.balance_due + SETTLEMENT_TOLERANCE) {
     throw new Error(
       `Payment amount (₹${input.amount}) exceeds balance due (₹${invoice.balance_due})`
     );
@@ -351,10 +350,9 @@ export async function updatePayment(
 
     // Calculate balance if this payment amount changes - use rounded values
     const currentBalance = roundCurrency(invoice.balance_due + payment.amount); // Add back current payment
-    const newBalance = roundCurrency(currentBalance - updates.amount); // Subtract new payment
-    const tolerance = 1.0; // ₹1 tolerance
+    const newBalance = settleBalance(currentBalance - updates.amount); // Subtract new payment, apply settlement
 
-    if (newBalance < -tolerance) {
+    if (newBalance < -SETTLEMENT_TOLERANCE) {
       throw new Error(
         `Updated payment amount (₹${updates.amount}) would cause overpayment. ` +
         `Available balance: ₹${currentBalance}`

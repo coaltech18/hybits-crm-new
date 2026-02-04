@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Invoice, InvoiceItem, ClientGstType } from '@/types';
+import { roundCurrency } from '@/utils/format';
 
 // ================================================================
 // INVOICE PDF GENERATOR
@@ -220,7 +221,7 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
         formatCurrency(item.line_total),
         `${item.tax_rate}%`,
         formatCurrency(item.tax_amount),
-        formatCurrency(item.line_total + item.tax_amount),
+        formatCurrency(roundCurrency(item.line_total + item.tax_amount)),
     ]);
 
     autoTable(doc, {

@@ -100,78 +100,24 @@ export async function getUserById(
 
 /**
  * Create new user (admin only)
- * Creates Supabase auth user + user_profile
+ * 
+ * ⚠️ USER CREATION VIA FRONTEND DISABLED
+ * Users should be created directly in Supabase Dashboard:
+ * 1. Go to Authentication → Users → Invite User
+ * 2. After user is created, add a row in user_profiles table
+ * 3. If manager, add rows in user_outlet_assignments table
  */
 export async function createUser(
   adminUserId: string,
-  input: CreateUserInput
+  _input: CreateUserInput
 ): Promise<{ user_id: string }> {
+  // Verify admin role first (for consistency)
   await verifyAdminRole(adminUserId);
 
-  // Validate outlet assignments (managers only)
-  if (input.role !== 'manager' && input.outlet_ids && input.outlet_ids.length > 0) {
-    throw new Error('Only managers can be assigned to outlets');
-  }
-
-  if (input.role === 'manager' && (!input.outlet_ids || input.outlet_ids.length === 0)) {
-    throw new Error('Managers must be assigned to at least one outlet');
-  }
-
-  // Create auth user via Supabase admin API
-  // Note: This requires service role key, which should be handled server-side
-  // For now, we'll create the profile assuming auth user exists
-  
-  // Alternative: Use Supabase auth.signUp for user creation
-  const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(
-    input.email,
-    {
-      data: {
-        full_name: input.full_name,
-        role: input.role,
-      },
-    }
+  throw new Error(
+    'User creation via the app is currently disabled. ' +
+    'Please create users directly in Supabase Dashboard → Authentication → Users.'
   );
-
-  if (authError) {
-    throw new Error(`Failed to create auth user: ${authError.message}`);
-  }
-
-  const userId = authData.user.id;
-
-  // Create user profile
-  const { error: profileError } = await supabase
-    .from('user_profiles')
-    .insert({
-      id: userId,
-      email: input.email,
-      full_name: input.full_name,
-      phone: input.phone || null,
-      role: input.role,
-      is_active: true,
-      created_by: adminUserId,
-    });
-
-  if (profileError) {
-    throw new Error(`Failed to create user profile: ${profileError.message}`);
-  }
-
-  // Assign outlets (if manager)
-  if (input.role === 'manager' && input.outlet_ids && input.outlet_ids.length > 0) {
-    const assignments = input.outlet_ids.map((outletId) => ({
-      user_id: userId,
-      outlet_id: outletId,
-    }));
-
-    const { error: assignError } = await supabase
-      .from('user_outlet_assignments')
-      .insert(assignments);
-
-    if (assignError) {
-      throw new Error(`Failed to assign outlets: ${assignError.message}`);
-    }
-  }
-
-  return { user_id: userId };
 }
 
 /**

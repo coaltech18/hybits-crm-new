@@ -112,6 +112,24 @@ export function AddEditUserModal({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* User creation disabled - use Supabase Dashboard */}
+          {mode === 'create' && (
+            <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-amber-100 dark:bg-amber-800 rounded-full flex items-center justify-center">
+                  <span className="text-amber-600 dark:text-amber-400 text-lg">⚠️</span>
+                </div>
+                <div>
+                  <h3 className="font-medium text-amber-800 dark:text-amber-300">Create Users in Supabase</h3>
+                  <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
+                    To create new users, go to Supabase Dashboard → Authentication → Users → Invite User.
+                    After creating the auth user, add entries in user_profiles and user_outlet_assignments tables.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-600 dark:text-red-400 text-sm">
               {error}
@@ -232,10 +250,10 @@ export function AddEditUserModal({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark disabled:opacity-50"
+              disabled={isSubmitting || mode === 'create'}
+              className="px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isSubmitting ? 'Saving...' : mode === 'create' ? 'Create User' : 'Save Changes'}
+              {isSubmitting ? 'Saving...' : mode === 'create' ? 'Use Supabase Dashboard' : 'Save Changes'}
             </button>
           </div>
         </form>

@@ -52,7 +52,14 @@ export async function login(credentials: LoginCredentials): Promise<LoginRespons
     throw new Error('Your account has been deactivated. Please contact admin.');
   }
 
-  // 3. Fetch outlets based on role
+  // 3. Update last_login timestamp (for admin_users_summary view)
+  // This is idempotent and safe - updates the logged-in user's own profile
+  await supabase
+    .from('user_profiles')
+    .update({ last_login: new Date().toISOString() })
+    .eq('id', authData.user.id);
+
+  // 4. Fetch outlets based on role
   let outlets: Outlet[] = [];
   let selectedOutlet: string | null = null;
 

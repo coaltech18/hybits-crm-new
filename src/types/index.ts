@@ -34,6 +34,7 @@ export interface UserProfile {
   phone: string | null;
   role: UserRole;
   is_active: boolean;
+  last_login: string | null; // Updated on successful login
   created_at: string;
   updated_at: string;
 }

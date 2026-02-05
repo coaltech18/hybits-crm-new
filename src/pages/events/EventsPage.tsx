@@ -88,6 +88,7 @@ export default function EventsPage() {
       planned: 'default' as const,
       completed: 'success' as const,
       cancelled: 'secondary' as const,
+      archived: 'secondary' as const,
     };
     return <Badge variant={variants[status]}>{status.toUpperCase()}</Badge>;
   }

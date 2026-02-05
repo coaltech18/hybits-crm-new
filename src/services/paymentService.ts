@@ -393,10 +393,22 @@ export async function updatePayment(
   return updatedPayment;
 }
 
+// ================================================================
+// PAYMENT DELETION - NOT ALLOWED (SOFT DELETE ONLY)
+// ================================================================
+// Payments are financial records and CANNOT be hard deleted.
+// Use deactivatePayment() to mark as inactive (soft delete).
+// The database has a BEFORE DELETE trigger that blocks hard deletes.
+// ================================================================
+
 /**
- * Soft delete payment (set is_active = false)
+ * Deactivate payment (soft delete - set is_active = false)
+ * 
+ * IMPORTANT: This is a SOFT DELETE, not a hard delete.
+ * The payment record remains in the database for audit purposes.
+ * Deactivated payments are excluded from balance calculations.
  */
-export async function deletePayment(userId: string, paymentId: string): Promise<void> {
+export async function deactivatePayment(userId: string, paymentId: string): Promise<void> {
   const { data: profile } = await supabase
     .from('user_profiles')
     .select('role')
@@ -413,7 +425,7 @@ export async function deletePayment(userId: string, paymentId: string): Promise<
   }
 
   if (!payment.is_active) {
-    throw new Error('Payment is already deleted');
+    throw new Error('Payment is already deactivated');
   }
 
   // Get invoice for outlet check
@@ -436,7 +448,7 @@ export async function deletePayment(userId: string, paymentId: string): Promise<
 
     const allowedOutlets = assignments?.map(a => a.outlet_id) || [];
     if (!allowedOutlets.includes(invoice.outlet_id)) {
-      throw new Error('You can only delete payments for your assigned outlets');
+      throw new Error('You can only deactivate payments for your assigned outlets');
     }
   }
 
@@ -444,6 +456,64 @@ export async function deletePayment(userId: string, paymentId: string): Promise<
   const { error } = await supabase
     .from('payments')
     .update({ is_active: false })
+    .eq('id', paymentId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Reactivate payment (undo soft delete)
+ */
+export async function reactivatePayment(userId: string, paymentId: string): Promise<void> {
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
+
+  const payment = await getPaymentById(paymentId);
+  if (!payment) {
+    throw new Error('Payment not found');
+  }
+
+  if (payment.is_active) {
+    throw new Error('Payment is already active');
+  }
+
+  // Get invoice for outlet check
+  const { data: invoice } = await supabase
+    .from('invoices')
+    .select('outlet_id')
+    .eq('id', payment.invoice_id)
+    .single();
+
+  if (!invoice) {
+    throw new Error('Invoice not found');
+  }
+
+  // Manager outlet check
+  if (profile.role === 'manager') {
+    const { data: assignments } = await supabase
+      .from('user_outlet_assignments')
+      .select('outlet_id')
+      .eq('user_id', userId);
+
+    const allowedOutlets = assignments?.map(a => a.outlet_id) || [];
+    if (!allowedOutlets.includes(invoice.outlet_id)) {
+      throw new Error('You can only reactivate payments for your assigned outlets');
+    }
+  }
+
+  // Reactivate (set is_active = true)
+  const { error } = await supabase
+    .from('payments')
+    .update({ is_active: true })
     .eq('id', paymentId);
 
   if (error) {

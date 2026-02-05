@@ -255,7 +255,8 @@ export async function createSubscription(
       outlet_id: input.outlet_id,
       client_id: input.client_id,
       billing_cycle: input.billing_cycle,
-      billing_day: input.billing_day || null,
+      // IMPORTANT: billing_day must be null for non-monthly, valid (1-28) for monthly
+      billing_day: input.billing_cycle === 'monthly' ? input.billing_day : null,
       start_date: input.start_date,
       quantity: input.quantity,
       price_per_unit: input.price_per_unit,
@@ -272,6 +273,29 @@ export async function createSubscription(
     .single();
 
   if (error) {
+    // Convert database constraint errors to user-friendly messages
+    if (error.message.includes('subscriptions_check') ||
+      error.message.includes('check constraint')) {
+      if (error.message.includes('billing_day')) {
+        throw new Error('Billing day must be between 1 and 28 for monthly subscriptions');
+      }
+      if (error.message.includes('end_date')) {
+        throw new Error('End date must be on or after start date');
+      }
+      if (error.message.includes('quantity')) {
+        throw new Error('Quantity must be greater than 0');
+      }
+      if (error.message.includes('price_per_unit')) {
+        throw new Error('Price per unit must be 0 or greater');
+      }
+      // Generic check constraint message
+      throw new Error(
+        'Subscription data validation failed. Please check: ' +
+        '1) Billing day is 1-28 for monthly cycle, ' +
+        '2) Quantity is positive, ' +
+        '3) Price is non-negative'
+      );
+    }
     throw new Error(error.message);
   }
 

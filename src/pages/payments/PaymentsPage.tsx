@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { getPayments, deletePayment } from '@/services/paymentService';
+import { getPayments, deactivatePayment } from '@/services/paymentService';
 import type { Payment, PaymentMethod } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -67,7 +67,7 @@ export default function PaymentsPage() {
       setActionLoading(paymentId);
       setError(null);
 
-      await deletePayment(user.id, paymentId);
+      await deactivatePayment(user.id, paymentId);
       setConfirmDelete(null);
       await loadData();
     } catch (err) {
@@ -207,9 +207,8 @@ export default function PaymentsPage() {
                 {payments.map((payment) => (
                   <tr
                     key={payment.id}
-                    className={`border-b hover:bg-muted/50 ${
-                      !payment.is_active ? 'opacity-50' : ''
-                    }`}
+                    className={`border-b hover:bg-muted/50 ${!payment.is_active ? 'opacity-50' : ''
+                      }`}
                   >
                     <td className="py-3 px-4 text-sm">
                       {formatDate(payment.payment_date, 'short')}

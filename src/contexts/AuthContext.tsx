@@ -5,26 +5,20 @@ import * as authService from '@/services/authService';
 import { supabase } from '@/lib/supabase';
 
 // ================================================================
-// AUTH CONTEXT - PRODUCTION GRADE (v2)
+// AUTH CONTEXT - STRICT PROFILE LOADING (v3)
 // ================================================================
 // 
-// CRITICAL FIX: This version guarantees isLoading resolves on reload.
+// STRICT RULES:
+// 1. 5-second HARD timeout on profile fetch → force logout
+// 2. ANY profile fetch error → clear session, redirect to /login
+// 3. NEVER redirect to /dashboard until user_profiles is loaded
 //
-// DESIGN PRINCIPLES:
-// 1. getSession() is called FIRST and SYNCHRONOUSLY on mount
-// 2. isLoading ALWAYS resolves (multiple safety mechanisms)
-// 3. onAuthStateChange handles ONLY runtime changes
-// 4. 10-second timeout as ultimate safety net
-// 5. No dependencies in callbacks that could cause stale closures
-//
-// LIFECYCLE:
-// 1. Component mounts → isLoading: true
-// 2. useEffect runs → immediately calls initializeAuth()
-// 3. initializeAuth() → getSession() → loads profile OR clears state
-// 4. isLoading: false (guaranteed by multiple paths)
-// 5. onAuthStateChange handles runtime changes (login/logout/refresh)
+// This prevents infinite loading loops and ensures clean state.
 //
 // ================================================================
+
+// Timeout constant (5 seconds)
+const PROFILE_FETCH_TIMEOUT_MS = 5000;
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
@@ -70,6 +64,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hasInitializedRef = useRef(false);
 
   // ================================================================
+  // FORCE LOGOUT - Clears everything and redirects to login
+  // ================================================================
+  const forceLogout = useCallback(async (reason: string) => {
+    console.error('[AuthContext] Force logout:', reason);
+
+    try {
+      // Clear Supabase session
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('[AuthContext] Error during signOut:', err);
+    }
+
+    // Clear localStorage auth-related items
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('supabase') || key.includes('auth') || key.includes('sb-'))) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+    } catch (err) {
+      console.error('[AuthContext] Error clearing localStorage:', err);
+    }
+
+    // Set logged out state
+    if (isMountedRef.current) {
+      setState(LOGGED_OUT_STATE);
+    }
+
+    // Redirect to login
+    navigate('/login', { replace: true });
+  }, [navigate]);
+
+  // ================================================================
   // BUILD AUTH STATE FROM PROFILE
   // ================================================================
   const buildAuthState = (
@@ -95,6 +125,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   // ================================================================
+  // FETCH PROFILE WITH TIMEOUT
+  // ================================================================
+  const fetchProfileWithTimeout = useCallback(async (): Promise<{
+    profile: UserProfile;
+    outlets: Outlet[];
+    selectedOutlet: string | null;
+  } | null> => {
+    return new Promise((resolve, reject) => {
+      // Set up timeout
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Profile fetch timed out after ${PROFILE_FETCH_TIMEOUT_MS}ms`));
+      }, PROFILE_FETCH_TIMEOUT_MS);
+
+      // Attempt to fetch profile
+      authService.getCurrentUserProfile()
+        .then((response) => {
+          clearTimeout(timeoutId);
+          if (response && response.profile) {
+            resolve(response);
+          } else {
+            reject(new Error('Profile not found'));
+          }
+        })
+        .catch((error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        });
+    });
+  }, []);
+
+  // ================================================================
   // INITIALIZE AUTH (RUNS ONCE ON MOUNT)
   // ================================================================
   useEffect(() => {
@@ -107,175 +168,128 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     hasInitializedRef.current = true;
 
-    // Safety timeout - guarantee isLoading resolves even if everything fails
-    // IMPORTANT: This should NOT force logout, just resolve loading state
-    const safetyTimeout = setTimeout(() => {
-      if (isMountedRef.current && state.isLoading) {
-        console.warn('[AuthContext] Safety timeout triggered - resolving loading state');
-        // Check if we have a session before deciding what to do
-        supabase.auth.getSession().then(({ data: { session } }) => {
-          if (isMountedRef.current) {
-            if (session) {
-              // Session exists but profile failed to load - keep trying, don't logout
-              console.warn('[AuthContext] Session exists but profile load timed out - NOT logging out');
-              // Set a minimal authenticated state to prevent infinite loading
-              setState(prev => ({
-                ...prev,
-                isLoading: false,
-                isAuthenticated: true, // Session is valid
-              }));
-            } else {
-              // No session - safe to set logged out
-              setState(LOGGED_OUT_STATE);
-            }
-          }
-        }).catch(() => {
-          // On error, just resolve loading - don't force logout
-          if (isMountedRef.current) {
-            setState(prev => ({ ...prev, isLoading: false }));
-          }
-        });
-      }
-    }, 10000);
-
-    /**
-     * CRITICAL: Determine if an error is an AUTH error vs a DATA error
-     * 
-     * AUTH ERRORS (should logout):
-     * - 401 Unauthorized
-     * - 403 Forbidden  
-     * - Session explicitly invalid
-     * - Supabase auth error codes
-     * 
-     * DATA ERRORS (should NOT logout):
-     * - 400 Bad Request
-     * - 404 Not Found
-     * - 500 Internal Server Error
-     * - Network errors
-     * - RLS policy errors on non-auth tables
-     */
-    function isAuthError(error: unknown): boolean {
-      if (!error) return false;
-
-      const errorObj = error as any;
-
-      // Check for HTTP status codes
-      const status = errorObj.status || errorObj.statusCode || errorObj.code;
-      if (status === 401 || status === 403) {
-        return true;
-      }
-
-      // Check for Supabase auth-specific error messages
-      const message = errorObj.message?.toLowerCase() || '';
-      if (
-        message.includes('jwt') ||
-        message.includes('token') ||
-        message.includes('session') ||
-        message.includes('not authenticated') ||
-        message.includes('invalid refresh token') ||
-        message.includes('auth')
-      ) {
-        return true;
-      }
-
-      // Check for Supabase error codes
-      const code = errorObj.code?.toLowerCase() || '';
-      if (
-        code.includes('pgrst') || // PostgREST errors are usually NOT auth errors
-        code === 'pgrst116' // Not found - NOT an auth error
-      ) {
-        return false;
-      }
-
-      // Default: NOT an auth error (don't logout on unknown errors)
-      return false;
-    }
-
     // Main initialization function
     async function initializeAuth() {
-      console.log('[AuthContext] Initializing...');
+      console.log('[AuthContext] Initializing - explicitly calling getSession()...');
 
       try {
-        // Step 1: Get current session
+        // ================================================================
+        // STEP 1: Explicitly call getSession() on mount
+        // ================================================================
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
         if (sessionError) {
-          console.error('[AuthContext] Session error:', sessionError);
-          // Session error IS an auth error - safe to logout
-          if (isMountedRef.current) setState(LOGGED_OUT_STATE);
+          console.warn('[AuthContext] Invalid session state - session error:', sessionError.message);
+          if (isMountedRef.current) {
+            await forceLogout('Session error: ' + sessionError.message);
+          }
           return;
         }
 
         if (!session) {
-          console.log('[AuthContext] No session found');
-          if (isMountedRef.current) setState(LOGGED_OUT_STATE);
+          console.log('[AuthContext] No session found - user not logged in');
+          if (isMountedRef.current) {
+            setState(LOGGED_OUT_STATE);
+          }
           return;
         }
 
-        console.log('[AuthContext] Session found, loading profile...');
+        console.log('[AuthContext] Session exists, validating profile...');
 
-        // Step 2: Load user profile
+        // ================================================================
+        // STEP 2: Load and validate user profile
+        // ================================================================
         try {
-          const response = await authService.getCurrentUserProfile();
+          const response = await fetchProfileWithTimeout();
 
           if (!isMountedRef.current) return;
 
-          if (response && response.profile) {
-            console.log('[AuthContext] Profile loaded successfully');
-            setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
-          } else {
-            // Profile not found but session is valid
-            // This could be a network error or RLS issue - don't logout immediately
-            console.warn('[AuthContext] Profile load returned null - checking if auth error');
-
-            // Verify session is still valid
-            const { data: { session: recheckedSession } } = await supabase.auth.getSession();
-            if (recheckedSession) {
-              console.warn('[AuthContext] Session still valid but profile failed - NOT logging out');
-              // Keep loading or show error, but don't logout
-              setState(prev => ({
-                ...prev,
-                isLoading: false,
-                isAuthenticated: true, // Session is valid, even if profile load failed
-              }));
-            } else {
-              // Session actually invalid
-              setState(LOGGED_OUT_STATE);
-            }
+          // ================================================================
+          // VALIDATION: Check if profile exists
+          // ================================================================
+          if (!response || !response.profile) {
+            console.warn('[AuthContext] Profile fetch failed - profile is null or undefined');
+            console.warn('[AuthContext] Invalid session state - session exists but no profile');
+            await forceLogout('Profile not found for authenticated user');
+            return;
           }
+
+          // ================================================================
+          // VALIDATION: Check if role is present and valid
+          // ================================================================
+          const { profile } = response;
+          const validRoles = ['admin', 'manager', 'accountant'];
+
+          if (!profile.role) {
+            console.warn('[AuthContext] Profile fetch failed - role is missing');
+            console.warn('[AuthContext] Invalid session state - profile exists but role is null');
+            await forceLogout('User role is missing');
+            return;
+          }
+
+          if (!validRoles.includes(profile.role)) {
+            console.warn('[AuthContext] Profile fetch failed - invalid role:', profile.role);
+            console.warn('[AuthContext] Invalid session state - unrecognized role');
+            await forceLogout('Invalid user role: ' + profile.role);
+            return;
+          }
+
+          // ================================================================
+          // VALIDATION: Check if user is active
+          // ================================================================
+          if (!profile.is_active) {
+            console.warn('[AuthContext] Profile fetch failed - user is inactive');
+            console.warn('[AuthContext] Invalid session state - account deactivated');
+            await forceLogout('Account is deactivated');
+            return;
+          }
+
+          // ================================================================
+          // SUCCESS: Profile is valid
+          // ================================================================
+          console.log('[AuthContext] Profile validated successfully:', {
+            id: profile.id,
+            email: profile.email,
+            role: profile.role,
+            is_active: profile.is_active,
+          });
+
+          setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
+
         } catch (profileError) {
-          console.error('[AuthContext] Profile load error:', profileError);
+          const errorMessage = (profileError as Error).message || 'Unknown error';
+
+          // ================================================================
+          // CHECK: Is this an RLS error?
+          // ================================================================
+          const isRLSError =
+            errorMessage.toLowerCase().includes('rls') ||
+            errorMessage.toLowerCase().includes('policy') ||
+            errorMessage.toLowerCase().includes('permission') ||
+            errorMessage.toLowerCase().includes('denied') ||
+            errorMessage.includes('PGRST') ||
+            errorMessage.includes('42501'); // PostgreSQL permission denied code
+
+          if (isRLSError) {
+            console.warn('[AuthContext] Profile fetch failed - RLS/permission error:', errorMessage);
+            console.warn('[AuthContext] Invalid session state - RLS policy blocked access');
+          } else {
+            console.warn('[AuthContext] Profile fetch failed - error:', errorMessage);
+          }
 
           if (!isMountedRef.current) return;
 
-          // CRITICAL: Check if this is an auth error or data error
-          if (isAuthError(profileError)) {
-            console.log('[AuthContext] Auth error detected - logging out');
-            setState(LOGGED_OUT_STATE);
-          } else {
-            console.warn('[AuthContext] Data error detected - NOT logging out');
-            // Keep the session, just mark as not loading
-            // The user can retry or we can show an error UI
-            setState(prev => ({
-              ...prev,
-              isLoading: false,
-              isAuthenticated: true, // Session might still be valid
-            }));
-          }
+          // ANY profile fetch error → force logout
+          await forceLogout('Profile fetch failed: ' + errorMessage);
         }
       } catch (error) {
-        console.error('[AuthContext] Initialization error:', error);
+        const errorMessage = (error as Error).message || 'Unknown error';
+        console.error('[AuthContext] Initialization error:', errorMessage);
+        console.warn('[AuthContext] Invalid session state - initialization failed');
 
         if (!isMountedRef.current) return;
 
-        // CRITICAL: Check if this is an auth error
-        if (isAuthError(error)) {
-          setState(LOGGED_OUT_STATE);
-        } else {
-          // Non-auth error - don't force logout, just stop loading
-          console.warn('[AuthContext] Non-auth initialization error - NOT logging out');
-          setState(prev => ({ ...prev, isLoading: false }));
-        }
+        await forceLogout('Initialization failed: ' + errorMessage);
       }
     }
 
@@ -296,40 +310,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Skip if unmounted
         if (!isMountedRef.current) return;
 
-        // Handle runtime events
-        // ONLY logout on explicit SIGNED_OUT event
+        // Handle SIGNED_OUT
         if (event === 'SIGNED_OUT') {
           console.log('[AuthContext] Signed out event received');
           setState(LOGGED_OUT_STATE);
+          navigate('/login', { replace: true });
           return;
         }
 
-        // If session becomes null but it's not a SIGNED_OUT event,
-        // verify before logging out (SIGNED_OUT is already handled above)
+        // If session becomes null
         if (!session) {
-          console.warn('[AuthContext] Session null - verifying...');
-          const { data: { session: verifiedSession } } = await supabase.auth.getSession();
-          if (!verifiedSession) {
-            console.log('[AuthContext] Verified no session - logging out');
-            setState(LOGGED_OUT_STATE);
-          } else {
-            console.log('[AuthContext] Session still valid - ignoring null event');
-          }
+          console.warn('[AuthContext] Session null - forcing logout');
+          await forceLogout('Session became null');
           return;
         }
 
-        // SIGNED_IN or TOKEN_REFRESHED
+        // SIGNED_IN or TOKEN_REFRESHED - reload profile
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
           console.log('[AuthContext] Session updated, reloading profile...');
           try {
-            const response = await authService.getCurrentUserProfile();
+            const response = await fetchProfileWithTimeout();
             if (isMountedRef.current && response && response.profile) {
               setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
             }
           } catch (err) {
             console.error('[AuthContext] Profile reload error:', err);
-            // CRITICAL: Don't change state on profile reload error
-            // The session is still valid, we just couldn't load the profile
+            // On profile reload error after auth event, force logout
+            if (isMountedRef.current) {
+              await forceLogout((err as Error).message || 'Profile reload failed');
+            }
           }
         }
       }
@@ -339,32 +348,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       console.log('[AuthContext] Unmounting...');
       isMountedRef.current = false;
-      clearTimeout(safetyTimeout);
       authListener?.subscription.unsubscribe();
     };
   }, []); // Empty deps - run once on mount
 
   // ================================================================
-  // LOGIN
+  // LOGIN - Only navigates to dashboard AFTER profile is loaded
   // ================================================================
   const login = useCallback(async (email: string, password: string) => {
-    const response = await authService.login({ email, password });
-    setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
-    navigate('/dashboard');
-  }, [navigate]);
+    try {
+      // This function returns profile data
+      const response = await authService.login({ email, password });
+
+      // ONLY navigate if profile is successfully loaded
+      if (response && response.profile) {
+        setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
+        navigate('/dashboard');
+      } else {
+        throw new Error('Login successful but profile not found');
+      }
+    } catch (error) {
+      console.error('[AuthContext] Login error:', error);
+      // On any login error, ensure clean state
+      await forceLogout((error as Error).message || 'Login failed');
+      throw error; // Re-throw to let the login form display the error
+    }
+  }, [navigate, forceLogout]);
 
   // ================================================================
   // LOGOUT
   // ================================================================
   const logout = useCallback(async () => {
-    try {
-      await authService.logout();
-    } catch (err) {
-      console.error('[AuthContext] Logout error:', err);
-    }
-    setState(LOGGED_OUT_STATE);
-    navigate('/login');
-  }, [navigate]);
+    await forceLogout('User initiated logout');
+  }, [forceLogout]);
 
   // ================================================================
   // SET SELECTED OUTLET
@@ -378,7 +394,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ================================================================
   const refreshProfile = useCallback(async () => {
     try {
-      const response = await authService.getCurrentUserProfile();
+      const response = await fetchProfileWithTimeout();
       if (response && response.profile) {
         setState(prev => ({
           ...buildAuthState(response.profile, response.outlets, response.selectedOutlet),
@@ -388,8 +404,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (err) {
       console.error('[AuthContext] Refresh profile error:', err);
+      // On refresh error, force logout
+      await forceLogout((err as Error).message || 'Profile refresh failed');
     }
-  }, []);
+  }, [fetchProfileWithTimeout, forceLogout]);
 
   // ================================================================
   // CONTEXT VALUE

@@ -332,7 +332,7 @@ export interface SubscriptionPriceHistory {
 // EVENT TYPES (PHASE 4)
 // ================================================================
 
-export type EventStatus = 'planned' | 'completed' | 'cancelled';
+export type EventStatus = 'planned' | 'completed' | 'cancelled' | 'archived';
 
 export interface Event {
   id: string;

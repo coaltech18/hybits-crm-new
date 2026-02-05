@@ -409,3 +409,127 @@ export async function cancelEvent(
     throw new Error(error.message);
   }
 }
+
+/**
+ * Archive event
+ * - Sets status to 'archived'
+ * - Event is hidden from active views but data is preserved
+ * - Use when event is completed but no longer relevant
+ */
+export async function archiveEvent(
+  userId: string,
+  eventId: string
+): Promise<void> {
+  // Get user role
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
+
+  // Accountants cannot archive events
+  if (profile.role === 'accountant') {
+    throw new Error('Accountants do not have permission to archive events');
+  }
+
+  // Verify event exists
+  const event = await getEventById(eventId);
+  if (!event) {
+    throw new Error('Event not found');
+  }
+
+  if (event.status === 'archived') {
+    throw new Error('Event is already archived');
+  }
+
+  // Archive event
+  const { error } = await supabase
+    .from('events')
+    .update({ status: 'archived' })
+    .eq('id', eventId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Delete event (CONDITIONAL)
+ * 
+ * BUSINESS RULES:
+ * - Events with invoices CANNOT be deleted
+ * - Events without invoices CAN be deleted
+ * 
+ * This service performs a pre-check before attempting delete.
+ * The database trigger provides a second safety net.
+ */
+export async function deleteEvent(
+  userId: string,
+  eventId: string
+): Promise<void> {
+  // Get user role
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
+
+  // Accountants cannot delete events
+  if (profile.role === 'accountant') {
+    throw new Error('Accountants do not have permission to delete events');
+  }
+
+  // Verify event exists
+  const event = await getEventById(eventId);
+  if (!event) {
+    throw new Error('Event not found');
+  }
+
+  // ================================================================
+  // PRE-CHECK: Does this event have invoices?
+  // ================================================================
+  const { count: invoiceCount, error: countError } = await supabase
+    .from('invoices')
+    .select('id', { count: 'exact', head: true })
+    .eq('event_id', eventId);
+
+  if (countError) {
+    throw new Error(`Failed to check invoices: ${countError.message}`);
+  }
+
+  // BLOCK: Event has invoices
+  if (invoiceCount && invoiceCount > 0) {
+    throw new Error(
+      `This event has ${invoiceCount} invoice(s) and cannot be deleted. ` +
+      'Archive or cancel the event instead.'
+    );
+  }
+
+  // ================================================================
+  // SAFE TO DELETE: No invoices exist
+  // ================================================================
+  const { error } = await supabase
+    .from('events')
+    .delete()
+    .eq('id', eventId);
+
+  if (error) {
+    // Catch DB trigger error and convert to business message
+    if (error.message.includes('cannot be deleted') ||
+      error.message.includes('invoice')) {
+      throw new Error(
+        'This event has invoices and cannot be deleted. ' +
+        'Archive or cancel the event instead.'
+      );
+    }
+    throw new Error(error.message);
+  }
+}

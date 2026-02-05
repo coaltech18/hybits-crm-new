@@ -31,7 +31,7 @@ export default function EventDetailPage() {
     try {
       setLoading(true);
       const data = await getEventById(id);
-      
+
       if (!data) {
         setError('Event not found or you do not have access');
         return;
@@ -92,6 +92,7 @@ export default function EventDetailPage() {
     planned: 'default' as const,
     completed: 'success' as const,
     cancelled: 'secondary' as const,
+    archived: 'secondary' as const,
   };
 
   const canEdit = event.status === 'planned';
@@ -110,7 +111,7 @@ export default function EventDetailPage() {
               <Link to={`/events/${id}/edit`}>
                 <Button variant="outline">Edit</Button>
               </Link>
-              
+
               <Button
                 variant="outline"
                 onClick={() => setConfirmAction('complete')}
@@ -118,7 +119,7 @@ export default function EventDetailPage() {
               >
                 Complete
               </Button>
-              
+
               <Button
                 variant="destructive"
                 onClick={() => setConfirmAction('cancel')}

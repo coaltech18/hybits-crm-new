@@ -393,39 +393,13 @@ export async function cancelInvoice(userId: string, invoiceId: string): Promise<
   await updateInvoiceStatus(userId, invoiceId, { status: 'cancelled' });
 }
 
-/**
- * Delete draft invoice (only drafts can be deleted)
- */
-export async function deleteInvoice(userId: string, invoiceId: string): Promise<void> {
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .single();
+// ================================================================
+// DELETE INVOICE - NOT ALLOWED
+// ================================================================
+// Invoices are GST legal documents and CANNOT be deleted.
+// Use cancelInvoice() for cancellation.
+// Future scope: voidInvoice(), creditNote()
+//
+// The database has a BEFORE DELETE trigger that blocks all deletes.
+// ================================================================
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to delete invoices');
-  }
-
-  const invoice = await getInvoiceById(invoiceId);
-  if (!invoice) {
-    throw new Error('Invoice not found');
-  }
-
-  if (invoice.status !== 'draft') {
-    throw new Error('Only draft invoices can be deleted');
-  }
-
-  const { error } = await supabase
-    .from('invoices')
-    .delete()
-    .eq('id', invoiceId);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-}

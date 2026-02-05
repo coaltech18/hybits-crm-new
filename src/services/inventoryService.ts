@@ -341,3 +341,129 @@ export async function getInventoryCategories(userId: string): Promise<string[]> 
   const categories = [...new Set(data?.map(item => item.category) || [])];
   return categories.sort();
 }
+
+/**
+ * Mark inventory item as inactive (soft delete)
+ * Alias for deactivateInventoryItem - for business-friendly naming
+ * 
+ * @param userId - Current user ID
+ * @param itemId - Inventory item ID
+ */
+export async function markInventoryItemInactive(
+  userId: string,
+  itemId: string
+): Promise<void> {
+  return deactivateInventoryItem(userId, itemId);
+}
+
+/**
+ * Reactivate inventory item
+ * 
+ * @param userId - Current user ID
+ * @param itemId - Inventory item ID
+ */
+export async function reactivateInventoryItem(
+  userId: string,
+  itemId: string
+): Promise<void> {
+  const roleData = await getUserRoleAndOutlets(userId);
+
+  // Accountants are read-only
+  if (roleData.role === 'accountant') {
+    throw new Error('Accountants cannot reactivate inventory items');
+  }
+
+  // Fetch item to check outlet
+  const existingItem = await getInventoryItemById(userId, itemId);
+
+  // Managers: Validate outlet assignment
+  if (roleData.role === 'manager') {
+    if (!roleData.outletIds || !roleData.outletIds.includes(existingItem.outlet_id)) {
+      throw new Error('You can only reactivate items for your assigned outlets');
+    }
+  }
+
+  const { error } = await supabase
+    .from('inventory_items')
+    .update({ is_active: true })
+    .eq('id', itemId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Delete inventory item (CONDITIONAL)
+ * 
+ * BUSINESS RULES:
+ * - Items with movement history CANNOT be deleted
+ * - Items without movements CAN be deleted
+ * 
+ * This service performs a pre-check before attempting delete.
+ * The database trigger provides a second safety net.
+ * 
+ * @param userId - Current user ID
+ * @param itemId - Inventory item ID
+ */
+export async function deleteInventoryItem(
+  userId: string,
+  itemId: string
+): Promise<void> {
+  const roleData = await getUserRoleAndOutlets(userId);
+
+  // Accountants are read-only
+  if (roleData.role === 'accountant') {
+    throw new Error('Accountants cannot delete inventory items');
+  }
+
+  // Fetch item to check outlet
+  const existingItem = await getInventoryItemById(userId, itemId);
+
+  // Managers: Validate outlet assignment
+  if (roleData.role === 'manager') {
+    if (!roleData.outletIds || !roleData.outletIds.includes(existingItem.outlet_id)) {
+      throw new Error('You can only delete items for your assigned outlets');
+    }
+  }
+
+  // ================================================================
+  // PRE-CHECK: Does this item have movements?
+  // ================================================================
+  const { count: movementCount, error: countError } = await supabase
+    .from('inventory_movements')
+    .select('id', { count: 'exact', head: true })
+    .eq('item_id', itemId);
+
+  if (countError) {
+    throw new Error(`Failed to check movements: ${countError.message}`);
+  }
+
+  // BLOCK: Item has movements
+  if (movementCount && movementCount > 0) {
+    throw new Error(
+      `This inventory item has ${movementCount} movement record(s) and cannot be deleted. ` +
+      'Mark the item as inactive instead.'
+    );
+  }
+
+  // ================================================================
+  // SAFE TO DELETE: No movements exist
+  // ================================================================
+  const { error } = await supabase
+    .from('inventory_items')
+    .delete()
+    .eq('id', itemId);
+
+  if (error) {
+    // Catch DB trigger error and convert to business message
+    if (error.message.includes('cannot be deleted') ||
+      error.message.includes('movement')) {
+      throw new Error(
+        'This inventory item has movement history and cannot be deleted. ' +
+        'Mark the item as inactive instead.'
+      );
+    }
+    throw new Error(error.message);
+  }
+}

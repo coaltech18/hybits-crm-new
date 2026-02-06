@@ -26,7 +26,7 @@ export async function getPayments(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -120,7 +120,7 @@ export async function getPaymentById(paymentId: string): Promise<Payment | null>
     .from('payments_with_details')
     .select('*')
     .eq('id', paymentId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -159,7 +159,7 @@ export async function getInvoiceWithPaymentStatus(
     .from('invoices_with_payment_status')
     .select('*')
     .eq('id', invoiceId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -187,7 +187,7 @@ export async function createPayment(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -268,7 +268,7 @@ export async function createPayment(
       notes: input.notes || null,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (paymentError) {
     throw new Error(paymentError.message);
@@ -300,7 +300,7 @@ export async function updatePayment(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -379,7 +379,7 @@ export async function updatePayment(
     .update(updates)
     .eq('id', paymentId)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -413,7 +413,7 @@ export async function deactivatePayment(userId: string, paymentId: string): Prom
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -433,7 +433,7 @@ export async function deactivatePayment(userId: string, paymentId: string): Prom
     .from('invoices')
     .select('outlet_id')
     .eq('id', payment.invoice_id)
-    .single();
+    .maybeSingle();
 
   if (!invoice) {
     throw new Error('Invoice not found');
@@ -471,7 +471,7 @@ export async function reactivatePayment(userId: string, paymentId: string): Prom
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -491,7 +491,7 @@ export async function reactivatePayment(userId: string, paymentId: string): Prom
     .from('invoices')
     .select('outlet_id')
     .eq('id', payment.invoice_id)
-    .single();
+    .maybeSingle();
 
   if (!invoice) {
     throw new Error('Invoice not found');

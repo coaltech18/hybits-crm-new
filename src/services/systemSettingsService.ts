@@ -32,7 +32,7 @@ async function verifyAdminRole(userId: string): Promise<void> {
     .from('user_profiles')
     .select('role, is_active')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (error || !profile) {
     throw new Error('User profile not found');
@@ -198,7 +198,7 @@ export async function getSettingHistory(
     .from('system_settings')
     .select('key, value, updated_at, updated_by')
     .eq('key', key)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to fetch setting history: ${error.message}`);

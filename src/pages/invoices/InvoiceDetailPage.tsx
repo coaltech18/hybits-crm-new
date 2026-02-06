@@ -302,7 +302,7 @@ export default function InvoiceDetailPage() {
                   <td className="text-right py-2 px-2">{item.tax_rate}%</td>
                   <td className="text-right py-2 px-2">{formatCurrency(item.tax_amount)}</td>
                   <td className="text-right py-2 px-2 font-medium">
-                    {formatCurrency(roundCurrency(item.line_total + item.tax_amount))}
+                    {formatCurrency(item.line_total + item.tax_amount)}
                   </td>
                 </tr>
               ))}

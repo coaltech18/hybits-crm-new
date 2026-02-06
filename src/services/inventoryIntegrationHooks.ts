@@ -20,7 +20,7 @@ async function getSystemUserId(referenceType: 'subscription' | 'event', referenc
       .from('subscriptions')
       .select('created_by')
       .eq('id', referenceId)
-      .single();
+      .maybeSingle();
 
     return data?.created_by || '';
   } else {
@@ -28,7 +28,7 @@ async function getSystemUserId(referenceType: 'subscription' | 'event', referenc
       .from('events')
       .select('created_by')
       .eq('id', referenceId)
-      .single();
+      .maybeSingle();
 
     return data?.created_by || '';
   }
@@ -59,7 +59,7 @@ export async function onSubscriptionActivated(subscriptionId: string): Promise<v
       .from('subscriptions')
       .select('*, outlet_id')
       .eq('id', subscriptionId)
-      .single();
+      .maybeSingle();
 
     if (subError || !subscription) {
       throw new Error('Subscription not found');
@@ -122,7 +122,7 @@ export async function onSubscriptionCancelled(subscriptionId: string): Promise<v
       .from('subscriptions')
       .select('*, outlet_id')
       .eq('id', subscriptionId)
-      .single();
+      .maybeSingle();
 
     if (subError || !subscription) {
       throw new Error('Subscription not found');
@@ -191,7 +191,7 @@ export async function onEventPlanned(eventId: string): Promise<void> {
       .from('events')
       .select('*, outlet_id')
       .eq('id', eventId)
-      .single();
+      .maybeSingle();
 
     if (eventError || !event) {
       throw new Error('Event not found');
@@ -286,7 +286,7 @@ export async function onEventCancelled(eventId: string): Promise<void> {
       .from('events')
       .select('*, outlet_id')
       .eq('id', eventId)
-      .single();
+      .maybeSingle();
 
     if (eventError || !event) {
       throw new Error('Event not found');

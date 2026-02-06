@@ -53,8 +53,7 @@ export async function getDashboardStats(_userId: string): Promise<DashboardStats
         supabase
             .from('subscriptions')
             .select('id', { count: 'exact', head: true })
-            .eq('status', 'active')
-            .eq('is_active', true),
+            .eq('status', 'active'),
 
         // 3. Total issued invoices
         supabase

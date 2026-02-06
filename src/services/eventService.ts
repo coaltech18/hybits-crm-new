@@ -27,7 +27,7 @@ export async function getEvents(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -127,7 +127,7 @@ export async function getEventById(eventId: string): Promise<Event | null> {
       )
     `)
     .eq('id', eventId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -156,7 +156,7 @@ export async function createEvent(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -231,7 +231,7 @@ export async function createEvent(
       clients (id, name, client_type, phone),
       outlets (id, name, code, city)
     `)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -257,7 +257,7 @@ export async function updateEvent(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -304,7 +304,7 @@ export async function updateEvent(
       clients (id, name, client_type, phone),
       outlets (id, name, code, city)
     `)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -328,7 +328,7 @@ export async function completeEvent(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -374,7 +374,7 @@ export async function cancelEvent(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -425,7 +425,7 @@ export async function archiveEvent(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -476,7 +476,7 @@ export async function deleteEvent(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');

@@ -13,7 +13,7 @@ import { Select } from '@/components/ui/Select';
 import { formatDate } from '@/utils/billingDate';
 
 export default function EventsPage() {
-  const { user } = useAuth();
+  const { user, isAuthReady } = useAuth();
   const [events, setEvents] = useState<Event[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,8 +33,9 @@ export default function EventsPage() {
   } | null>(null);
 
   useEffect(() => {
+    if (!isAuthReady) return;
     loadData();
-  }, [user?.id, selectedClient, selectedStatus]);
+  }, [isAuthReady, selectedClient, selectedStatus]);
 
   async function loadData() {
     if (!user?.id) return;
@@ -93,7 +94,7 @@ export default function EventsPage() {
     return <Badge variant={variants[status]}>{status.toUpperCase()}</Badge>;
   }
 
-  if (loading) {
+  if (loading && events.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Spinner size="lg" />

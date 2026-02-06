@@ -13,7 +13,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
 
 export function ClientsPage() {
-  const { user, isAccountant } = useAuth();
+  const { user, isAccountant, isAuthReady } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -22,8 +22,9 @@ export function ClientsPage() {
   });
 
   useEffect(() => {
+    if (!isAuthReady) return;
     loadClients();
-  }, [filters]);
+  }, [isAuthReady, filters]);
 
   const loadClients = async () => {
     if (!user) return;

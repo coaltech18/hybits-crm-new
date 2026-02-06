@@ -14,7 +14,7 @@ import { formatDate, formatBillingCycle } from '@/utils/billingDate';
 import { formatCurrency } from '@/utils/format';
 
 export default function SubscriptionsPage() {
-  const { user } = useAuth();
+  const { user, isAuthReady } = useAuth();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,8 +34,9 @@ export default function SubscriptionsPage() {
   } | null>(null);
 
   useEffect(() => {
+    if (!isAuthReady) return;
     loadData();
-  }, [user?.id, selectedClient, selectedStatus]);
+  }, [isAuthReady, selectedClient, selectedStatus]);
 
   async function loadData() {
     if (!user?.id) return;
@@ -95,7 +96,7 @@ export default function SubscriptionsPage() {
     return <Badge variant={variants[status]}>{status.toUpperCase()}</Badge>;
   }
 
-  if (loading) {
+  if (loading && subscriptions.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Spinner size="lg" />

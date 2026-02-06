@@ -66,7 +66,7 @@ export async function getInvoices(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -133,7 +133,7 @@ export async function getInvoiceById(invoiceId: string): Promise<Invoice | null>
       events (id, event_name, event_date, event_type)
     `)
     .eq('id', invoiceId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -175,7 +175,7 @@ export async function createInvoice(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -280,7 +280,7 @@ export async function createInvoice(
       grand_total: totals.grand_total,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (invoiceError) {
     throw new Error(invoiceError.message);
@@ -332,7 +332,7 @@ export async function updateInvoiceStatus(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -365,7 +365,7 @@ export async function updateInvoiceStatus(
     .update(updates)
     .eq('id', invoiceId)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);

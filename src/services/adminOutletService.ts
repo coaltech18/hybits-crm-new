@@ -52,7 +52,7 @@ async function verifyAdminRole(userId: string): Promise<void> {
     .from('user_profiles')
     .select('role, is_active')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (error || !profile) {
     throw new Error('User profile not found');
@@ -99,7 +99,7 @@ export async function getOutletById(
     .from('admin_outlets_summary')
     .select('*')
     .eq('outlet_id', outletId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to fetch outlet: ${error.message}`);
@@ -145,7 +145,7 @@ export async function createOutlet(
       is_active: true,
     })
     .select('id')
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to create outlet: ${error.message}`);
@@ -236,7 +236,7 @@ export async function canDeactivateOutlet(
     .from('outlets')
     .select('is_active')
     .eq('id', outletId)
-    .single();
+    .maybeSingle();
 
   if (!outlet?.is_active) {
     return { canDeactivate: false, reason: 'Outlet is already inactive' };

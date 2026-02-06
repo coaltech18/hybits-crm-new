@@ -28,7 +28,7 @@ import AddEditInventoryItemModal from '@/components/inventory/AddEditInventoryIt
 // ================================================================
 
 export default function InventoryItemsPage() {
-  const { user, outlets } = useAuth();
+  const { user, outlets, isAuthReady } = useAuth();
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,12 +55,14 @@ export default function InventoryItemsPage() {
   const availableOutlets = outlets || [];
 
   useEffect(() => {
+    if (!isAuthReady) return;
     loadData();
-  }, [user?.id, outletId, category, isActive]);
+  }, [isAuthReady, outletId, category, isActive]);
 
   useEffect(() => {
+    if (!isAuthReady) return;
     loadCategories();
-  }, [user?.id]);
+  }, [isAuthReady]);
 
   async function loadData() {
     if (!user?.id) return;

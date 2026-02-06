@@ -26,7 +26,7 @@ async function getUserRole(userId: string): Promise<string> {
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -131,7 +131,7 @@ export async function createStockIn(
       created_by: userId,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     // Surface DB error directly (e.g., outlet mismatch, invalid item)
@@ -188,7 +188,7 @@ export async function allocateInventory(
       created_by: userId,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     // Surface DB error directly (e.g., "Insufficient stock available")
@@ -245,7 +245,7 @@ export async function returnInventory(
       created_by: userId,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     // Surface DB error directly (e.g., "Cannot return more than outstanding")
@@ -307,7 +307,7 @@ export async function markDamage(
       created_by: userId,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     // Surface DB error directly
@@ -369,7 +369,7 @@ export async function markLoss(
       created_by: userId,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     // Surface DB error directly
@@ -427,7 +427,7 @@ export async function adjustInventory(
       created_by: userId,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     // Surface DB error directly (e.g., "Only admins can perform adjustments")

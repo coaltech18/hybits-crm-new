@@ -40,7 +40,7 @@ export async function login(credentials: LoginCredentials): Promise<LoginRespons
     .from('user_profiles')
     .select('*')
     .eq('id', authData.user.id)
-    .single();
+    .maybeSingle();
 
   if (profileError || !profile) {
     throw new Error('User profile not found. Please contact support.');
@@ -141,7 +141,7 @@ export async function getCurrentUserProfile(): Promise<LoginResponse | null> {
     .from('user_profiles')
     .select('*')
     .eq('id', session.user.id)
-    .single();
+    .maybeSingle();
 
   if (profileError || !profile) {
     return null;

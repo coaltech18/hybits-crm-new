@@ -43,7 +43,7 @@ async function verifyAdminRole(userId: string): Promise<void> {
     .from('user_profiles')
     .select('role, is_active')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (error || !profile) {
     throw new Error('User profile not found');
@@ -89,7 +89,7 @@ export async function getUserById(
     .from('admin_users_summary')
     .select('*')
     .eq('user_id', targetUserId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to fetch user: ${error.message}`);
@@ -136,7 +136,7 @@ export async function updateUserRole(
       .from('user_profiles')
       .select('role')
       .eq('id', targetUserId)
-      .single();
+      .maybeSingle();
 
     if (currentProfile?.role === 'admin' && newRole !== 'admin') {
       throw new Error('Cannot downgrade your own admin role');
@@ -148,7 +148,7 @@ export async function updateUserRole(
     .from('user_profiles')
     .select('role')
     .eq('id', targetUserId)
-    .single();
+    .maybeSingle();
 
   if (targetProfile?.role === 'admin' && newRole !== 'admin') {
     const { count, error: countError } = await supabase
@@ -206,7 +206,7 @@ export async function toggleUserActive(
       .from('user_profiles')
       .select('role')
       .eq('id', targetUserId)
-      .single();
+      .maybeSingle();
 
     if (targetProfile?.role === 'admin') {
       const { count, error: countError } = await supabase
@@ -251,7 +251,7 @@ export async function assignUserOutlets(
     .from('user_profiles')
     .select('role')
     .eq('id', targetUserId)
-    .single();
+    .maybeSingle();
 
   if (profileError) {
     throw new Error(`Failed to fetch user profile: ${profileError.message}`);
@@ -307,7 +307,7 @@ export async function canDeactivateUser(
     .from('user_profiles')
     .select('role, is_active')
     .eq('id', targetUserId)
-    .single();
+    .maybeSingle();
 
   if (!targetProfile?.is_active) {
     return { canDeactivate: false, reason: 'User is already inactive' };

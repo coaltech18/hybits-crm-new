@@ -34,7 +34,7 @@ export async function getSubscriptions(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -126,7 +126,7 @@ export async function getSubscriptionById(subscriptionId: string): Promise<Subsc
       )
     `)
     .eq('id', subscriptionId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -161,7 +161,7 @@ export async function createSubscription(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -270,7 +270,7 @@ export async function createSubscription(
       clients (id, name, client_type, phone),
       outlets (id, name, code, city)
     `)
-    .single();
+    .maybeSingle();
 
   if (error) {
     // Convert database constraint errors to user-friendly messages
@@ -350,7 +350,7 @@ export async function updateSubscription(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -443,7 +443,7 @@ export async function updateSubscription(
       clients (id, name, client_type, phone),
       outlets (id, name, code, city)
     `)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -467,7 +467,7 @@ export async function pauseSubscription(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -514,7 +514,7 @@ export async function resumeSubscription(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -572,7 +572,7 @@ export async function cancelSubscription(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');

@@ -25,7 +25,7 @@ async function getUserRoleAndOutlets(userId: string): Promise<{
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -123,7 +123,7 @@ export async function getInventoryItemById(
       )
     `)
     .eq('id', itemId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -191,7 +191,7 @@ export async function createInventoryItem(
       created_by: userId,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (itemError) {
     throw new Error(itemError.message);
@@ -256,7 +256,7 @@ export async function updateInventoryItem(
     })
     .eq('id', itemId)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);

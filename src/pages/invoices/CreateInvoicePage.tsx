@@ -85,6 +85,12 @@ export default function CreateInvoicePage() {
     setItems(newItems);
   }
 
+  /**
+   * PREVIEW CALCULATION ONLY
+   * This displays estimated totals to the user before submission.
+   * The backend (invoiceService.ts) recalculates using identical logic.
+   * After save, all displays use the stored database values.
+   */
   function calculateTotals() {
     let subtotal = 0;
     let taxTotal = 0;

@@ -27,7 +27,7 @@ export async function getClients(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -107,7 +107,7 @@ export async function getClientById(clientId: string): Promise<Client | null> {
       )
     `)
     .eq('id', clientId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     if (error.code === 'PGRST116') {
@@ -131,7 +131,7 @@ export async function createClient(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -195,7 +195,7 @@ export async function createClient(
         city
       )
     `)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -217,7 +217,7 @@ export async function updateClient(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -271,7 +271,7 @@ export async function updateClient(
         city
       )
     `)
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
@@ -292,7 +292,7 @@ export async function deactivateClient(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -328,7 +328,7 @@ export async function reactivateClient(
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');

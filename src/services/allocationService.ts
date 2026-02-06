@@ -17,7 +17,7 @@ async function getUserRole(userId: string): Promise<string> {
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (!profile) {
     throw new Error('User profile not found');
@@ -124,7 +124,7 @@ export async function createAllocation(
       is_active: true,
     })
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     // If duplicate, update the existing allocation (increment)
@@ -136,7 +136,7 @@ export async function createAllocation(
         .eq('inventory_item_id', inventoryItemId)
         .eq('reference_type', referenceType)
         .eq('reference_id', referenceId)
-        .single();
+        .maybeSingle();
 
       if (fetchError) {
         throw new Error(fetchError.message);
@@ -152,7 +152,7 @@ export async function createAllocation(
         .eq('reference_type', referenceType)
         .eq('reference_id', referenceId)
         .select()
-        .single();
+        .maybeSingle();
 
       if (updateError) {
         throw new Error(updateError.message);

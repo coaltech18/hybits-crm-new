@@ -21,6 +21,7 @@ import { supabase } from '@/lib/supabase';
 const PROFILE_FETCH_TIMEOUT_MS = 5000;
 
 interface AuthContextValue extends AuthState {
+  isAuthReady: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   setSelectedOutlet: (outletId: string | null) => void;
@@ -257,30 +258,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
 
         } catch (profileError) {
-          const errorMessage = (profileError as Error).message || 'Unknown error';
-
-          // ================================================================
-          // CHECK: Is this an RLS error?
-          // ================================================================
-          const isRLSError =
-            errorMessage.toLowerCase().includes('rls') ||
-            errorMessage.toLowerCase().includes('policy') ||
-            errorMessage.toLowerCase().includes('permission') ||
-            errorMessage.toLowerCase().includes('denied') ||
-            errorMessage.includes('PGRST') ||
-            errorMessage.includes('42501'); // PostgreSQL permission denied code
-
-          if (isRLSError) {
-            console.warn('[AuthContext] Profile fetch failed - RLS/permission error:', errorMessage);
-            console.warn('[AuthContext] Invalid session state - RLS policy blocked access');
-          } else {
-            console.warn('[AuthContext] Profile fetch failed - error:', errorMessage);
-          }
+          console.error('[AuthContext] Profile load failed', profileError);
 
           if (!isMountedRef.current) return;
 
-          // ANY profile fetch error → force logout
-          await forceLogout('Profile fetch failed: ' + errorMessage);
+          // Set profile to null but don't force logout - allow app to continue
+          setState(prev => ({
+            ...prev,
+            profile: null,
+            isLoading: false,
+            isAuthenticated: true, // Session exists, just profile failed
+          }));
         }
       } catch (error) {
         const errorMessage = (error as Error).message || 'Unknown error';
@@ -403,9 +391,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }));
       }
     } catch (err) {
-      console.error('[AuthContext] Refresh profile error:', err);
-      // On refresh error, force logout
-      await forceLogout((err as Error).message || 'Profile refresh failed');
+      console.error('[AuthContext] Profile load failed', err);
+      // On refresh error, just set profile to null - don't force logout
+      setState(prev => ({
+        ...prev,
+        profile: null,
+      }));
     }
   }, [fetchProfileWithTimeout, forceLogout]);
 
@@ -414,6 +405,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ================================================================
   const value: AuthContextValue = {
     ...state,
+    isAuthReady: !state.isLoading && state.isAuthenticated,
     login,
     logout,
     setSelectedOutlet,

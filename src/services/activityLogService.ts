@@ -45,7 +45,7 @@ async function getUserRoleAndOutlets(userId: string): Promise<{
     .from('user_profiles')
     .select('role, is_active')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (error || !profile) {
     throw new Error('User profile not found');

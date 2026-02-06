@@ -1,14 +1,13 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Invoice, InvoiceItem, ClientGstType } from '@/types';
-import { roundCurrency } from '@/utils/format';
 
 // ================================================================
-// INVOICE PDF GENERATOR
+// INVOICE PDF GENERATOR (INR ONLY)
 // ================================================================
 // Generates GST-compliant invoices matching legal requirements.
 // All data comes directly from database (no recalculation).
-// Supports dynamic currency based on outlet settings.
+// Currency is FIXED to INR.
 // ================================================================
 
 interface CompanyDetails {
@@ -17,7 +16,6 @@ interface CompanyDetails {
     gstin: string;
     phone: string;
     email: string;
-    currency?: string; // Optional: defaults to INR
 }
 
 interface InvoicePDFData {
@@ -26,38 +24,22 @@ interface InvoicePDFData {
 }
 
 /**
- * Currency configuration for PDF formatting
+ * Format currency for PDF display (INR ONLY)
  * 
  * NOTE: jsPDF's default fonts (Helvetica, Courier, Times) only support Latin-1 characters.
  * Unicode symbols like ₹ are NOT supported, causing broken rendering.
- * Solution: Use text prefixes which are universally supported.
- */
-const PDF_CURRENCY_CONFIG: Record<string, { prefix: string; locale: string }> = {
-    INR: { prefix: 'Rs.', locale: 'en-IN' },  // Use "Rs." instead of ₹
-    USD: { prefix: '$', locale: 'en-US' },
-    EUR: { prefix: 'EUR', locale: 'de-DE' }, // € not supported in PDF, use EUR
-    GBP: { prefix: 'GBP', locale: 'en-GB' }, // £ may not render, use GBP
-    AED: { prefix: 'AED', locale: 'ar-AE' },
-    SGD: { prefix: 'S$', locale: 'en-SG' },
-};
-
-/**
- * Format currency for PDF display with dynamic currency support
+ * Solution: Use "Rs." prefix which is universally supported.
  * 
  * @param amount - The amount to format
- * @param currencyCode - ISO 4217 currency code (default: INR)
- * @returns Formatted currency string (e.g., "Rs. 1,234.56" or "$ 1,234.56")
+ * @returns Formatted currency string (e.g., "Rs. 1,234.56")
  */
-function formatPdfCurrency(amount: number, currencyCode: string = 'INR'): string {
-    const config = PDF_CURRENCY_CONFIG[currencyCode] || PDF_CURRENCY_CONFIG.INR;
-
-    // Format number with appropriate locale
-    const formattedNumber = new Intl.NumberFormat(config.locale, {
+function formatPdfCurrency(amount: number): string {
+    const formattedNumber = new Intl.NumberFormat('en-IN', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     }).format(amount);
 
-    return `${config.prefix} ${formattedNumber}`;
+    return `Rs. ${formattedNumber}`;
 }
 
 /**
@@ -124,12 +106,6 @@ function calculateGstBreakup(
 export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     const { invoice, companyDetails } = data;
     const doc = new jsPDF();
-
-    // Get currency from company details (default INR)
-    const currency = companyDetails.currency || 'INR';
-
-    // Local currency formatter using dynamic currency
-    const fmtCurrency = (amount: number) => formatPdfCurrency(amount, currency);
 
     const pageWidth = doc.internal.pageSize.getWidth();
     let yPos = 20;
@@ -242,11 +218,11 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
         (index + 1).toString(),
         item.description,
         item.quantity.toString(),
-        fmtCurrency(item.unit_price),
-        fmtCurrency(item.line_total),
+        formatPdfCurrency(item.unit_price),
+        formatPdfCurrency(item.line_total),
         `${item.tax_rate}%`,
-        fmtCurrency(item.tax_amount),
-        fmtCurrency(roundCurrency(item.line_total + item.tax_amount)),
+        formatPdfCurrency(item.tax_amount),
+        formatPdfCurrency(item.line_total + item.tax_amount),
     ]);
 
     autoTable(doc, {
@@ -292,28 +268,28 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     // Subtotal
     doc.setFontSize(10);
     doc.text('Subtotal:', totalsStartX, yPos);
-    doc.text(fmtCurrency(invoice.subtotal), totalsValueX, yPos, { align: 'right' });
+    doc.text(formatPdfCurrency(invoice.subtotal), totalsValueX, yPos, { align: 'right' });
 
     // GST Breakup
     yPos += 6;
     if (gstBreakup.igst > 0) {
         // IGST for SEZ/Export
         doc.text('IGST:', totalsStartX, yPos);
-        doc.text(fmtCurrency(gstBreakup.igst), totalsValueX, yPos, { align: 'right' });
+        doc.text(formatPdfCurrency(gstBreakup.igst), totalsValueX, yPos, { align: 'right' });
     } else {
         // CGST + SGST for Domestic
         doc.text('CGST:', totalsStartX, yPos);
-        doc.text(fmtCurrency(gstBreakup.cgst), totalsValueX, yPos, { align: 'right' });
+        doc.text(formatPdfCurrency(gstBreakup.cgst), totalsValueX, yPos, { align: 'right' });
 
         yPos += 6;
         doc.text('SGST:', totalsStartX, yPos);
-        doc.text(fmtCurrency(gstBreakup.sgst), totalsValueX, yPos, { align: 'right' });
+        doc.text(formatPdfCurrency(gstBreakup.sgst), totalsValueX, yPos, { align: 'right' });
     }
 
     // Total Tax
     yPos += 6;
     doc.text('Total Tax:', totalsStartX, yPos);
-    doc.text(fmtCurrency(invoice.tax_total), totalsValueX, yPos, { align: 'right' });
+    doc.text(formatPdfCurrency(invoice.tax_total), totalsValueX, yPos, { align: 'right' });
 
     // Grand Total
     yPos += 8;
@@ -323,7 +299,7 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.text('Grand Total:', totalsStartX, yPos + 5);
-    doc.text(fmtCurrency(invoice.grand_total), totalsValueX, yPos + 5, { align: 'right' });
+    doc.text(formatPdfCurrency(invoice.grand_total), totalsValueX, yPos + 5, { align: 'right' });
 
     // ================================================================
     // FOOTER
@@ -358,8 +334,6 @@ export function downloadInvoicePDF(invoice: Invoice): void {
         gstin: invoice.outlets?.gstin || 'GSTIN not available',
         phone: invoice.outlets?.phone || '-',
         email: invoice.outlets?.email || '-',
-        // Dynamic currency from outlet, default INR
-        currency: invoice.outlets?.currency || 'INR',
     };
 
     const doc = generateInvoicePDF({ invoice, companyDetails });

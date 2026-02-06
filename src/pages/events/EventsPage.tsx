@@ -35,8 +35,7 @@ export default function EventsPage() {
   useEffect(() => {
     if (!isAuthReady) return;
     loadData();
-  }, [isAuthReady, selectedClient, selectedStatus]);
-
+  }, [isAuthReady, user?.id, selectedClient, selectedStatus]);
   async function loadData() {
     if (!user?.id) return;
 

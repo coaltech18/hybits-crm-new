@@ -204,6 +204,10 @@ export async function getSettingHistory(
     throw new Error(`Failed to fetch setting history: ${error.message}`);
   }
 
+  if (!data) {
+    throw new Error(`Setting '${key}' not found`);
+  }
+
   return {
     key: data.key,
     current_value: data.value,

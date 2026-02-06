@@ -105,6 +105,10 @@ export async function getOutletById(
     throw new Error(`Failed to fetch outlet: ${error.message}`);
   }
 
+  if (!data) {
+    throw new Error('Outlet not found');
+  }
+
   return data;
 }
 
@@ -149,6 +153,10 @@ export async function createOutlet(
 
   if (error) {
     throw new Error(`Failed to create outlet: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error('Failed to create outlet: No data returned');
   }
 
   return { outlet_id: data.id };

@@ -25,11 +25,12 @@ dist-ssr
 # env
 .env
 .env.*
-
+!.env.example
 # build outputs
 build/
 dist/
 *.bundle.js
+index-[a-f0-9]*.js*.bundle.js
 index-*.js
 
 # Playwright

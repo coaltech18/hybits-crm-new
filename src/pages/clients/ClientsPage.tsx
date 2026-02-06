@@ -24,8 +24,7 @@ export function ClientsPage() {
   useEffect(() => {
     if (!isAuthReady) return;
     loadClients();
-  }, [isAuthReady, filters]);
-
+  }, [isAuthReady, filters, user]);
   const loadClients = async () => {
     if (!user) return;
 

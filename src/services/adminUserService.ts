@@ -95,6 +95,10 @@ export async function getUserById(
     throw new Error(`Failed to fetch user: ${error.message}`);
   }
 
+  if (!data) {
+    throw new Error('User not found');
+  }
+
   return data;
 }
 
@@ -255,6 +259,10 @@ export async function assignUserOutlets(
 
   if (profileError) {
     throw new Error(`Failed to fetch user profile: ${profileError.message}`);
+  }
+
+  if (!targetProfile) {
+    throw new Error('User profile not found');
   }
 
   if (targetProfile.role !== 'manager') {

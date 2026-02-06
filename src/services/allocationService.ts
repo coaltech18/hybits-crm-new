@@ -142,6 +142,10 @@ export async function createAllocation(
         throw new Error(fetchError.message);
       }
 
+      if (!existing) {
+        throw new Error('Failed to fetch existing allocation');
+      }
+
       // Then update with incremented value
       const { data: updated, error: updateError } = await supabase
         .from('inventory_allocations')

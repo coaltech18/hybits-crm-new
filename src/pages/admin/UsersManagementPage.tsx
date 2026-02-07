@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Users, Plus, Power, MapPin } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import {
   getUsers,
   createUser,
@@ -11,6 +12,7 @@ import {
 } from '@/services/adminUserService';
 import { AddEditUserModal, type UserFormData } from '@/components/admin/AddEditUserModal';
 import { ConfirmationModal } from '@/components/admin/ConfirmationModal';
+import type { Outlet } from '@/types';
 
 // ================================================================
 // USERS MANAGEMENT PAGE (ADMIN ONLY)
@@ -19,8 +21,9 @@ import { ConfirmationModal } from '@/components/admin/ConfirmationModal';
 // ================================================================
 
 export default function UsersManagementPage() {
-  const { user, outlets } = useAuth();
+  const { user } = useAuth();
   const [users, setUsers] = useState<UserSummary[]>([]);
+  const [allOutlets, setAllOutlets] = useState<Outlet[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,6 +36,7 @@ export default function UsersManagementPage() {
 
   useEffect(() => {
     loadUsers();
+    loadOutlets();
   }, [user]);
 
   async function loadUsers() {
@@ -47,6 +51,24 @@ export default function UsersManagementPage() {
       setError(err instanceof Error ? err.message : 'Failed to load users');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadOutlets() {
+    try {
+      const { data, error: outletsError } = await supabase
+        .from('outlets')
+        .select('*')
+        .order('name');
+
+      if (outletsError) {
+        console.error('Error fetching outlets:', outletsError);
+        return;
+      }
+
+      setAllOutlets(data || []);
+    } catch (err) {
+      console.error('Error loading outlets:', err);
     }
   }
 
@@ -273,7 +295,7 @@ export default function UsersManagementPage() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onSubmit={handleCreateUser}
-        outlets={outlets || []}
+        outlets={allOutlets}
         mode="create"
       />
 
@@ -305,7 +327,7 @@ export default function UsersManagementPage() {
           }}
           onSubmit={handleAssignOutlets}
           user={selectedUser}
-          outlets={outlets || []}
+          outlets={allOutlets}
         />
       )}
     </div>

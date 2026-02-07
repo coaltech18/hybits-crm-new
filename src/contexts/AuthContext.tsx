@@ -17,8 +17,8 @@ import { supabase } from '@/lib/supabase';
 //
 // ================================================================
 
-// Timeout constant (5 seconds)
-const PROFILE_FETCH_TIMEOUT_MS = 5000;
+// Timeout constant (15 seconds - increased for production networks)
+const PROFILE_FETCH_TIMEOUT_MS = 15000;
 
 interface AuthContextValue extends AuthState {
   isAuthReady: boolean;
@@ -331,19 +331,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
           } catch (err) {
             console.error('[AuthContext] Profile reload error:', err);
-            // Only force logout if we don't already have a valid profile
-            // This prevents the logout loop when profile reload fails but login already succeeded
-            if (isMountedRef.current) {
-              setState(currentState => {
-                if (currentState.isAuthenticated && currentState.profile) {
-                  console.log('[AuthContext] Profile reload failed but already authenticated, ignoring');
-                  return currentState; // Keep current valid state
-                }
-                // Only force logout if we have no valid profile
-                forceLogout((err as Error).message || 'Profile reload failed');
-                return currentState;
-              });
-            }
+            // Don't force logout on profile reload failures - keep existing session
+            // The user is already authenticated, just couldn't refresh their profile
+            console.log('[AuthContext] Profile reload failed, keeping current session');
           }
         }
       }

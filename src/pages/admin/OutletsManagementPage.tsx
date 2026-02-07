@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Building2, Plus, Edit, Power, Trash2, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import {
   getOutlets,
   createOutlet,
@@ -24,7 +26,10 @@ import { ConfirmationModal } from '@/components/admin/ConfirmationModal';
 // ================================================================
 
 export default function OutletsManagementPage() {
+  useDocumentTitle('Outlet Management');
+
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [outlets, setOutlets] = useState<OutletSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -86,6 +91,7 @@ export default function OutletsManagementPage() {
     };
 
     await createOutlet(user.id, input);
+    showToast('Outlet created successfully', 'success');
     await loadOutlets();
   }
 
@@ -101,6 +107,7 @@ export default function OutletsManagementPage() {
     };
 
     await updateOutlet(user.id, selectedOutlet.outlet_id, input);
+    showToast('Outlet updated successfully', 'success');
     await loadOutlets();
   }
 
@@ -109,8 +116,10 @@ export default function OutletsManagementPage() {
 
     if (toggleAction === 'deactivate') {
       await deactivateOutlet(user.id, selectedOutlet.outlet_id);
+      showToast('Outlet deactivated', 'success');
     } else {
       await activateOutlet(user.id, selectedOutlet.outlet_id);
+      showToast('Outlet activated', 'success');
     }
 
     await loadOutlets();
@@ -124,6 +133,7 @@ export default function OutletsManagementPage() {
 
     try {
       await deleteOutlet(user.id, selectedOutlet.outlet_id);
+      showToast('Outlet deleted permanently', 'success');
       await loadOutlets();
       setIsDeleteModalOpen(false);
       setSelectedOutlet(null);

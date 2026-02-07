@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Edit, Power, RotateCcw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getClientById, deactivateClient, reactivateClient } from '@/services/clientService';
 import type { Client } from '@/types';
 import { Button } from '@/components/ui/Button';
@@ -9,11 +11,18 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 export function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, isAccountant } = useAuth();
+  const { showToast } = useToast();
+
+  // Dynamic document title
+  const [pageTitle, setPageTitle] = useState('Client Details');
+  useDocumentTitle(pageTitle);
+
   const [client, setClient] = useState<Client | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -36,6 +45,7 @@ export function ClientDetailPage() {
       const data = await getClientById(id);
       if (data) {
         setClient(data);
+        setPageTitle(data.name);
       } else {
         setError('Client not found or you do not have access');
       }
@@ -55,14 +65,18 @@ export function ClientDetailPage() {
     try {
       if (client.is_active) {
         await deactivateClient(user.id, id);
+        showToast('Client deactivated', 'success');
       } else {
         await reactivateClient(user.id, id);
+        showToast('Client reactivated', 'success');
       }
       // Reload client to get updated status
       await loadClient();
       setShowConfirm(false);
     } catch (err: any) {
-      setError(err.message || 'Failed to update client status');
+      const errorMessage = err.message || 'Failed to update client status';
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setIsToggling(false);
     }
@@ -90,41 +104,20 @@ export function ClientDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* Confirmation Modal */}
-      {showConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold text-brand-text mb-2">
-              {client.is_active ? 'Deactivate Client?' : 'Reactivate Client?'}
-            </h3>
-            <p className="text-brand-text/70 mb-4">
-              {client.is_active
-                ? 'This client will be marked as inactive. They will not appear in active client lists and cannot be used for new subscriptions or events.'
-                : 'This client will be marked as active again and can be used for subscriptions and events.'}
-            </p>
-            <div className="flex justify-end gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowConfirm(false)}
-                disabled={isToggling}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant={client.is_active ? 'danger' : 'primary'}
-                onClick={handleToggleStatus}
-                disabled={isToggling}
-              >
-                {isToggling
-                  ? 'Processing...'
-                  : client.is_active
-                    ? 'Deactivate'
-                    : 'Reactivate'}
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
+      {/* Confirmation Dialog - Deactivate/Reactivate */}
+      <ConfirmDialog
+        isOpen={showConfirm}
+        title={client?.is_active ? 'Deactivate Client?' : 'Reactivate Client?'}
+        message={client?.is_active
+          ? 'This client will be marked as inactive. They will not appear in active client lists and cannot be used for new subscriptions or events.'
+          : 'This client will be marked as active again and can be used for subscriptions and events.'
+        }
+        confirmLabel={client?.is_active ? 'Deactivate' : 'Reactivate'}
+        variant={client?.is_active ? 'danger' : 'info'}
+        isLoading={isToggling}
+        onConfirm={handleToggleStatus}
+        onCancel={() => setShowConfirm(false)}
+      />
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">

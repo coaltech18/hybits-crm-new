@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { createInvoice } from '@/services/invoiceService';
 import { getClients } from '@/services/clientService';
 import { getEvents } from '@/services/eventService';
@@ -15,8 +17,11 @@ import { Spinner } from '@/components/ui/Spinner';
 import { formatCurrency } from '@/utils/format';
 
 export default function CreateInvoicePage() {
+  useDocumentTitle('Create Invoice');
+
   const navigate = useNavigate();
   const { user, outlets } = useAuth();
+  const { showToast } = useToast();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
@@ -148,9 +153,12 @@ export default function CreateInvoicePage() {
       };
 
       await createInvoice(user.id, input);
+      showToast('Invoice created successfully', 'success');
       navigate('/invoices');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create invoice');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to create invoice';
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setSubmitting(false);
     }

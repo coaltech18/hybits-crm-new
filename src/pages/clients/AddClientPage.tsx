@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { createClient } from '@/services/clientService';
 import { supabase } from '@/lib/supabase';
 import type { CreateClientInput, ClientType, Outlet } from '@/types';
@@ -13,8 +15,11 @@ import { Alert } from '@/components/ui/Alert';
 import { validateGSTIN, validatePhone } from '@/utils/validation';
 
 export function AddClientPage() {
+  useDocumentTitle('Add Client');
+
   const navigate = useNavigate();
   const { user, isAdmin, isManager, outlets: managerOutlets, selectedOutlet } = useAuth();
+  const { showToast } = useToast();
 
   const [formData, setFormData] = useState<CreateClientInput>({
     outlet_id: isManager && selectedOutlet ? selectedOutlet : '',
@@ -85,9 +90,12 @@ export function AddClientPage() {
 
     try {
       await createClient(user.id, formData);
+      showToast('Client created successfully', 'success');
       navigate('/clients');
     } catch (err: any) {
-      setSubmitError(err.message || 'Failed to create client');
+      const errorMessage = err.message || 'Failed to create client';
+      setSubmitError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setIsLoading(false);
     }

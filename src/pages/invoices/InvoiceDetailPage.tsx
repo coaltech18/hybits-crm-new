@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getInvoiceById, issueInvoice, cancelInvoice } from '@/services/invoiceService';
 import { getPaymentSummary } from '@/services/paymentService';
 import { downloadInvoicePDF } from '@/utils/invoicePdfGenerator';
@@ -10,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Alert } from '@/components/ui/Alert';
 import { Spinner } from '@/components/ui/Spinner';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { formatCurrency, roundCurrency, settleBalance, isSettled } from '@/utils/format';
 import { formatDate } from '@/utils/billingDate';
 import AddPaymentModal from '@/components/payments/AddPaymentModal';
@@ -19,6 +22,11 @@ export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showToast } = useToast();
+
+  // Dynamic document title
+  const [pageTitle, setPageTitle] = useState('Invoice Details');
+  useDocumentTitle(pageTitle);
 
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
@@ -53,6 +61,7 @@ export default function InvoiceDetailPage() {
       }
 
       setInvoice(data);
+      setPageTitle(`Invoice ${data.invoice_number}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load invoice');
     } finally {
@@ -86,14 +95,18 @@ export default function InvoiceDetailPage() {
 
       if (action === 'issue') {
         await issueInvoice(user.id, id);
+        showToast('Invoice issued successfully', 'success');
       } else if (action === 'cancel') {
         await cancelInvoice(user.id, id);
+        showToast('Invoice cancelled', 'success');
       }
 
       setConfirmAction(null);
       await loadInvoice();
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to ${action} invoice`);
+      const errorMessage = err instanceof Error ? err.message : `Failed to ${action} invoice`;
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setActionLoading(false);
     }
@@ -448,45 +461,29 @@ export default function InvoiceDetailPage() {
         />
       )}
 
-      {/* Confirmation Modal */}
-      {confirmAction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-2">
-              Confirm {confirmAction === 'issue' ? 'Issue' : 'Cancel'}
-            </h3>
-            <p className="text-muted-foreground mb-6">
-              Are you sure you want to {confirmAction} this invoice?
-              {confirmAction === 'issue' && (
-                <span className="block mt-2 text-muted-foreground">
-                  Once issued, the invoice cannot be edited.
-                </span>
-              )}
-              {confirmAction === 'cancel' && (
-                <span className="block mt-2 text-destructive font-medium">
-                  This action cannot be undone. The invoice will be marked as cancelled.
-                </span>
-              )}
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setConfirmAction(null)}
-                disabled={actionLoading}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant={confirmAction === 'cancel' ? 'destructive' : 'default'}
-                onClick={() => handleAction(confirmAction)}
-                disabled={actionLoading}
-              >
-                {actionLoading ? 'Processing...' : `Yes, ${confirmAction}`}
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
+      {/* Confirmation Dialog - Issue */}
+      <ConfirmDialog
+        isOpen={confirmAction === 'issue'}
+        title="Issue Invoice?"
+        message="Are you sure you want to issue this invoice? Once issued, the invoice cannot be edited."
+        confirmLabel="Yes, Issue"
+        variant="info"
+        isLoading={actionLoading}
+        onConfirm={() => handleAction('issue')}
+        onCancel={() => setConfirmAction(null)}
+      />
+
+      {/* Confirmation Dialog - Cancel */}
+      <ConfirmDialog
+        isOpen={confirmAction === 'cancel'}
+        title="Cancel Invoice?"
+        message="Are you sure you want to cancel this invoice? This action cannot be undone. The invoice will be marked as cancelled."
+        confirmLabel="Yes, Cancel Invoice"
+        variant="danger"
+        isLoading={actionLoading}
+        onConfirm={() => handleAction('cancel')}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   );
 }

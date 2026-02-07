@@ -13,7 +13,7 @@ services:
     name: hybits-crm
     runtime: static
     buildCommand: npm install && npm run build
-    staticPublishPath: ./dist
+    staticPublishPath: ./build
     pullRequestPreviewsEnabled: true
     routes:
       # CRITICAL: This rewrite rule fixes 404 on page refresh

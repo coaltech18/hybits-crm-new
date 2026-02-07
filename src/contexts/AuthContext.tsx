@@ -63,6 +63,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Refs for lifecycle tracking
   const isMountedRef = useRef(true);
   const hasInitializedRef = useRef(false);
+  // Track if login() is currently in progress to skip duplicate profile reload
+  const isLoginInProgressRef = useRef(false);
 
   // ================================================================
   // FORCE LOGOUT - Clears everything and redirects to login
@@ -315,6 +317,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // SIGNED_IN or TOKEN_REFRESHED - reload profile
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          // Skip profile reload if login() is already handling it
+          if (isLoginInProgressRef.current) {
+            console.log('[AuthContext] Skipping profile reload - login in progress');
+            return;
+          }
+
           console.log('[AuthContext] Session updated, reloading profile...');
           try {
             const response = await fetchProfileWithTimeout();
@@ -323,9 +331,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
           } catch (err) {
             console.error('[AuthContext] Profile reload error:', err);
-            // On profile reload error after auth event, force logout
+            // Only force logout if we don't already have a valid profile
+            // This prevents the logout loop when profile reload fails but login already succeeded
             if (isMountedRef.current) {
-              await forceLogout((err as Error).message || 'Profile reload failed');
+              setState(currentState => {
+                if (currentState.isAuthenticated && currentState.profile) {
+                  console.log('[AuthContext] Profile reload failed but already authenticated, ignoring');
+                  return currentState; // Keep current valid state
+                }
+                // Only force logout if we have no valid profile
+                forceLogout((err as Error).message || 'Profile reload failed');
+                return currentState;
+              });
             }
           }
         }
@@ -344,6 +361,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // LOGIN - Only navigates to dashboard AFTER profile is loaded
   // ================================================================
   const login = useCallback(async (email: string, password: string) => {
+    // Mark that login is in progress to prevent duplicate profile reloads from onAuthStateChange
+    isLoginInProgressRef.current = true;
+
     try {
       // This function returns profile data
       const response = await authService.login({ email, password });
@@ -360,6 +380,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // On any login error, ensure clean state
       await forceLogout((error as Error).message || 'Login failed');
       throw error; // Re-throw to let the login form display the error
+    } finally {
+      // Always reset the flag when login completes (success or failure)
+      isLoginInProgressRef.current = false;
     }
   }, [navigate, forceLogout]);
 

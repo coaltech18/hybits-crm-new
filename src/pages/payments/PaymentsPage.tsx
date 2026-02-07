@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { Wallet } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getPayments, deactivatePayment } from '@/services/paymentService';
 import type { Payment, PaymentMethod } from '@/types';
 import { Card } from '@/components/ui/Card';
@@ -10,11 +13,16 @@ import { Spinner } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
 import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { formatCurrency } from '@/utils/format';
 import { formatDate } from '@/utils/billingDate';
 
 export default function PaymentsPage() {
+  useDocumentTitle('Payments');
+
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,13 +73,14 @@ export default function PaymentsPage() {
 
     try {
       setActionLoading(paymentId);
-      setError(null);
 
       await deactivatePayment(user.id, paymentId);
+      showToast('Payment deleted successfully', 'success');
       setConfirmDelete(null);
       await loadData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete payment');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete payment';
+      showToast(errorMessage, 'error');
     } finally {
       setActionLoading(null);
     }
@@ -183,12 +192,16 @@ export default function PaymentsPage() {
       {error && <Alert variant="error">{error}</Alert>}
 
       {/* Payments Table */}
-      <Card>
-        {payments.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">No payments found</p>
-          </div>
-        ) : (
+      {payments.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={Wallet}
+            title="No payments found"
+            description="Payments will appear here when you record them against invoices."
+          />
+        </Card>
+      ) : (
+        <Card>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="border-b">
@@ -216,7 +229,7 @@ export default function PaymentsPage() {
                     <td className="py-3 px-4">
                       <Link
                         to={`/invoices/${payment.invoice_id}`}
-                        className="text-primary hover:underline font-medium"
+                        className="text-brand-primary hover:underline font-medium"
                       >
                         {payment.invoice_number}
                       </Link>
@@ -263,43 +276,20 @@ export default function PaymentsPage() {
               </tbody>
             </table>
           </div>
-        )}
-      </Card>
-
-      {/* Delete Confirmation Modal */}
-      {confirmDelete && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-2">Confirm Delete</h3>
-            <p className="text-muted-foreground mb-6">
-              Are you sure you want to delete this payment?
-              <span className="block mt-2 font-medium">
-                Amount: {formatCurrency(confirmDelete.amount)}
-              </span>
-              <span className="block">Invoice: {confirmDelete.invoiceNumber}</span>
-              <span className="block mt-2 text-orange-600">
-                This will mark the payment as inactive. The invoice balance will be recalculated.
-              </span>
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setConfirmDelete(null)}
-                disabled={!!actionLoading}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => handleDelete(confirmDelete.id)}
-                disabled={!!actionLoading}
-              >
-                {actionLoading ? 'Deleting...' : 'Yes, Delete'}
-              </Button>
-            </div>
-          </Card>
-        </div>
+        </Card>
       )}
+
+      {/* Confirmation Dialog - Delete Payment */}
+      <ConfirmDialog
+        isOpen={!!confirmDelete}
+        title="Delete Payment?"
+        message={`Are you sure you want to delete this payment of ${confirmDelete ? formatCurrency(confirmDelete.amount) : ''} for invoice ${confirmDelete?.invoiceNumber}? The invoice balance will be recalculated.`}
+        confirmLabel="Yes, Delete"
+        variant="danger"
+        isLoading={!!actionLoading}
+        onConfirm={() => confirmDelete && handleDelete(confirmDelete.id)}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </div>
   );
 }

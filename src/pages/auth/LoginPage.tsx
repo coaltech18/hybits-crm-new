@@ -1,12 +1,18 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Alert } from '@/components/ui/Alert';
 
 export function LoginPage() {
+  // Set document title
+  useDocumentTitle('Sign In');
+
   const { login } = useAuth();
+  const { showToast } = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -19,8 +25,12 @@ export function LoginPage() {
 
     try {
       await login(email, password);
+      // Toast will show after navigation (if user comes back to login for some reason)
+      showToast('Welcome back!', 'success');
     } catch (err: any) {
-      setError(err.message || 'Login failed. Please try again.');
+      const errorMessage = err.message || 'Login failed. Please try again.';
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setIsLoading(false);
     }

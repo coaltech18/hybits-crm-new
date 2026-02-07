@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { Card } from '@/components/ui/Card';
 import { Spinner } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
@@ -14,6 +15,9 @@ import { Users, FileText, Calendar, IndianRupee, AlertCircle } from 'lucide-reac
 // ================================================================
 
 export function DashboardPage() {
+  // Set document title
+  useDocumentTitle('Dashboard');
+
   const { user } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);

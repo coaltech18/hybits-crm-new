@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getClientById, updateClient } from '@/services/clientService';
 import type { Client, UpdateClientInput, ClientType, ClientGstType } from '@/types';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +18,11 @@ export function EditClientPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
+  const { showToast } = useToast();
+
+  // Dynamic document title
+  const [pageTitle, setPageTitle] = useState('Edit Client');
+  useDocumentTitle(pageTitle);
 
   const [client, setClient] = useState<Client | null>(null);
   const [formData, setFormData] = useState<UpdateClientInput>({});
@@ -38,6 +45,7 @@ export function EditClientPage() {
       const data = await getClientById(id);
       if (data) {
         setClient(data);
+        setPageTitle(`Edit ${data.name}`);
         setFormData({
           name: data.name,
           contact_person: data.contact_person || '',
@@ -89,9 +97,12 @@ export function EditClientPage() {
 
     try {
       await updateClient(user.id, id, formData);
+      showToast('Client updated successfully', 'success');
       navigate(`/clients/${id}`);
     } catch (err: any) {
-      setSubmitError(err.message || 'Failed to update client');
+      const errorMessage = err.message || 'Failed to update client';
+      setSubmitError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setIsSaving(false);
     }

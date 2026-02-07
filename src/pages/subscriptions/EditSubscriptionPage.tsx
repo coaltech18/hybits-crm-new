@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getSubscriptionById, updateSubscription } from '@/services/subscriptionService';
 import { supabase } from '@/lib/supabase';
 import type { Subscription, UpdateSubscriptionInput, BillingCycle } from '@/types';
@@ -16,6 +18,11 @@ export default function EditSubscriptionPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showToast } = useToast();
+
+  // Dynamic document title
+  const [pageTitle, setPageTitle] = useState('Edit Subscription');
+  useDocumentTitle(pageTitle);
 
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
@@ -53,6 +60,7 @@ export default function EditSubscriptionPage() {
 
       setSubscription(data);
       setOriginalPrice(data.price_per_unit);
+      setPageTitle(`Edit Subscription - ${data.clients?.name || 'Details'}`);
 
       // Initialize form with current values
       setFormData({
@@ -170,9 +178,12 @@ export default function EditSubscriptionPage() {
       }
 
       await updateSubscription(user.id, id, updateData);
+      showToast('Subscription updated successfully', 'success');
       navigate(`/subscriptions/${id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update subscription');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update subscription';
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
       setShowPriceChangeModal(false);
     } finally {
       setSubmitting(false);

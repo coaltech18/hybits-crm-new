@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronUp, Package, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { createSubscription } from '@/services/subscriptionService';
 import { getClients } from '@/services/clientService';
 import { getInventoryItems } from '@/services/inventoryService';
@@ -15,8 +17,11 @@ import { Spinner } from '@/components/ui/Spinner';
 import { getTodayISO } from '@/utils/billingDate';
 
 export default function AddSubscriptionPage() {
+  useDocumentTitle('Add Subscription');
+
   const navigate = useNavigate();
   const { user, outlets } = useAuth(); // ✅ Get outlets from auth context root
+  const { showToast } = useToast();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -218,9 +223,12 @@ export default function AddSubscriptionPage() {
       };
 
       await createSubscription(user.id, subscriptionData);
+      showToast('Subscription created successfully', 'success');
       navigate('/subscriptions');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create subscription');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to create subscription';
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setSubmitting(false);
     }

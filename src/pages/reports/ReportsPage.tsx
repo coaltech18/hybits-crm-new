@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -68,6 +69,8 @@ type TabType =
 const COLORS = ['#58B692', '#348D74', '#1A382E', '#11241E', '#58B692', '#348D74'];
 
 export default function ReportsPage() {
+  useDocumentTitle('Reports');
+
   const { user, outlets } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('revenue');
   const [loading, setLoading] = useState(false);

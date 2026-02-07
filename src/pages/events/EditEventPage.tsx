@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getEventById, updateEvent } from '@/services/eventService';
 import type { Event, UpdateEventInput } from '@/types';
 import { Card } from '@/components/ui/Card';
@@ -13,6 +15,11 @@ export default function EditEventPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showToast } = useToast();
+
+  // Dynamic document title
+  const [pageTitle, setPageTitle] = useState('Edit Event');
+  useDocumentTitle(pageTitle);
 
   const [event, setEvent] = useState<Event | null>(null);
   const [loading, setLoading] = useState(true);
@@ -33,14 +40,15 @@ export default function EditEventPage() {
     try {
       setLoading(true);
       const data = await getEventById(id);
-      
+
       if (!data) {
         setError('Event not found');
         return;
       }
 
       setEvent(data);
-      
+      setPageTitle(`Edit ${data.event_name}`);
+
       // Initialize form with current values
       setFormData({
         event_name: data.event_name,
@@ -93,9 +101,12 @@ export default function EditEventPage() {
       setError(null);
 
       await updateEvent(user.id, id, formData);
+      showToast('Event updated successfully', 'success');
       navigate(`/events/${id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update event');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update event';
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -141,18 +152,18 @@ export default function EditEventPage() {
           {/* Read-only fields */}
           <div className="space-y-4 p-4 bg-muted rounded-lg">
             <h3 className="font-semibold text-sm text-muted-foreground">Event Info (Read-only)</h3>
-            
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1">Client</label>
                 <p className="text-sm">{event.clients?.name}</p>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium mb-1">Outlet</label>
                 <p className="text-sm">{event.outlets?.name}</p>
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium mb-1">Status</label>
                 <p className="text-sm capitalize">{event.status}</p>

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { createEvent } from '@/services/eventService';
 import { getClients } from '@/services/clientService';
 import type { CreateEventInput, Client, Outlet } from '@/types';
@@ -13,8 +15,11 @@ import { Spinner } from '@/components/ui/Spinner';
 import { getTodayISO } from '@/utils/billingDate';
 
 export default function AddEventPage() {
+  useDocumentTitle('Add Event');
+
   const navigate = useNavigate();
   const { user, outlets } = useAuth();
+  const { showToast } = useToast();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,7 +67,7 @@ export default function AddEventPage() {
     try {
       setLoading(true);
       const clientsData = await getClients(user.id, { client_type: 'event' });
-      
+
       // Filter clients by selected outlet if outlet is selected
       const filteredClients = formData.outlet_id
         ? clientsData.filter((c) => c.outlet_id === formData.outlet_id)
@@ -125,9 +130,12 @@ export default function AddEventPage() {
       setError(null);
 
       await createEvent(user.id, formData);
+      showToast('Event created successfully', 'success');
       navigate('/events');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create event');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to create event';
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -155,7 +163,7 @@ export default function AddEventPage() {
         <Alert variant="warning">
           <strong>No outlets found!</strong>
           <p className="mt-2">
-            {user?.role === 'admin' 
+            {user?.role === 'admin'
               ? 'You need to create at least one outlet before you can create events.'
               : 'No outlets have been assigned to you. Please contact your administrator.'}
           </p>

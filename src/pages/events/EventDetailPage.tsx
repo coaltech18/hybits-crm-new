@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getEventById, completeEvent, cancelEvent } from '@/services/eventService';
 import type { Event } from '@/types';
 import { Card } from '@/components/ui/Card';
@@ -8,12 +10,18 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Alert } from '@/components/ui/Alert';
 import { Spinner } from '@/components/ui/Spinner';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/utils/billingDate';
 
 export default function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showToast } = useToast();
+
+  // Dynamic document title
+  const [pageTitle, setPageTitle] = useState('Event Details');
+  useDocumentTitle(pageTitle);
 
   const [event, setEvent] = useState<Event | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,6 +46,7 @@ export default function EventDetailPage() {
       }
 
       setEvent(data);
+      setPageTitle(data.event_name);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load event');
     } finally {
@@ -54,14 +63,18 @@ export default function EventDetailPage() {
 
       if (action === 'complete') {
         await completeEvent(user.id, id);
+        showToast('Event marked as completed', 'success');
       } else if (action === 'cancel') {
         await cancelEvent(user.id, id);
+        showToast('Event cancelled', 'success');
       }
 
       setConfirmAction(null);
       await loadEvent();
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to ${action} event`);
+      const errorMessage = err instanceof Error ? err.message : `Failed to ${action} event`;
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setActionLoading(false);
     }
@@ -242,45 +255,29 @@ export default function EventDetailPage() {
         </Card>
       )}
 
-      {/* Confirmation Modal */}
-      {confirmAction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-2">
-              Confirm {confirmAction === 'complete' ? 'Complete' : 'Cancel'}
-            </h3>
-            <p className="text-muted-foreground mb-6">
-              Are you sure you want to {confirmAction} this event?
-              {confirmAction === 'cancel' && (
-                <span className="block mt-2 text-destructive font-medium">
-                  This action cannot be undone. The event will be marked as cancelled.
-                </span>
-              )}
-              {confirmAction === 'complete' && (
-                <span className="block mt-2 text-muted-foreground">
-                  The event will be marked as completed and ready for invoicing.
-                </span>
-              )}
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setConfirmAction(null)}
-                disabled={actionLoading}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant={confirmAction === 'cancel' ? 'destructive' : 'default'}
-                onClick={() => handleAction(confirmAction)}
-                disabled={actionLoading}
-              >
-                {actionLoading ? 'Processing...' : `Yes, ${confirmAction}`}
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
+      {/* Confirmation Dialog - Complete */}
+      <ConfirmDialog
+        isOpen={confirmAction === 'complete'}
+        title="Complete Event?"
+        message="Are you sure you want to mark this event as completed? The event will be ready for invoicing."
+        confirmLabel="Yes, Complete"
+        variant="info"
+        isLoading={actionLoading}
+        onConfirm={() => handleAction('complete')}
+        onCancel={() => setConfirmAction(null)}
+      />
+
+      {/* Confirmation Dialog - Cancel */}
+      <ConfirmDialog
+        isOpen={confirmAction === 'cancel'}
+        title="Cancel Event?"
+        message="Are you sure you want to cancel this event? This action cannot be undone. The event will be marked as cancelled."
+        confirmLabel="Yes, Cancel Event"
+        variant="danger"
+        isLoading={actionLoading}
+        onConfirm={() => handleAction('cancel')}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   );
 }

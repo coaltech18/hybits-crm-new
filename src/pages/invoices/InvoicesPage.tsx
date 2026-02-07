@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { FileText } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getInvoices, issueInvoice, cancelInvoice } from '@/services/invoiceService';
 import type { Invoice, InvoiceType, InvoiceStatus } from '@/types';
 import { Card } from '@/components/ui/Card';
@@ -9,10 +12,16 @@ import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
 import { Select } from '@/components/ui/Select';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { formatCurrency } from '@/utils/format';
 
 export default function InvoicesPage() {
+  useDocumentTitle('Invoices');
+
+  const navigate = useNavigate();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +32,6 @@ export default function InvoicesPage() {
 
   // Action states
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     type: 'issue' | 'cancel';
     invoiceId: string;
@@ -59,18 +67,20 @@ export default function InvoicesPage() {
 
     try {
       setActionLoading(invoiceId);
-      setActionError(null);
 
       if (action === 'issue') {
         await issueInvoice(user.id, invoiceId);
+        showToast('Invoice issued successfully', 'success');
       } else if (action === 'cancel') {
         await cancelInvoice(user.id, invoiceId);
+        showToast('Invoice cancelled', 'success');
       }
 
       setConfirmAction(null);
       await loadData();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : `Failed to ${action} invoice`);
+      const errorMessage = err instanceof Error ? err.message : `Failed to ${action} invoice`;
+      showToast(errorMessage, 'error');
     } finally {
       setActionLoading(null);
     }
@@ -164,22 +174,20 @@ export default function InvoicesPage() {
 
       {/* Error */}
       {error && <Alert variant="error">{error}</Alert>}
-      {actionError && <Alert variant="error">{actionError}</Alert>}
 
-      {/* Invoices Table */}
-      <Card>
-        {invoices.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">No invoices found</p>
-            {user?.role !== 'accountant' && (
-              <Link to="/invoices/create">
-                <Button variant="outline" className="mt-4">
-                  Create First Invoice
-                </Button>
-              </Link>
-            )}
-          </div>
-        ) : (
+      {/* Empty State */}
+      {invoices.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={FileText}
+            title="No invoices found"
+            description={user?.role !== 'accountant' ? "Create your first invoice to start billing." : "No invoices match your current filters."}
+            action={user?.role !== 'accountant' ? { label: 'Create Invoice', onClick: () => navigate('/invoices/create') } : undefined}
+          />
+        </Card>
+      ) : (
+        /* Invoices Table */
+        <Card>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="border-b">
@@ -201,7 +209,7 @@ export default function InvoicesPage() {
                     <td className="py-3 px-4">
                       <Link
                         to={`/invoices/${invoice.id}`}
-                        className="text-primary hover:underline font-medium"
+                        className="text-brand-primary hover:underline font-medium"
                       >
                         {invoice.invoice_number}
                       </Link>
@@ -269,49 +277,32 @@ export default function InvoicesPage() {
               </tbody>
             </table>
           </div>
-        )}
-      </Card>
-
-      {/* Confirmation Modal */}
-      {confirmAction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-2">
-              Confirm {confirmAction.type === 'issue' ? 'Issue' : 'Cancel'}
-            </h3>
-            <p className="text-muted-foreground mb-6">
-              Are you sure you want to {confirmAction.type} invoice{' '}
-              <strong>{confirmAction.invoiceNumber}</strong>?
-              {confirmAction.type === 'issue' && (
-                <span className="block mt-2 text-muted-foreground">
-                  Once issued, the invoice cannot be edited.
-                </span>
-              )}
-              {confirmAction.type === 'cancel' && (
-                <span className="block mt-2 text-destructive">
-                  This action cannot be undone. The invoice will be marked as cancelled.
-                </span>
-              )}
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setConfirmAction(null)}
-                disabled={!!actionLoading}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant={confirmAction.type === 'cancel' ? 'destructive' : 'default'}
-                onClick={() => handleAction(confirmAction.type, confirmAction.invoiceId)}
-                disabled={!!actionLoading}
-              >
-                {actionLoading ? 'Processing...' : `Yes, ${confirmAction.type}`}
-              </Button>
-            </div>
-          </Card>
-        </div>
+        </Card>
       )}
+
+      {/* Confirmation Dialog - Issue */}
+      <ConfirmDialog
+        isOpen={confirmAction?.type === 'issue'}
+        title="Issue Invoice?"
+        message={`Are you sure you want to issue invoice ${confirmAction?.invoiceNumber}? Once issued, the invoice cannot be edited.`}
+        confirmLabel="Yes, Issue"
+        variant="info"
+        isLoading={!!actionLoading}
+        onConfirm={() => confirmAction && handleAction('issue', confirmAction.invoiceId)}
+        onCancel={() => setConfirmAction(null)}
+      />
+
+      {/* Confirmation Dialog - Cancel */}
+      <ConfirmDialog
+        isOpen={confirmAction?.type === 'cancel'}
+        title="Cancel Invoice?"
+        message={`Are you sure you want to cancel invoice ${confirmAction?.invoiceNumber}? This action cannot be undone.`}
+        confirmLabel="Yes, Cancel Invoice"
+        variant="danger"
+        isLoading={!!actionLoading}
+        onConfirm={() => confirmAction && handleAction('cancel', confirmAction.invoiceId)}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   );
 }

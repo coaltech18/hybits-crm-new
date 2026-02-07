@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { History } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getSubscriptionById, pauseSubscription, resumeSubscription, cancelSubscription, getSubscriptionPriceHistory } from '@/services/subscriptionService';
 import type { Subscription } from '@/types';
 import { Card } from '@/components/ui/Card';
@@ -9,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Alert } from '@/components/ui/Alert';
 import { Spinner } from '@/components/ui/Spinner';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { formatDate, formatBillingCycle } from '@/utils/billingDate';
 import { formatCurrency } from '@/utils/format';
 
@@ -16,6 +19,11 @@ export default function SubscriptionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showToast } = useToast();
+
+  // Dynamic document title
+  const [pageTitle, setPageTitle] = useState('Subscription Details');
+  useDocumentTitle(pageTitle);
 
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,6 +60,7 @@ export default function SubscriptionDetailPage() {
       }
 
       setSubscription(data);
+      setPageTitle(`Subscription - ${data.clients?.name || 'Details'}`);
 
       // V1: Load price history
       try {
@@ -77,16 +86,21 @@ export default function SubscriptionDetailPage() {
 
       if (action === 'pause') {
         await pauseSubscription(user.id, id);
+        showToast('Subscription paused', 'success');
       } else if (action === 'resume') {
         await resumeSubscription(user.id, id);
+        showToast('Subscription resumed', 'success');
       } else if (action === 'cancel') {
         await cancelSubscription(user.id, id);
+        showToast('Subscription cancelled', 'success');
       }
 
       setConfirmAction(null);
       await loadSubscription();
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to ${action} subscription`);
+      const errorMessage = err instanceof Error ? err.message : `Failed to ${action} subscription`;
+      setError(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setActionLoading(false);
     }
@@ -348,45 +362,41 @@ export default function SubscriptionDetailPage() {
         </p>
       </Card>
 
-      {/* Confirmation Modal */}
-      {confirmAction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-2">
-              Confirm {confirmAction.charAt(0).toUpperCase() + confirmAction.slice(1)}
-            </h3>
-            <p className="text-muted-foreground mb-6">
-              Are you sure you want to {confirmAction} this subscription?
-              {confirmAction === 'cancel' && (
-                <span className="block mt-2 text-destructive font-medium">
-                  This action cannot be undone. The subscription will be permanently cancelled.
-                </span>
-              )}
-              {confirmAction === 'resume' && (
-                <span className="block mt-2 text-muted-foreground">
-                  Billing will resume from today with a new billing cycle.
-                </span>
-              )}
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setConfirmAction(null)}
-                disabled={actionLoading}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant={confirmAction === 'cancel' ? 'destructive' : 'default'}
-                onClick={() => handleAction(confirmAction)}
-                disabled={actionLoading}
-              >
-                {actionLoading ? 'Processing...' : `Yes, ${confirmAction}`}
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
+      {/* Confirmation Dialog - Pause */}
+      <ConfirmDialog
+        isOpen={confirmAction === 'pause'}
+        title="Pause Subscription?"
+        message="Are you sure you want to pause this subscription? Billing will stop until resumed."
+        confirmLabel="Yes, Pause"
+        variant="warning"
+        isLoading={actionLoading}
+        onConfirm={() => handleAction('pause')}
+        onCancel={() => setConfirmAction(null)}
+      />
+
+      {/* Confirmation Dialog - Resume */}
+      <ConfirmDialog
+        isOpen={confirmAction === 'resume'}
+        title="Resume Subscription?"
+        message="Are you sure you want to resume this subscription? Billing will resume from today with a new billing cycle."
+        confirmLabel="Yes, Resume"
+        variant="info"
+        isLoading={actionLoading}
+        onConfirm={() => handleAction('resume')}
+        onCancel={() => setConfirmAction(null)}
+      />
+
+      {/* Confirmation Dialog - Cancel */}
+      <ConfirmDialog
+        isOpen={confirmAction === 'cancel'}
+        title="Cancel Subscription?"
+        message="Are you sure you want to cancel this subscription? This action cannot be undone. The subscription will be permanently cancelled."
+        confirmLabel="Yes, Cancel Subscription"
+        variant="danger"
+        isLoading={actionLoading}
+        onConfirm={() => handleAction('cancel')}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   );
 }

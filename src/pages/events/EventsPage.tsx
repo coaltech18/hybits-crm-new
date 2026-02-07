@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { CalendarDays } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getEvents, completeEvent, cancelEvent } from '@/services/eventService';
 import { getClients } from '@/services/clientService';
 import type { Event, EventStatus, Client } from '@/types';
@@ -10,10 +13,16 @@ import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
 import { Select } from '@/components/ui/Select';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/utils/billingDate';
 
 export default function EventsPage() {
+  useDocumentTitle('Events');
+
+  const navigate = useNavigate();
   const { user, isAuthReady } = useAuth();
+  const { showToast } = useToast();
   const [events, setEvents] = useState<Event[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,7 +34,6 @@ export default function EventsPage() {
 
   // Action states
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     type: 'complete' | 'cancel';
     eventId: string;
@@ -36,6 +44,7 @@ export default function EventsPage() {
     if (!isAuthReady) return;
     loadData();
   }, [isAuthReady, user?.id, selectedClient, selectedStatus]);
+
   async function loadData() {
     if (!user?.id) return;
 
@@ -66,18 +75,20 @@ export default function EventsPage() {
 
     try {
       setActionLoading(eventId);
-      setActionError(null);
 
       if (action === 'complete') {
         await completeEvent(user.id, eventId);
+        showToast('Event marked as completed', 'success');
       } else if (action === 'cancel') {
         await cancelEvent(user.id, eventId);
+        showToast('Event cancelled', 'success');
       }
 
       setConfirmAction(null);
       await loadData();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : `Failed to ${action} event`);
+      const errorMessage = err instanceof Error ? err.message : `Failed to ${action} event`;
+      showToast(errorMessage, 'error');
     } finally {
       setActionLoading(null);
     }
@@ -163,22 +174,19 @@ export default function EventsPage() {
 
       {/* Error */}
       {error && <Alert variant="error">{error}</Alert>}
-      {actionError && <Alert variant="error">{actionError}</Alert>}
 
       {/* Events Table */}
-      <Card>
-        {events.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">No events found</p>
-            {user?.role !== 'accountant' && (
-              <Link to="/events/add">
-                <Button variant="outline" className="mt-4">
-                  Create First Event
-                </Button>
-              </Link>
-            )}
-          </div>
-        ) : (
+      {events.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={CalendarDays}
+            title="No events found"
+            description={user?.role !== 'accountant' ? "Create your first event booking." : "No events match your current filters."}
+            action={user?.role !== 'accountant' ? { label: 'Add Event', onClick: () => navigate('/events/add') } : undefined}
+          />
+        </Card>
+      ) : (
+        <Card>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="border-b">
@@ -199,7 +207,7 @@ export default function EventsPage() {
                     <td className="py-3 px-4">
                       <Link
                         to={`/events/${event.id}`}
-                        className="text-primary hover:underline font-medium"
+                        className="text-brand-primary hover:underline font-medium"
                       >
                         {event.event_name}
                       </Link>
@@ -275,49 +283,32 @@ export default function EventsPage() {
               </tbody>
             </table>
           </div>
-        )}
-      </Card>
-
-      {/* Confirmation Modal */}
-      {confirmAction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-2">
-              Confirm {confirmAction.type === 'complete' ? 'Complete' : 'Cancel'}
-            </h3>
-            <p className="text-muted-foreground mb-6">
-              Are you sure you want to {confirmAction.type} the event{' '}
-              <strong>{confirmAction.eventName}</strong>?
-              {confirmAction.type === 'cancel' && (
-                <span className="block mt-2 text-destructive">
-                  This action cannot be undone. The event will be marked as cancelled.
-                </span>
-              )}
-              {confirmAction.type === 'complete' && (
-                <span className="block mt-2 text-muted-foreground">
-                  The event will be marked as completed and ready for invoicing.
-                </span>
-              )}
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setConfirmAction(null)}
-                disabled={!!actionLoading}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant={confirmAction.type === 'cancel' ? 'destructive' : 'default'}
-                onClick={() => handleAction(confirmAction.type, confirmAction.eventId)}
-                disabled={!!actionLoading}
-              >
-                {actionLoading ? 'Processing...' : `Yes, ${confirmAction.type}`}
-              </Button>
-            </div>
-          </Card>
-        </div>
+        </Card>
       )}
+
+      {/* Confirmation Dialog - Complete */}
+      <ConfirmDialog
+        isOpen={confirmAction?.type === 'complete'}
+        title="Complete Event?"
+        message={`Are you sure you want to mark "${confirmAction?.eventName}" as completed? The event will be ready for invoicing.`}
+        confirmLabel="Yes, Complete"
+        variant="info"
+        isLoading={!!actionLoading}
+        onConfirm={() => confirmAction && handleAction('complete', confirmAction.eventId)}
+        onCancel={() => setConfirmAction(null)}
+      />
+
+      {/* Confirmation Dialog - Cancel */}
+      <ConfirmDialog
+        isOpen={confirmAction?.type === 'cancel'}
+        title="Cancel Event?"
+        message={`Are you sure you want to cancel "${confirmAction?.eventName}"? This action cannot be undone.`}
+        confirmLabel="Yes, Cancel Event"
+        variant="danger"
+        isLoading={!!actionLoading}
+        onConfirm={() => confirmAction && handleAction('cancel', confirmAction.eventId)}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   );
 }

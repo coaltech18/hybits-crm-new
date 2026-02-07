@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Plus, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getClients } from '@/services/clientService';
 import type { Client, ClientFilters } from '@/types';
 import { Button } from '@/components/ui/Button';
@@ -11,8 +12,12 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Spinner } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 export function ClientsPage() {
+  useDocumentTitle('Clients');
+
+  const navigate = useNavigate();
   const { user, isAccountant, isAuthReady } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -109,8 +114,20 @@ export function ClientsPage() {
         </div>
       )}
 
+      {/* Empty State */}
+      {!isLoading && !error && clients.length === 0 && (
+        <Card>
+          <EmptyState
+            icon={Users}
+            title="No clients found"
+            description={!isAccountant ? "Create your first client to get started." : "No clients match your current filters."}
+            action={!isAccountant ? { label: 'Add Client', onClick: () => navigate('/clients/new') } : undefined}
+          />
+        </Card>
+      )}
+
       {/* Clients Table */}
-      {!isLoading && !error && (
+      {!isLoading && !error && clients.length > 0 && (
         <Card padding="none">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -137,68 +154,60 @@ export function ClientsPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-brand-border">
-                {clients.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-brand-text/70">
-                      No clients found. {!isAccountant && 'Create your first client to get started.'}
-                    </td>
-                  </tr>
-                ) : (
-                  clients.map((client) => (
-                    <tr key={client.id} className="hover:bg-brand-primary/5">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-brand-text">
-                          {client.name}
+                {clients.map((client) => (
+                  <tr key={client.id} className="hover:bg-brand-primary/5">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-brand-text">
+                        {client.name}
+                      </div>
+                      {client.contact_person && (
+                        <div className="text-sm text-brand-text/70">
+                          {client.contact_person}
                         </div>
-                        {client.contact_person && (
-                          <div className="text-sm text-brand-text/70">
-                            {client.contact_person}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <Badge
-                          variant={
-                            client.client_type === 'corporate'
-                              ? 'info'
-                              : 'warning'
-                          }
-                        >
-                          {client.client_type}
-                        </Badge>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-brand-text">
-                        {client.phone}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-brand-text">
-                        {client.outlets?.name || '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <Badge
-                          variant={client.is_active ? 'success' : 'danger'}
-                        >
-                          {client.is_active ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <Badge
+                        variant={
+                          client.client_type === 'corporate'
+                            ? 'info'
+                            : 'warning'
+                        }
+                      >
+                        {client.client_type}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-brand-text">
+                      {client.phone}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-brand-text">
+                      {client.outlets?.name || '-'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <Badge
+                        variant={client.is_active ? 'success' : 'danger'}
+                      >
+                        {client.is_active ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                      <Link
+                        to={`/clients/${client.id}`}
+                        className="text-brand-primary hover:text-brand-primaryDark"
+                      >
+                        View
+                      </Link>
+                      {!isAccountant && (
                         <Link
-                          to={`/clients/${client.id}`}
+                          to={`/clients/${client.id}/edit`}
                           className="text-brand-primary hover:text-brand-primaryDark"
                         >
-                          View
+                          Edit
                         </Link>
-                        {!isAccountant && (
-                          <Link
-                            to={`/clients/${client.id}/edit`}
-                            className="text-brand-primary hover:text-brand-primaryDark"
-                          >
-                            Edit
-                          </Link>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
+                      )}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

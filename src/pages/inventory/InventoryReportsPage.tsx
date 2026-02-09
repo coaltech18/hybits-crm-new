@@ -72,8 +72,8 @@ export default function InventoryReportsPage() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`px-4 py-2 rounded-md font-medium transition-colors ${activeTab === tab.id
-                ? 'bg-primary text-white'
-                : 'bg-muted hover:bg-muted/80'
+                ? 'bg-[#2A5A3B] text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
               {tab.label}

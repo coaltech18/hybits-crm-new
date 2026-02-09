@@ -44,6 +44,9 @@ import InventoryItemsPage from '@/pages/inventory/InventoryItemsPage';
 import InventoryMovementsPage from '@/pages/inventory/InventoryMovementsPage';
 import InventoryAllocationPage from '@/pages/inventory/InventoryAllocationPage';
 import InventoryReportsPage from '@/pages/inventory/InventoryReportsPage';
+import InventoryOverviewPage from '@/pages/inventory/InventoryOverviewPage';
+import InventoryAuditPage from '@/pages/inventory/InventoryAuditPage';
+import InventoryAuditDetailPage from '@/pages/inventory/InventoryAuditDetailPage';
 
 // Admin Pages
 import UsersManagementPage from '@/pages/admin/UsersManagementPage';
@@ -239,6 +242,14 @@ export function AppRoutes() {
           path="/inventory"
           element={
             <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InventoryOverviewPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inventory/items"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
               <InventoryItemsPage />
             </ProtectedRoute>
           }
@@ -264,6 +275,22 @@ export function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
               <InventoryReportsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inventory/audit"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InventoryAuditPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inventory/audit/:id"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InventoryAuditDetailPage />
             </ProtectedRoute>
           }
         />

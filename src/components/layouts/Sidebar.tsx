@@ -151,7 +151,10 @@ export function Sidebar() {
             }
 
             const Icon = item.icon;
-            const isActive = location.pathname === item.to;
+            // Handle exact match and prefix match for inventory
+            const isActive = item.to === '/inventory'
+              ? location.pathname === item.to || location.pathname.startsWith('/inventory/')
+              : location.pathname === item.to;
 
             return (
               <Link

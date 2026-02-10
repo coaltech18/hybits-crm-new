@@ -17,6 +17,8 @@ import { formatCurrency, roundCurrency, settleBalance, isSettled } from '@/utils
 import { formatDate } from '@/utils/billingDate';
 import AddPaymentModal from '@/components/payments/AddPaymentModal';
 import { Download } from 'lucide-react';
+import { COMPANY_PROFILE } from '@/config/companyProfile';
+import { DEFAULT_HSN_CODE } from '@/config/gstConstants';
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -248,19 +250,27 @@ export default function InvoiceDetailPage() {
         <Card>
           <h2 className="text-lg font-semibold mb-4">From</h2>
           <div className="space-y-2">
-            <p className="font-medium text-lg">{invoice.outlets?.name}</p>
-            <p className="text-sm text-muted-foreground">{invoice.outlets?.code}</p>
-            <p className="text-sm text-muted-foreground">{invoice.outlets?.phone}</p>
-            <p className="text-sm text-muted-foreground">{invoice.outlets?.email}</p>
-            {invoice.outlets?.gstin && (
-              <p className="text-sm">
-                <span className="font-medium">GSTIN:</span> {invoice.outlets?.gstin}
-              </p>
-            )}
-            {invoice.outlets?.address && (
-              <p className="text-sm text-muted-foreground">
-                {invoice.outlets?.address}, {invoice.outlets?.city}, {invoice.outlets?.state}
-              </p>
+            <p className="font-medium text-lg">{COMPANY_PROFILE.legalName}</p>
+            <p className="text-sm">
+              <span className="font-medium">GSTIN:</span> {COMPANY_PROFILE.gstin}
+            </p>
+            {invoice.outlets && (
+              <div className="mt-3 pt-3 border-t border-muted">
+                <p className="text-sm text-muted-foreground font-medium">Branch / Outlet</p>
+                <p className="text-sm font-medium">{invoice.outlets.name}</p>
+                <p className="text-sm text-muted-foreground">{invoice.outlets.code}</p>
+                {invoice.outlets.phone && (
+                  <p className="text-sm text-muted-foreground">{invoice.outlets.phone}</p>
+                )}
+                {invoice.outlets.email && (
+                  <p className="text-sm text-muted-foreground">{invoice.outlets.email}</p>
+                )}
+                {invoice.outlets.address && (
+                  <p className="text-sm text-muted-foreground">
+                    {invoice.outlets.address}, {invoice.outlets.city}, {invoice.outlets.state}
+                  </p>
+                )}
+              </div>
             )}
           </div>
         </Card>
@@ -297,6 +307,7 @@ export default function InvoiceDetailPage() {
             <thead className="border-b">
               <tr>
                 <th className="text-left py-2 px-2">Description</th>
+                <th className="text-center py-2 px-2">HSN</th>
                 <th className="text-right py-2 px-2">Qty</th>
                 <th className="text-right py-2 px-2">Unit Price</th>
                 <th className="text-right py-2 px-2">Amount</th>
@@ -309,6 +320,7 @@ export default function InvoiceDetailPage() {
               {invoice.invoice_items?.map((item) => (
                 <tr key={item.id} className="border-b">
                   <td className="py-2 px-2">{item.description}</td>
+                  <td className="text-center py-2 px-2">{DEFAULT_HSN_CODE}</td>
                   <td className="text-right py-2 px-2">{item.quantity}</td>
                   <td className="text-right py-2 px-2">{formatCurrency(item.unit_price)}</td>
                   <td className="text-right py-2 px-2">{formatCurrency(item.line_total)}</td>
@@ -433,6 +445,47 @@ export default function InvoiceDetailPage() {
               No payments recorded yet
             </p>
           )}
+        </Card>
+      )}
+
+      {/* Terms & Conditions */}
+      {invoice.terms_and_conditions && (
+        <Card>
+          <h2 className="text-lg font-semibold mb-4">Terms & Conditions</h2>
+          <p className="text-sm text-muted-foreground whitespace-pre-line">
+            {invoice.terms_and_conditions}
+          </p>
+        </Card>
+      )}
+
+      {/* Bank Details */}
+      {COMPANY_PROFILE.bankDetails && (
+        <Card>
+          <h2 className="text-lg font-semibold mb-4">Bank Details for Payment</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+            <div>
+              <span className="text-muted-foreground">Account Name:</span>{' '}
+              <span className="font-medium">{COMPANY_PROFILE.bankDetails.accountName}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Bank Name:</span>{' '}
+              <span className="font-medium">{COMPANY_PROFILE.bankDetails.bankName}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Account Number:</span>{' '}
+              <span className="font-medium">{COMPANY_PROFILE.bankDetails.accountNumber}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">IFSC Code:</span>{' '}
+              <span className="font-medium">{COMPANY_PROFILE.bankDetails.ifscCode}</span>
+            </div>
+            {COMPANY_PROFILE.bankDetails.branch && (
+              <div>
+                <span className="text-muted-foreground">Branch:</span>{' '}
+                <span className="font-medium">{COMPANY_PROFILE.bankDetails.branch}</span>
+              </div>
+            )}
+          </div>
         </Card>
       )}
 

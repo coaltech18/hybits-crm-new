@@ -416,6 +416,8 @@ export interface Invoice {
   tax_total: number;
   grand_total: number;
   issued_at: string | null;
+  terms_and_conditions: string | null;
+  invoice_number_format: string | null;
   created_at: string;
   updated_at: string;
   created_by: string | null;
@@ -442,6 +444,8 @@ export interface CreateInvoiceInput {
   outlet_id: string;
   event_id?: string | null;
   items: CreateInvoiceItemInput[];
+  terms_and_conditions?: string;
+  invoice_number_format?: string;
 }
 
 export interface UpdateInvoiceInput {

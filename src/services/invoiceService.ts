@@ -278,6 +278,8 @@ export async function createInvoice(
       subtotal: totals.subtotal,
       tax_total: totals.tax_total,
       grand_total: totals.grand_total,
+      terms_and_conditions: input.terms_and_conditions || null,
+      invoice_number_format: input.invoice_number_format || null,
     })
     .select()
     .maybeSingle();

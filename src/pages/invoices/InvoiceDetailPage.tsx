@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { getInvoiceById, issueInvoice, cancelInvoice } from '@/services/invoiceService';
+import { getInvoiceById, finalizeInvoice, cancelInvoice } from '@/services/invoiceService';
 import { getPaymentSummary } from '@/services/paymentService';
 import { downloadInvoicePDF } from '@/utils/invoicePdfGenerator';
 import type { Invoice, Payment, PaymentStatus } from '@/types';
@@ -16,7 +16,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { formatCurrency, roundCurrency, settleBalance, isSettled } from '@/utils/format';
 import { formatDate } from '@/utils/billingDate';
 import AddPaymentModal from '@/components/payments/AddPaymentModal';
-import { Download } from 'lucide-react';
+import { Download, Pencil } from 'lucide-react';
 import { COMPANY_PROFILE } from '@/config/companyProfile';
 import { DEFAULT_HSN_CODE } from '@/config/gstConstants';
 
@@ -34,7 +34,7 @@ export default function InvoiceDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<'issue' | 'cancel' | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'finalize' | 'cancel' | null>(null);
 
   // Payment state
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -88,16 +88,16 @@ export default function InvoiceDetailPage() {
     }
   }
 
-  async function handleAction(action: 'issue' | 'cancel') {
+  async function handleAction(action: 'finalize' | 'cancel') {
     if (!user?.id || !id) return;
 
     try {
       setActionLoading(true);
       setError(null);
 
-      if (action === 'issue') {
-        await issueInvoice(user.id, id);
-        showToast('Invoice issued successfully', 'success');
+      if (action === 'finalize') {
+        await finalizeInvoice(user.id, id);
+        showToast('Invoice finalized successfully', 'success');
       } else if (action === 'cancel') {
         await cancelInvoice(user.id, id);
         showToast('Invoice cancelled', 'success');
@@ -105,6 +105,7 @@ export default function InvoiceDetailPage() {
 
       setConfirmAction(null);
       await loadInvoice();
+      await loadPayments();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : `Failed to ${action} invoice`;
       setError(errorMessage);
@@ -149,10 +150,12 @@ export default function InvoiceDetailPage() {
     );
   }
 
-  const statusVariants = {
-    draft: 'default' as const,
-    issued: 'success' as const,
-    cancelled: 'secondary' as const,
+  const statusVariants: Record<string, 'default' | 'success' | 'secondary' | 'destructive'> = {
+    draft: 'default',
+    finalized: 'success',
+    partially_paid: 'default',
+    paid: 'success',
+    cancelled: 'secondary',
   };
 
   return (
@@ -166,24 +169,31 @@ export default function InvoiceDetailPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          {/* Download PDF button - always visible for issued invoices */}
-          {invoice.status === 'issued' && (
-            <Button
-              variant="outline"
-              onClick={() => downloadInvoicePDF(invoice)}
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Download PDF
-            </Button>
-          )}
+          {/* Download PDF - always available */}
+          <Button
+            variant="outline"
+            onClick={() => downloadInvoicePDF(invoice)}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            {invoice.status === 'draft' ? 'Download Draft' : 'Download Invoice'}
+          </Button>
+
+          {/* DRAFT actions */}
           {user?.role !== 'accountant' && invoice.status === 'draft' && (
             <>
               <Button
                 variant="outline"
-                onClick={() => setConfirmAction('issue')}
+                onClick={() => navigate(`/invoices/${id}/edit`)}
+              >
+                <Pencil className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setConfirmAction('finalize')}
                 disabled={actionLoading}
               >
-                Issue Invoice
+                Finalize & Issue
               </Button>
               <Button
                 variant="destructive"
@@ -193,6 +203,20 @@ export default function InvoiceDetailPage() {
                 Cancel
               </Button>
             </>
+          )}
+
+          {/* FINALIZED actions */}
+          {user?.role !== 'accountant' && invoice.status === 'finalized' && paymentSummary && !isSettled(paymentSummary.balance_due) && (
+            <Button onClick={() => setShowAddPayment(true)}>
+              Record Payment
+            </Button>
+          )}
+
+          {/* PARTIALLY_PAID actions */}
+          {user?.role !== 'accountant' && invoice.status === 'partially_paid' && paymentSummary && !isSettled(paymentSummary.balance_due) && (
+            <Button onClick={() => setShowAddPayment(true)}>
+              Record Payment
+            </Button>
           )}
         </div>
       </div>
@@ -204,13 +228,13 @@ export default function InvoiceDetailPage() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xl font-semibold">Status</h2>
-            <Badge variant={statusVariants[invoice.status]} className="mt-2">
-              {invoice.status.toUpperCase()}
+            <Badge variant={statusVariants[invoice.status] || 'default'} className="mt-2">
+              {invoice.status.replace('_', ' ').toUpperCase()}
             </Badge>
           </div>
           {invoice.issued_at && (
             <div className="text-right">
-              <p className="text-sm text-muted-foreground">Issued On</p>
+              <p className="text-sm text-muted-foreground">Finalized On</p>
               <p className="font-medium">{formatDate(invoice.issued_at, 'long')}</p>
             </div>
           )}
@@ -353,7 +377,7 @@ export default function InvoiceDetailPage() {
       </Card>
 
       {/* Payments Received */}
-      {invoice.status === 'issued' && (
+      {['finalized', 'partially_paid', 'paid'].includes(invoice.status) && (
         <Card>
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -514,15 +538,15 @@ export default function InvoiceDetailPage() {
         />
       )}
 
-      {/* Confirmation Dialog - Issue */}
+      {/* Confirmation Dialog - Finalize */}
       <ConfirmDialog
-        isOpen={confirmAction === 'issue'}
-        title="Issue Invoice?"
-        message="Are you sure you want to issue this invoice? Once issued, the invoice cannot be edited."
-        confirmLabel="Yes, Issue"
+        isOpen={confirmAction === 'finalize'}
+        title="Finalize & Issue Invoice?"
+        message="Are you sure you want to finalize this invoice? After finalization, this invoice cannot be edited."
+        confirmLabel="Yes, Finalize"
         variant="info"
         isLoading={actionLoading}
-        onConfirm={() => handleAction('issue')}
+        onConfirm={() => handleAction('finalize')}
         onCancel={() => setConfirmAction(null)}
       />
 

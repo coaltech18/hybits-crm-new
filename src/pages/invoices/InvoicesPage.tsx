@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import { FileText } from 'lucide-react';
+import { FileText, MoreVertical, Eye, Pencil, Download, XCircle, Copy } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { getInvoices, issueInvoice, cancelInvoice } from '@/services/invoiceService';
+import { getInvoices, finalizeInvoice, cancelInvoice } from '@/services/invoiceService';
+import { downloadInvoicePDF } from '@/utils/invoicePdfGenerator';
 import type { Invoice, InvoiceType, InvoiceStatus } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -33,14 +35,64 @@ export default function InvoicesPage() {
   // Action states
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
-    type: 'issue' | 'cancel';
+    type: 'finalize' | 'cancel';
     invoiceId: string;
     invoiceNumber: string;
   } | null>(null);
 
+  // Dropdown state
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
+  const triggerRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     loadData();
   }, [user?.id, selectedType, selectedStatus]);
+
+  // Open dropdown positioned relative to viewport via trigger button rect
+  const handleDropdownToggle = useCallback((invoiceId: string) => {
+    if (openDropdown === invoiceId) {
+      setOpenDropdown(null);
+      setDropdownPos(null);
+      return;
+    }
+    const btn = triggerRefs.current.get(invoiceId);
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 4,
+        left: rect.right - 192, // 192px = w-48 dropdown width, right-aligned
+      });
+    }
+    setOpenDropdown(invoiceId);
+  }, [openDropdown]);
+
+  // Close dropdown when clicking outside or scrolling
+  useEffect(() => {
+    if (!openDropdown) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as Node;
+      // Ignore clicks on the trigger button itself
+      const triggerBtn = triggerRefs.current.get(openDropdown!);
+      if (triggerBtn?.contains(target)) return;
+      if (dropdownRef.current && !dropdownRef.current.contains(target)) {
+        setOpenDropdown(null);
+        setDropdownPos(null);
+      }
+    }
+    function handleScroll() {
+      setOpenDropdown(null);
+      setDropdownPos(null);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('scroll', handleScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [openDropdown]);
 
   async function loadData() {
     if (!user?.id) return;
@@ -49,7 +101,7 @@ export default function InvoicesPage() {
       setLoading(true);
       setError(null);
 
-      const filters: any = {};
+      const filters: Record<string, string> = {};
       if (selectedType) filters.invoice_type = selectedType;
       if (selectedStatus) filters.status = selectedStatus;
 
@@ -62,15 +114,15 @@ export default function InvoicesPage() {
     }
   }
 
-  async function handleAction(action: 'issue' | 'cancel', invoiceId: string) {
+  async function handleAction(action: 'finalize' | 'cancel', invoiceId: string) {
     if (!user?.id) return;
 
     try {
       setActionLoading(invoiceId);
 
-      if (action === 'issue') {
-        await issueInvoice(user.id, invoiceId);
-        showToast('Invoice issued successfully', 'success');
+      if (action === 'finalize') {
+        await finalizeInvoice(user.id, invoiceId);
+        showToast('Invoice finalized successfully', 'success');
       } else if (action === 'cancel') {
         await cancelInvoice(user.id, invoiceId);
         showToast('Invoice cancelled', 'success');
@@ -87,12 +139,15 @@ export default function InvoicesPage() {
   }
 
   function getStatusBadge(status: InvoiceStatus) {
-    const variants = {
-      draft: 'default' as const,
-      issued: 'success' as const,
-      cancelled: 'secondary' as const,
+    const variants: Record<InvoiceStatus, 'default' | 'success' | 'secondary' | 'destructive'> = {
+      draft: 'default',
+      finalized: 'success',
+      partially_paid: 'default',
+      paid: 'success',
+      cancelled: 'secondary',
     };
-    return <Badge variant={variants[status]}>{status.toUpperCase()}</Badge>;
+    const label = status.replace('_', ' ').toUpperCase();
+    return <Badge variant={variants[status] || 'default'}>{label}</Badge>;
   }
 
   function getTypeBadge(type: InvoiceType) {
@@ -152,7 +207,9 @@ export default function InvoicesPage() {
           >
             <option value="">All Statuses</option>
             <option value="draft">Draft</option>
-            <option value="issued">Issued</option>
+            <option value="finalized">Finalized</option>
+            <option value="partially_paid">Partially Paid</option>
+            <option value="paid">Paid</option>
             <option value="cancelled">Cancelled</option>
           </Select>
 
@@ -232,44 +289,19 @@ export default function InvoicesPage() {
                     </td>
                     <td className="py-3 px-4">{getStatusBadge(invoice.status)}</td>
                     <td className="py-3 px-4">
-                      <div className="flex items-center justify-center gap-2">
-                        {user?.role !== 'accountant' && invoice.status === 'draft' && (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                setConfirmAction({
-                                  type: 'issue',
-                                  invoiceId: invoice.id,
-                                  invoiceNumber: invoice.invoice_number,
-                                })
-                              }
-                              disabled={actionLoading === invoice.id}
-                            >
-                              Issue
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                setConfirmAction({
-                                  type: 'cancel',
-                                  invoiceId: invoice.id,
-                                  invoiceNumber: invoice.invoice_number,
-                                })
-                              }
-                              disabled={actionLoading === invoice.id}
-                            >
-                              Cancel
-                            </Button>
-                          </>
-                        )}
-                        <Link to={`/invoices/${invoice.id}`}>
-                          <Button variant="ghost" size="sm">
-                            View
-                          </Button>
-                        </Link>
+                      {/* Dropdown Trigger */}
+                      <div className="flex justify-center">
+                        <button
+                          ref={(el) => { if (el) triggerRefs.current.set(invoice.id, el); }}
+                          type="button"
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-gray-400"
+                          onClick={() => handleDropdownToggle(invoice.id)}
+                          disabled={actionLoading === invoice.id}
+                          aria-haspopup="true"
+                          aria-expanded={openDropdown === invoice.id}
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -280,15 +312,124 @@ export default function InvoicesPage() {
         </Card>
       )}
 
-      {/* Confirmation Dialog - Issue */}
+      {/* Portal-rendered Dropdown Menu — renders outside table to escape overflow clipping */}
+      {openDropdown && dropdownPos && (() => {
+        const activeInvoice = invoices.find(inv => inv.id === openDropdown);
+        if (!activeInvoice) return null;
+
+        const menuItemClass = 'flex w-full items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer transition-colors duration-100';
+
+        return createPortal(
+          <div
+            ref={dropdownRef}
+            className="fixed z-[9999] w-48 rounded-lg border border-gray-200 bg-white shadow-xl ring-1 ring-black/5"
+            style={{
+              top: dropdownPos.top,
+              left: dropdownPos.left,
+            }}
+          >
+            <div className="py-1">
+              {/* View */}
+              <button
+                className={menuItemClass}
+                onClick={() => {
+                  setOpenDropdown(null);
+                  navigate(`/invoices/${activeInvoice.id}`);
+                }}
+              >
+                <Eye className="h-4 w-4 text-gray-400" />
+                View
+              </button>
+
+              {/* Edit — draft only */}
+              {user?.role !== 'accountant' && activeInvoice.status === 'draft' && (
+                <button
+                  className={menuItemClass}
+                  onClick={() => {
+                    setOpenDropdown(null);
+                    navigate(`/invoices/${activeInvoice.id}/edit`);
+                  }}
+                >
+                  <Pencil className="h-4 w-4 text-gray-400" />
+                  Edit
+                </button>
+              )}
+
+              {/* Download */}
+              <button
+                className={menuItemClass}
+                onClick={() => {
+                  setOpenDropdown(null);
+                  downloadInvoicePDF(activeInvoice);
+                }}
+              >
+                <Download className="h-4 w-4 text-gray-400" />
+                {activeInvoice.status === 'draft' ? 'Download Draft' : 'Download Invoice'}
+              </button>
+
+              {/* Finalize — draft only */}
+              {user?.role !== 'accountant' && activeInvoice.status === 'draft' && (
+                <button
+                  className={menuItemClass}
+                  onClick={() => {
+                    setOpenDropdown(null);
+                    setConfirmAction({
+                      type: 'finalize',
+                      invoiceId: activeInvoice.id,
+                      invoiceNumber: activeInvoice.invoice_number,
+                    });
+                  }}
+                >
+                  <FileText className="h-4 w-4 text-gray-400" />
+                  Finalize & Issue
+                </button>
+              )}
+
+              {/* Cancel — draft only */}
+              {user?.role !== 'accountant' && activeInvoice.status === 'draft' && (
+                <button
+                  className={`${menuItemClass} !text-red-600 hover:!text-red-700 hover:!bg-red-50`}
+                  onClick={() => {
+                    setOpenDropdown(null);
+                    setConfirmAction({
+                      type: 'cancel',
+                      invoiceId: activeInvoice.id,
+                      invoiceNumber: activeInvoice.invoice_number,
+                    });
+                  }}
+                >
+                  <XCircle className="h-4 w-4" />
+                  Cancel Invoice
+                </button>
+              )}
+
+              {/* Separator + Duplicate */}
+              <div className="border-t border-gray-100 my-1" />
+              <button
+                className={menuItemClass}
+                onClick={() => {
+                  setOpenDropdown(null);
+                  navigate(`/invoices/create?duplicate=${activeInvoice.id}`);
+                }}
+              >
+                <Copy className="h-4 w-4 text-gray-400" />
+                Duplicate
+              </button>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
+
+      {/* Confirmation Dialog - Finalize */}
       <ConfirmDialog
-        isOpen={confirmAction?.type === 'issue'}
-        title="Issue Invoice?"
-        message={`Are you sure you want to issue invoice ${confirmAction?.invoiceNumber}? Once issued, the invoice cannot be edited.`}
-        confirmLabel="Yes, Issue"
+        isOpen={confirmAction?.type === 'finalize'}
+        title="Finalize & Issue Invoice?"
+        message={`Are you sure you want to finalize invoice ${confirmAction?.invoiceNumber}? After finalization, this invoice cannot be edited.`}
+        confirmLabel="Yes, Finalize"
         variant="info"
         isLoading={!!actionLoading}
-        onConfirm={() => confirmAction && handleAction('issue', confirmAction.invoiceId)}
+        onConfirm={() => confirmAction && handleAction('finalize', confirmAction.invoiceId)}
         onCancel={() => setConfirmAction(null)}
       />
 

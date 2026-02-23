@@ -29,8 +29,8 @@ export default function EditSubscriptionPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // V1: Track if issued invoices exist (blocks price change)
-  const [hasIssuedInvoices, setHasIssuedInvoices] = useState(false);
+  // V1: Track if finalized invoices exist (blocks price change)
+  const [hasFinalizedInvoices, setHasFinalizedInvoices] = useState(false);
   const [checkingInvoices, setCheckingInvoices] = useState(true);
 
   // V1: Price change modal
@@ -71,8 +71,8 @@ export default function EditSubscriptionPage() {
         notes: data.notes || '',
       });
 
-      // V1: Check if issued invoices exist
-      await checkForIssuedInvoices(data.client_id);
+      // V1: Check if finalized invoices exist
+      await checkForFinalizedInvoices(data.client_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load subscription');
     } finally {
@@ -80,8 +80,8 @@ export default function EditSubscriptionPage() {
     }
   }
 
-  // V1: Check if issued invoices exist for this subscription's client
-  async function checkForIssuedInvoices(clientId: string) {
+  // V1: Check if finalized invoices exist for this subscription's client
+  async function checkForFinalizedInvoices(clientId: string) {
     try {
       setCheckingInvoices(true);
       const { count, error: countError } = await supabase
@@ -89,23 +89,23 @@ export default function EditSubscriptionPage() {
         .select('id', { count: 'exact', head: true })
         .eq('invoice_type', 'subscription')
         .eq('client_id', clientId)
-        .eq('status', 'issued');
+        .in('status', ['finalized', 'partially_paid', 'paid']);
 
       if (!countError && count !== null && count > 0) {
-        setHasIssuedInvoices(true);
+        setHasFinalizedInvoices(true);
       }
     } catch {
       // If check fails, be conservative and block price changes
-      setHasIssuedInvoices(true);
+      setHasFinalizedInvoices(true);
     } finally {
       setCheckingInvoices(false);
     }
   }
 
   function handleChange(field: keyof UpdateSubscriptionInput, value: any) {
-    // V1: Intercept price changes if issued invoices exist
-    if (field === 'price_per_unit' && hasIssuedInvoices) {
-      setError('Cannot change price: issued invoices exist for this subscription.');
+    // V1: Intercept price changes if finalized invoices exist
+    if (field === 'price_per_unit' && hasFinalizedInvoices) {
+      setError('Cannot change price: finalized invoices exist for this subscription.');
       return;
     }
 
@@ -289,10 +289,10 @@ export default function EditSubscriptionPage() {
         </Alert>
       )}
 
-      {/* V1: Warning about issued invoices blocking price changes */}
-      {hasIssuedInvoices && !checkingInvoices && (
+      {/* V1: Warning about finalized invoices blocking price changes */}
+      {hasFinalizedInvoices && !checkingInvoices && (
         <Alert variant="info">
-          <strong>Price Locked:</strong> Issued invoices exist for this subscription.
+          <strong>Price Locked:</strong> Finalized invoices exist for this subscription.
           Price changes are not allowed to maintain billing integrity.
         </Alert>
       )}
@@ -389,14 +389,14 @@ export default function EditSubscriptionPage() {
                   onChange={(e) => handleChange('price_per_unit', parseFloat(e.target.value) || 0)}
                   error={errors.price_per_unit}
                   required
-                  disabled={hasIssuedInvoices}
+                  disabled={hasFinalizedInvoices}
                   helperText={
-                    hasIssuedInvoices
-                      ? 'Locked - issued invoices exist'
+                    hasFinalizedInvoices
+                      ? 'Locked - finalized invoices exist'
                       : 'Changes affect future invoices only'
                   }
                 />
-                {priceChanged && !hasIssuedInvoices && (
+                {priceChanged && !hasFinalizedInvoices && (
                   <p className="text-amber-600 text-sm mt-1 flex items-center gap-1">
                     <AlertTriangle className="h-4 w-4" />
                     Price changed from ₹{originalPrice.toFixed(2)}. You'll be asked for a reason.

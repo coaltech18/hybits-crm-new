@@ -332,7 +332,7 @@ export async function createSubscription(
  * Update subscription
  * 
  * V1 COMMERCIAL LAYER:
- * - Price change BLOCKED if issued invoices exist
+ * - Price change BLOCKED if finalized invoices exist
  * - price_change_reason REQUIRED when changing price
  * - Reason is passed to DB trigger via session variable
  * 
@@ -382,23 +382,23 @@ export async function updateSubscription(
     updates.price_per_unit !== current.price_per_unit;
 
   if (isPriceChanging) {
-    // Check if issued invoices exist for this subscription
-    const { count: issuedInvoiceCount, error: countError } = await supabase
+    // Check if finalized/paid invoices exist for this subscription
+    const { count: finalizedInvoiceCount, error: countError } = await supabase
       .from('invoices')
       .select('id', { count: 'exact', head: true })
       .eq('invoice_type', 'subscription')
       .eq('client_id', current.client_id)
-      .eq('status', 'issued');
+      .in('status', ['finalized', 'partially_paid', 'paid']);
 
     if (countError) {
       throw new Error(`Failed to check invoices: ${countError.message}`);
     }
 
-    // Block price change if any issued invoices exist
-    if (issuedInvoiceCount && issuedInvoiceCount > 0) {
+    // Block price change if any finalized/paid invoices exist
+    if (finalizedInvoiceCount && finalizedInvoiceCount > 0) {
       throw new Error(
-        'Cannot change price: issued invoices exist for this subscription. ' +
-        'Price changes are only allowed before invoices are issued.'
+        'Cannot change price: finalized invoices exist for this subscription. ' +
+        'Price changes are only allowed before invoices are finalized.'
       );
     }
 

@@ -23,6 +23,7 @@ interface CompanyDetails {
 interface InvoicePDFData {
     invoice: Invoice;
     companyDetails: CompanyDetails;
+    isDraft?: boolean;
 }
 
 /**
@@ -106,7 +107,7 @@ function calculateGstBreakup(
  * @returns PDF blob for download
  */
 export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
-    const { invoice, companyDetails } = data;
+    const { invoice, companyDetails, isDraft = false } = data;
     const doc = new jsPDF();
 
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -114,6 +115,26 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     const leftX = 14;
     const rightX = pageWidth - 14;
     let y = 20;
+
+    // ================================================================
+    // DRAFT WATERMARK (if applicable)
+    // ================================================================
+    if (isDraft) {
+        doc.setFontSize(54);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(220, 220, 220); // Light gray
+        // Rotate and center the watermark diagonally
+        const centerX = pageWidth / 2;
+        const centerY = pageHeight / 2;
+        doc.text('DRAFT - Not a Tax Invoice', centerX, centerY, {
+            align: 'center',
+            angle: 45,
+        });
+        // Reset text color and font
+        doc.setTextColor(0, 0, 0);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+    }
 
     // ================================================================
     // HEADER: Company Details (From)
@@ -157,7 +178,8 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     y += 8;
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
-    doc.text('TAX INVOICE', pageWidth / 2, y, { align: 'center' });
+    const invoiceTitle = isDraft ? 'DRAFT INVOICE' : 'TAX INVOICE';
+    doc.text(invoiceTitle, pageWidth / 2, y, { align: 'center' });
 
     // Invoice details on right side — positioned relative to title
     doc.setFontSize(9);
@@ -533,8 +555,10 @@ export function downloadInvoicePDF(invoice: Invoice): void {
         email: COMPANY_PROFILE.email,
     };
 
-    const doc = generateInvoicePDF({ invoice, companyDetails });
+    const isDraft = invoice.status === 'draft';
+    const doc = generateInvoicePDF({ invoice, companyDetails, isDraft });
 
     // Download the PDF
-    doc.save(`Invoice_${invoice.invoice_number}.pdf`);
+    const prefix = isDraft ? 'Draft_Invoice' : 'Invoice';
+    doc.save(`${prefix}_${invoice.invoice_number}.pdf`);
 }

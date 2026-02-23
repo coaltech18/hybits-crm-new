@@ -208,7 +208,9 @@ export default function InventoryItemsPage() {
                   <tr key={item.id} className="border-b hover:bg-muted/50">
                     <td className="py-3 px-4">
                       <div>
-                        <p className="font-medium">{item.name}</p>
+                        <Link to={`/inventory/items/${item.id}`} className="font-medium text-brand-primary hover:underline">
+                          {item.name}
+                        </Link>
                         <p className="text-sm text-muted-foreground">Unit: {item.unit}</p>
                       </div>
                     </td>
@@ -228,9 +230,9 @@ export default function InventoryItemsPage() {
                     <td className="text-right py-3 px-4 text-red-600">{item.lost_quantity}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-center gap-2">
-                        {/* View Movements (all roles) */}
-                        <Link to={`/inventory/movements?item=${item.id}`}>
-                          <Button variant="ghost" size="sm" title="View Movement History">
+                        {/* View Item Detail (all roles) */}
+                        <Link to={`/inventory/items/${item.id}`}>
+                          <Button variant="ghost" size="sm" title="View Item Details">
                             <History className="w-4 h-4" />
                           </Button>
                         </Link>

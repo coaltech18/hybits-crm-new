@@ -390,7 +390,7 @@ export interface EventFilters {
 // ================================================================
 
 export type InvoiceType = 'subscription' | 'event';
-export type InvoiceStatus = 'draft' | 'issued' | 'cancelled';
+export type InvoiceStatus = 'draft' | 'finalized' | 'partially_paid' | 'paid' | 'cancelled';
 
 export interface InvoiceItem {
   id: string;
@@ -450,6 +450,9 @@ export interface CreateInvoiceInput {
 
 export interface UpdateInvoiceInput {
   status?: InvoiceStatus;
+  // Editable fields (draft only)
+  items?: CreateInvoiceItemInput[];
+  terms_and_conditions?: string;
 }
 
 export interface InvoiceFilters {

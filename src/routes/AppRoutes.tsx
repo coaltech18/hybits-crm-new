@@ -30,6 +30,7 @@ import EventDetailPage from '@/pages/events/EventDetailPage';
 // Invoice Pages
 import InvoicesPage from '@/pages/invoices/InvoicesPage';
 import CreateInvoicePage from '@/pages/invoices/CreateInvoicePage';
+import EditInvoicePage from '@/pages/invoices/EditInvoicePage';
 import InvoiceDetailPage from '@/pages/invoices/InvoiceDetailPage';
 
 // Payment Pages
@@ -47,6 +48,7 @@ import InventoryReportsPage from '@/pages/inventory/InventoryReportsPage';
 import InventoryOverviewPage from '@/pages/inventory/InventoryOverviewPage';
 import InventoryAuditPage from '@/pages/inventory/InventoryAuditPage';
 import InventoryAuditDetailPage from '@/pages/inventory/InventoryAuditDetailPage';
+import InventoryItemDetailPage from '@/pages/inventory/InventoryItemDetailPage';
 
 // Admin Pages
 import UsersManagementPage from '@/pages/admin/UsersManagementPage';
@@ -208,6 +210,14 @@ export function AppRoutes() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/invoices/:id/edit"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager']}>
+              <EditInvoicePage />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Payments */}
         <Route
@@ -251,6 +261,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
               <InventoryItemsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inventory/items/:id"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+              <InventoryItemDetailPage />
             </ProtectedRoute>
           }
         />

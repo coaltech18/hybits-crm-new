@@ -7,6 +7,7 @@ import type {
   InvoiceWithPaymentStatus,
 } from '@/types';
 import { roundCurrency, settleBalance, SETTLEMENT_TOLERANCE } from '@/utils/format';
+import { syncInvoicePaymentStatus } from './invoiceService';
 
 // ================================================================
 // PAYMENT SERVICE
@@ -227,7 +228,7 @@ export async function createPayment(
 
   // Check invoice status
   if (invoice.status === 'draft') {
-    throw new Error('Cannot record payment for draft invoice. Issue the invoice first.');
+    throw new Error('Cannot record payment for draft invoice. Finalize the invoice first.');
   }
 
   if (invoice.status === 'cancelled') {
@@ -279,6 +280,10 @@ export async function createPayment(
   if (!completePayment) {
     throw new Error('Failed to fetch created payment');
   }
+
+  // Sync invoice payment status
+  const summary = await getPaymentSummary(input.invoice_id);
+  await syncInvoicePaymentStatus(userId, input.invoice_id, summary.amount_paid, summary.invoice_total);
 
   return completePayment;
 }
@@ -390,6 +395,10 @@ export async function updatePayment(
     throw new Error('Failed to fetch updated payment');
   }
 
+  // Sync invoice payment status
+  const summary = await getPaymentSummary(payment.invoice_id);
+  await syncInvoicePaymentStatus(userId, payment.invoice_id, summary.amount_paid, summary.invoice_total);
+
   return updatedPayment;
 }
 
@@ -461,6 +470,10 @@ export async function deactivatePayment(userId: string, paymentId: string): Prom
   if (error) {
     throw new Error(error.message);
   }
+
+  // Sync invoice payment status (payment removed → may revert status)
+  const summary = await getPaymentSummary(payment.invoice_id);
+  await syncInvoicePaymentStatus(userId, payment.invoice_id, summary.amount_paid, summary.invoice_total);
 }
 
 /**
@@ -519,6 +532,10 @@ export async function reactivatePayment(userId: string, paymentId: string): Prom
   if (error) {
     throw new Error(error.message);
   }
+
+  // Sync invoice payment status (payment reactivated → may advance status)
+  const summary = await getPaymentSummary(payment.invoice_id);
+  await syncInvoicePaymentStatus(userId, payment.invoice_id, summary.amount_paid, summary.invoice_total);
 }
 
 /**

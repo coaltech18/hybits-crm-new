@@ -22,9 +22,9 @@ export interface DashboardStats {
  * Fetches aggregated metrics from the database:
  * - Total Clients (active only)
  * - Active Subscriptions
- * - Total Invoices (issued only)
+ * - Total Invoices (finalized + partially_paid + paid)
  * - Outstanding Amount (sum of unpaid balances)
- * - Current Month Revenue (issued this month)
+ * - Current Month Revenue (finalized this month)
  * 
  * @param _userId - Current user ID (for RLS context)
  * @returns Dashboard statistics
@@ -55,11 +55,11 @@ export async function getDashboardStats(_userId: string): Promise<DashboardStats
             .select('id', { count: 'exact', head: true })
             .eq('status', 'active'),
 
-        // 3. Total issued invoices
+        // 3. Total finalized/paid invoices
         supabase
             .from('invoices')
             .select('id', { count: 'exact', head: true })
-            .eq('status', 'issued'),
+            .in('status', ['finalized', 'partially_paid', 'paid']),
 
         // 4. Outstanding amount (from view with payment status)
         supabase
@@ -67,11 +67,11 @@ export async function getDashboardStats(_userId: string): Promise<DashboardStats
             .select('balance_due')
             .gt('balance_due', 0),
 
-        // 5. Current month revenue (issued this month)
+        // 5. Current month revenue (finalized this month)
         supabase
             .from('invoices')
             .select('grand_total')
-            .eq('status', 'issued')
+            .in('status', ['finalized', 'partially_paid', 'paid'])
             .gte('issued_at', firstDayOfMonthISO),
     ]);
 

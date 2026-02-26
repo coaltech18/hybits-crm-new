@@ -172,7 +172,7 @@ export default function InvoiceDetailPage() {
           {/* Download PDF - always available */}
           <Button
             variant="outline"
-            onClick={() => downloadInvoicePDF(invoice)}
+            onClick={async () => await downloadInvoicePDF(invoice)}
           >
             <Download className="h-4 w-4 mr-2" />
             {invoice.status === 'draft' ? 'Download Draft' : 'Download Invoice'}

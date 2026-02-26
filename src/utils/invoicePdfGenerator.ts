@@ -3,6 +3,7 @@ import autoTable from 'jspdf-autotable';
 import type { Invoice, InvoiceItem, ClientGstType } from '@/types';
 import { COMPANY_PROFILE, DEFAULT_TERMS_AND_CONDITIONS } from '@/config/companyProfile';
 import { DEFAULT_HSN_CODE } from '@/config/gstConstants';
+import { getInvoiceById } from '@/services/invoiceService';
 
 // ================================================================
 // INVOICE PDF GENERATOR (INR ONLY)
@@ -120,17 +121,16 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     // DRAFT WATERMARK (if applicable)
     // ================================================================
     if (isDraft) {
-        doc.setFontSize(54);
+        doc.setFontSize(48);
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(220, 220, 220); // Light gray
-        // Rotate and center the watermark diagonally
+        doc.setTextColor(240, 240, 240); // Very light gray (~8% visual opacity)
         const centerX = pageWidth / 2;
         const centerY = pageHeight / 2;
-        doc.text('DRAFT - Not a Tax Invoice', centerX, centerY, {
+        doc.text('DRAFT', centerX, centerY, {
             align: 'center',
             angle: 45,
         });
-        // Reset text color and font
+        // Reset
         doc.setTextColor(0, 0, 0);
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(10);
@@ -139,7 +139,7 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     // ================================================================
     // HEADER: Company Details (From)
     // ================================================================
-    doc.setFontSize(16);
+    doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
     doc.text(companyDetails.name, leftX, y);
     y += 7;
@@ -174,9 +174,8 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     // ================================================================
     // INVOICE TITLE & NUMBER (right-aligned box)
     // ================================================================
-    // Title centered
-    y += 8;
-    doc.setFontSize(14);
+    y += 12;
+    doc.setFontSize(15);
     doc.setFont('helvetica', 'bold');
     const invoiceTitle = isDraft ? 'DRAFT INVOICE' : 'TAX INVOICE';
     doc.text(invoiceTitle, pageWidth / 2, y, { align: 'center' });
@@ -272,6 +271,11 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     y += 4;
 
     const items: InvoiceItem[] = invoice.invoice_items || [];
+
+    if (items.length === 0) {
+        console.warn(`[PDF] Invoice ${invoice.invoice_number} has no line items — table will be empty.`);
+    }
+
     const tableData = items.map((item, index) => [
         (index + 1).toString(),
         DEFAULT_HSN_CODE,
@@ -424,7 +428,7 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     doc.setDrawColor(0, 0, 0);
     doc.line(totalsStartX - 5, totalsY - 2, totalsValueX, totalsY - 2);
 
-    doc.setFontSize(12);
+    doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
     doc.text('Grand Total:', totalsStartX, totalsY + 5);
     doc.text(formatPdfCurrency(invoice.grand_total), totalsValueX, totalsY + 5, { align: 'right' });
@@ -529,12 +533,12 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
         y = 20;
     }
 
-    doc.setFontSize(9);
+    doc.setFontSize(7);
     doc.setFont('helvetica', 'italic');
-    doc.setTextColor(100, 100, 100);
+    doc.setTextColor(160, 160, 160);
     doc.text('This is a system generated invoice.', leftX, y);
 
-    y += 5;
+    y += 4;
     doc.text('No signature required.', leftX, y);
 
     return doc;
@@ -543,10 +547,23 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
 /**
  * Download invoice as PDF
  * 
- * @param invoice - Full invoice object from database
+ * Always re-fetches the full invoice (with items) to guarantee
+ * line items are present even when called from the list page.
+ * 
+ * @param invoice - Invoice object (items may or may not be loaded)
  */
-export function downloadInvoicePDF(invoice: Invoice): void {
-    // Always use the registered company profile as the seller
+export async function downloadInvoicePDF(invoice: Invoice): Promise<void> {
+    // Re-fetch full invoice with items to guarantee data completeness
+    let fullInvoice: Invoice = invoice;
+    if (!invoice.invoice_items || invoice.invoice_items.length === 0) {
+        const fetched = await getInvoiceById(invoice.id);
+        if (fetched) {
+            fullInvoice = fetched;
+        } else {
+            console.error(`[PDF] Could not fetch invoice ${invoice.invoice_number}`);
+        }
+    }
+
     const companyDetails: CompanyDetails = {
         name: COMPANY_PROFILE.legalName,
         address: COMPANY_PROFILE.address,
@@ -555,10 +572,10 @@ export function downloadInvoicePDF(invoice: Invoice): void {
         email: COMPANY_PROFILE.email,
     };
 
-    const isDraft = invoice.status === 'draft';
-    const doc = generateInvoicePDF({ invoice, companyDetails, isDraft });
+    const isDraft = fullInvoice.status === 'draft';
+    const doc = generateInvoicePDF({ invoice: fullInvoice, companyDetails, isDraft });
 
     // Download the PDF
     const prefix = isDraft ? 'Draft_Invoice' : 'Invoice';
-    doc.save(`${prefix}_${invoice.invoice_number}.pdf`);
+    doc.save(`${prefix}_${fullInvoice.invoice_number}.pdf`);
 }

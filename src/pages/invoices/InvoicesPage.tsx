@@ -358,9 +358,9 @@ export default function InvoicesPage() {
               {/* Download */}
               <button
                 className={menuItemClass}
-                onClick={() => {
+                onClick={async () => {
                   setOpenDropdown(null);
-                  downloadInvoicePDF(activeInvoice);
+                  await downloadInvoicePDF(activeInvoice);
                 }}
               >
                 <Download className="h-4 w-4 text-gray-400" />

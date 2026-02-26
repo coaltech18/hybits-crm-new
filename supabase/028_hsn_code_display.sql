@@ -13,7 +13,7 @@
 --   - gst_working_sez:       '' AS hsn_code     → '9985' AS hsn_code
 --   - gst_working_export:    '' AS hsn_code     → '9985' AS hsn_code
 --
--- BACKWARD COMPATIBLE:
+-- BACKWARD COMPATIBLE:w
 --   - No table schema changes
 --   - No data backfill
 --   - No tax calculation changes

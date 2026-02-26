@@ -53,7 +53,6 @@ import InventoryItemDetailPage from '@/pages/inventory/InventoryItemDetailPage';
 // Admin Pages
 import UsersManagementPage from '@/pages/admin/UsersManagementPage';
 import OutletsManagementPage from '@/pages/admin/OutletsManagementPage';
-import AccessMatrixPage from '@/pages/admin/AccessMatrixPage';
 import ActivityLogsPage from '@/pages/admin/ActivityLogsPage';
 import SystemSettingsPage from '@/pages/admin/SystemSettingsPage';
 
@@ -331,17 +330,9 @@ export function AppRoutes() {
           }
         />
         <Route
-          path="/admin/access-matrix"
-          element={
-            <ProtectedRoute allowedRoles={['admin', 'accountant']}>
-              <AccessMatrixPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
           path="/admin/activity-logs"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'manager', 'accountant']}>
+            <ProtectedRoute allowedRoles={['admin']}>
               <ActivityLogsPage />
             </ProtectedRoute>
           }

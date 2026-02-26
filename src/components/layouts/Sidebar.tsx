@@ -13,7 +13,6 @@ import {
   CalendarCheck,
   DollarSign,
   TrendingUp,
-  Shield,
   Activity,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -97,16 +96,10 @@ const adminNavItems: NavItem[] = [
     roles: ['admin'],
   },
   {
-    to: '/admin/access-matrix',
-    icon: Shield,
-    label: 'Access Matrix',
-    roles: ['admin', 'accountant'],
-  },
-  {
     to: '/admin/activity-logs',
     icon: Activity,
     label: 'Activity Logs',
-    roles: ['admin', 'manager', 'accountant'],
+    roles: ['admin'],
   },
   {
     to: '/admin/settings',

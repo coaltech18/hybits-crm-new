@@ -118,7 +118,7 @@ BEGIN
       ) + 1
       INTO seq_num
       FROM invoices
-      WHERE invoice_number LIKE 'INV-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-%';
+      WHERE invoice_number ~ '^INV-[0-9]{8}-[0-9]+$';
 
       NEW.invoice_number := prefix || LPAD(seq_num::TEXT, 4, '0');
   END CASE;

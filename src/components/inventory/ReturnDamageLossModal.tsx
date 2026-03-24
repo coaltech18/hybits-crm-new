@@ -78,7 +78,7 @@ export default function ReturnDamageLossModal({
 
     // Client-side check (DB will also validate)
     if (qty > outstandingQuantity) {
-      setError(`Quantity cannot exceed outstanding (${outstandingQuantity})`);
+      setError(`Quantity cannot exceed pending return (${outstandingQuantity})`);
       return;
     }
 
@@ -122,7 +122,7 @@ export default function ReturnDamageLossModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Return / Damage / Loss"
+      title="Process Return"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <Alert variant="error">{error}</Alert>}
@@ -131,7 +131,7 @@ export default function ReturnDamageLossModal({
         <div className="bg-muted p-4 rounded">
           <p className="text-sm text-muted-foreground">Item</p>
           <p className="font-semibold">{itemName}</p>
-          <p className="text-sm text-muted-foreground mt-2">Outstanding Quantity</p>
+          <p className="text-sm text-muted-foreground mt-2">Pending Return</p>
           <p className="text-lg font-bold text-orange-600">{outstandingQuantity}</p>
         </div>
 
@@ -186,7 +186,7 @@ export default function ReturnDamageLossModal({
             Cancel
           </Button>
           <Button type="submit" disabled={loading}>
-            {loading ? 'Processing...' : actionType === 'return' ? 'Return' : `Mark as ${actionType}`}
+            {loading ? 'Processing...' : actionType === 'return' ? 'Process Return' : `Mark as ${actionType}`}
           </Button>
         </div>
       </form>

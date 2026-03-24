@@ -137,7 +137,7 @@ export default function ReceiveBackModal({
         }
 
         if (qty > outstandingQty) {
-            setError(`Quantity cannot exceed outstanding (${outstandingQty})`);
+            setError(`Quantity cannot exceed pending return (${outstandingQty})`);
             return;
         }
 
@@ -170,7 +170,7 @@ export default function ReceiveBackModal({
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Receive Back">
+        <Modal isOpen={isOpen} onClose={onClose} title="Record Return">
             <form onSubmit={handleSubmit} className="space-y-4">
                 {error && <Alert variant="error">{error}</Alert>}
 
@@ -201,7 +201,7 @@ export default function ReceiveBackModal({
                             {allocations.map((alloc) => (
                                 <option key={alloc.id} value={alloc.id}>
                                     {alloc.reference_type === 'subscription' ? '📋' : '🎉'}{' '}
-                                    {alloc.reference_name} — Outstanding: {alloc.outstanding_quantity}
+                                    {alloc.reference_name} — Pending Return: {alloc.outstanding_quantity}
                                 </option>
                             ))}
                         </Select>
@@ -209,7 +209,7 @@ export default function ReceiveBackModal({
                         {/* Outstanding Info */}
                         {selectedAllocation && (
                             <div className="bg-orange-50 p-3 rounded">
-                                <p className="text-sm text-muted-foreground">Outstanding Quantity</p>
+                                <p className="text-sm text-muted-foreground">Pending Return</p>
                                 <p className="text-lg font-bold text-orange-600">{outstandingQty}</p>
                             </div>
                         )}
@@ -290,7 +290,7 @@ export default function ReceiveBackModal({
                         Cancel
                     </Button>
                     <Button type="submit" disabled={loading || allocations.length === 0}>
-                        {loading ? 'Processing...' : 'Receive Back'}
+                        {loading ? 'Processing...' : 'Record Return'}
                     </Button>
                 </div>
             </form>

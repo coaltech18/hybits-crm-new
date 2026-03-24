@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { History } from 'lucide-react';
+import { History, Package } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
@@ -144,6 +144,13 @@ export default function SubscriptionDetailPage() {
         <div className="flex gap-2">
           {user?.role !== 'accountant' && subscription.status !== 'cancelled' && (
             <>
+              <Link to={`/inventory/allocate?type=subscription&ref=${id}`}>
+                <Button variant="outline">
+                  <Package className="w-4 h-4 mr-2" />
+                  Allocate Inventory
+                </Button>
+              </Link>
+
               <Link to={`/subscriptions/${id}/edit`}>
                 <Button variant="outline">Edit</Button>
               </Link>

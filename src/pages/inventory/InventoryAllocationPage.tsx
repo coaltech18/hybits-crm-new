@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
 import { supabase } from '@/lib/supabase';
 import { getAllocationsByReference, getAllocationSummary } from '@/services/allocationService';
 import type { InventoryAllocation, ReferenceType } from '@/types';
@@ -25,6 +27,13 @@ import ReturnDamageLossModal from '@/components/inventory/ReturnDamageLossModal'
 
 export default function InventoryAllocationPage() {
   const { user } = useAuth();
+  const { showToast } = useToast();
+  const [searchParams] = useSearchParams();
+
+  // URL params for deep linking from Event/Subscription detail pages
+  const paramType = searchParams.get('type');
+  const paramRef = searchParams.get('ref');
+
   const [referenceType, setReferenceType] = useState<ReferenceType | ''>('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedReference, setSelectedReference] = useState<{
@@ -52,6 +61,15 @@ export default function InventoryAllocationPage() {
   const [returnAllocation, setReturnAllocation] = useState<InventoryAllocation | null>(null);
 
   const isAccountant = user?.role === 'accountant';
+
+  // Auto-select reference from URL params on mount
+  useEffect(() => {
+    const isValidType = paramType === 'subscription' || paramType === 'event';
+    const isValidRef = paramRef && paramRef.length > 0;
+    if (isValidType && isValidRef && !selectedReference) {
+      autoSelectReference(paramType as ReferenceType, paramRef);
+    }
+  }, []); // Run once on mount
 
   useEffect(() => {
     if (searchQuery && referenceType) {
@@ -97,7 +115,7 @@ export default function InventoryAllocationPage() {
           .from('events')
           .select('id, event_name, outlet_id, status')
           .ilike('event_name', `%${searchQuery}%`)
-          .eq('is_active', true)
+          .neq('status', 'cancelled')
           .limit(10);
 
         setSearchResults(
@@ -113,6 +131,47 @@ export default function InventoryAllocationPage() {
       console.error('Search failed:', err);
     } finally {
       setSearchLoading(false);
+    }
+  }
+
+  // Auto-select reference from URL params (deep link from Event/Subscription detail pages)
+  async function autoSelectReference(type: ReferenceType, refId: string) {
+    try {
+      setReferenceType(type);
+
+      if (type === 'subscription') {
+        const { data } = await supabase
+          .from('subscriptions')
+          .select('id, client_id, outlet_id, status, clients(name)')
+          .eq('id', refId)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (data) {
+          setSelectedReference({
+            id: data.id,
+            name: (data.clients as any)?.name || 'Unknown',
+            outlet_id: data.outlet_id,
+          });
+        }
+      } else if (type === 'event') {
+        const { data } = await supabase
+          .from('events')
+          .select('id, event_name, outlet_id, status')
+          .eq('id', refId)
+          .maybeSingle();
+
+        if (data) {
+          setSelectedReference({
+            id: data.id,
+            name: data.event_name,
+            outlet_id: data.outlet_id,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Auto-select failed, falling back to manual search:', err);
+      // Fail silently — user can still search manually
     }
   }
 
@@ -156,10 +215,10 @@ export default function InventoryAllocationPage() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Package className="w-8 h-8" />
-            Inventory Allocation
+            Send / Receive Items
           </h1>
           <p className="text-muted-foreground mt-1">
-            Allocate dishware to subscriptions or events
+            Send and receive dishware for subscriptions or events
           </p>
         </div>
 
@@ -245,9 +304,9 @@ export default function InventoryAllocationPage() {
               </div>
               {summary && (
                 <div className="text-right">
-                  <p className="text-sm text-muted-foreground">Total Allocated</p>
+                  <p className="text-sm text-muted-foreground">Total Sent</p>
                   <p className="text-2xl font-bold text-brand-primary">{summary.totalAllocated}</p>
-                  <p className="text-sm text-muted-foreground mt-1">Outstanding</p>
+                  <p className="text-sm text-muted-foreground mt-1">Pending Return</p>
                   <p className="text-lg font-semibold text-orange-600">{summary.totalOutstanding}</p>
                 </div>
               )}
@@ -257,7 +316,7 @@ export default function InventoryAllocationPage() {
           {/* Allocations Table */}
           <Card>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">Allocated Items</h3>
+              <h3 className="font-semibold">Sent Items</h3>
               <p className="text-sm text-muted-foreground">
                 {allocations.length} item{allocations.length !== 1 ? 's' : ''}
               </p>
@@ -270,7 +329,7 @@ export default function InventoryAllocationPage() {
             ) : allocations.length === 0 ? (
               <div className="text-center py-12">
                 <Package className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">No items allocated yet</p>
+                <p className="text-muted-foreground">No items sent out yet</p>
                 {!isAccountant && (
                   <Button onClick={() => setShowAllocateModal(true)} className="mt-4">
                     <Plus className="w-4 h-4 mr-2" />
@@ -285,8 +344,8 @@ export default function InventoryAllocationPage() {
                     <tr>
                       <th className="text-left py-3 px-4">Item</th>
                       <th className="text-left py-3 px-4">Category</th>
-                      <th className="text-right py-3 px-4">Allocated</th>
-                      <th className="text-right py-3 px-4">Outstanding</th>
+                      <th className="text-right py-3 px-4">Sent</th>
+                      <th className="text-right py-3 px-4">Pending Return</th>
                       <th className="text-center py-3 px-4">Status</th>
                       <th className="text-center py-3 px-4">Actions</th>
                     </tr>
@@ -320,7 +379,7 @@ export default function InventoryAllocationPage() {
                                 size="sm"
                                 onClick={() => setReturnAllocation(allocation)}
                               >
-                                Return/Damage/Loss
+                                Process Return
                               </Button>
                             )}
                         </td>
@@ -335,11 +394,14 @@ export default function InventoryAllocationPage() {
       )}
 
       {/* Allocate Modal */}
-      {showAllocateModal && selectedReference && referenceType && (
+      {showAllocateModal && selectedReference && selectedReference.outlet_id && referenceType && (
         <AllocateInventoryModal
           isOpen={showAllocateModal}
           onClose={() => setShowAllocateModal(false)}
-          onSuccess={loadAllocations}
+          onSuccess={() => {
+            loadAllocations();
+            showToast('Inventory allocated successfully', 'success');
+          }}
           userId={user?.id || ''}
           outletId={selectedReference.outlet_id}
           referenceType={referenceType as ReferenceType}
@@ -349,11 +411,14 @@ export default function InventoryAllocationPage() {
       )}
 
       {/* Return/Damage/Loss Modal */}
-      {returnAllocation && selectedReference && referenceType && (
+      {returnAllocation && selectedReference && selectedReference.outlet_id && referenceType && (
         <ReturnDamageLossModal
           isOpen={!!returnAllocation}
           onClose={() => setReturnAllocation(null)}
-          onSuccess={loadAllocations}
+          onSuccess={() => {
+            loadAllocations();
+            showToast('Return processed successfully', 'success');
+          }}
           userId={user?.id || ''}
           outletId={selectedReference.outlet_id}
           inventoryItemId={returnAllocation.inventory_item_id}

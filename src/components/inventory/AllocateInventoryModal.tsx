@@ -177,7 +177,7 @@ export default function AllocateInventoryModal({
             {selectedItem && (
               <div className="bg-brand-primary/10 p-3 rounded">
                 <p className="text-sm text-muted-foreground">Available Stock</p>
-                <p className="text-lg font-bold text-brand-primary">{availableQuantity} {selectedItem.unit}</p>
+                <p className="text-lg font-bold text-brand-primary">{availableQuantity}</p>
               </div>
             )}
 

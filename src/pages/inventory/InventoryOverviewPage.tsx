@@ -63,12 +63,6 @@ interface RecentMovement {
     reference_name: string | null;
 }
 
-interface LifecycleCount {
-    status: string;
-    count: number;
-    label: string;
-    color: string;
-}
 
 export default function InventoryOverviewPage() {
     const { user, outlets, isAuthReady } = useAuth();
@@ -80,7 +74,6 @@ export default function InventoryOverviewPage() {
     const [discontinuedSummary, setDiscontinuedSummary] = useState<StockSummary | null>(null);
     const [attention, setAttention] = useState<AttentionItem[]>([]);
     const [recentMovements, setRecentMovements] = useState<RecentMovement[]>([]);
-    const [lifecycleCounts, setLifecycleCounts] = useState<LifecycleCount[]>([]);
     const [hasAudit, setHasAudit] = useState(false);
     const [pendingApprovals, setPendingApprovals] = useState(0);
 
@@ -232,7 +225,7 @@ export default function InventoryOverviewPage() {
         if (outstandingCount && outstandingCount > 0) {
             items.push({
                 type: 'outstanding',
-                label: 'Outstanding allocations',
+                label: 'Pending returns',
                 count: outstandingCount,
                 link: '/inventory/allocate?outstanding=true',
                 icon: <Clock className="w-5 h-5" />,
@@ -342,36 +335,9 @@ export default function InventoryOverviewPage() {
         );
     }
 
+    // loadLifecycleCounts kept as no-op for Promise.all compatibility
     async function loadLifecycleCounts() {
-        let query = supabase
-            .from('inventory_items')
-            .select('lifecycle_status');
-
-        if (outletId) {
-            query = query.eq('outlet_id', outletId);
-        }
-
-        const { data, error } = await query;
-        if (error) throw new Error(error.message);
-
-        const counts: Record<string, number> = {
-            draft: 0,
-            active: 0,
-            discontinued: 0,
-            archived: 0,
-        };
-
-        (data || []).forEach((item: any) => {
-            const status = item.lifecycle_status || 'active';
-            counts[status] = (counts[status] || 0) + 1;
-        });
-
-        setLifecycleCounts([
-            { status: 'active', count: counts.active, label: 'Active', color: 'bg-green-500' },
-            { status: 'draft', count: counts.draft, label: 'Draft', color: 'bg-gray-400' },
-            { status: 'discontinued', count: counts.discontinued, label: 'Discontinued', color: 'bg-yellow-500' },
-            { status: 'archived', count: counts.archived, label: 'Archived', color: 'bg-red-500' },
-        ]);
+        // Lifecycle chart removed in Phase-3C dashboard simplification
     }
 
     async function loadAuditStatus() {
@@ -393,9 +359,9 @@ export default function InventoryOverviewPage() {
     function formatMovementCategory(category: string): { label: string; color: string; icon: React.ReactNode } {
         switch (category) {
             case 'inflow':
-                return { label: 'Stock In', color: 'text-green-600', icon: <TrendingUp className="w-4 h-4" /> };
+                return { label: 'Added', color: 'text-green-600', icon: <TrendingUp className="w-4 h-4" /> };
             case 'outflow':
-                return { label: 'Allocated', color: 'text-blue-600', icon: <TrendingDown className="w-4 h-4" /> };
+                return { label: 'Sent Out', color: 'text-blue-600', icon: <TrendingDown className="w-4 h-4" /> };
             case 'return':
                 return { label: 'Returned', color: 'text-cyan-600', icon: <ArrowRight className="w-4 h-4 rotate-180" /> };
             case 'writeoff':
@@ -508,13 +474,7 @@ export default function InventoryOverviewPage() {
 
             {/* Summary Cards */}
             {summary && (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                    <SummaryCard
-                        label="Total Stock"
-                        value={summary.total_quantity}
-                        icon={<Package className="w-6 h-6" />}
-                        color="bg-gray-100 text-gray-800"
-                    />
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <SummaryCard
                         label="Available"
                         value={summary.available_quantity}
@@ -522,7 +482,7 @@ export default function InventoryOverviewPage() {
                         color="bg-green-100 text-green-800"
                     />
                     <SummaryCard
-                        label="Allocated"
+                        label="With Clients"
                         value={summary.allocated_quantity}
                         icon={<TrendingDown className="w-6 h-6" />}
                         color="bg-blue-100 text-blue-800"
@@ -534,13 +494,7 @@ export default function InventoryOverviewPage() {
                         color="bg-orange-100 text-orange-800"
                     />
                     <SummaryCard
-                        label="In Repair"
-                        value={summary.in_repair_quantity}
-                        icon={<Wrench className="w-6 h-6" />}
-                        color="bg-purple-100 text-purple-800"
-                    />
-                    <SummaryCard
-                        label="Lost (Cumulative)"
+                        label="Lost"
                         value={summary.lost_quantity}
                         icon={<XCircle className="w-6 h-6" />}
                         color="bg-red-100 text-red-800"
@@ -548,50 +502,24 @@ export default function InventoryOverviewPage() {
                 </div>
             )}
 
-            {/* Discontinued Items Section */}
+            {/* Discontinued Stock Banner */}
             {discontinuedSummary && (
-                <Card className="bg-amber-50 border-amber-200">
-                    <div className="flex items-center justify-between mb-3">
-                        <h3 className="font-semibold flex items-center gap-2 text-amber-800">
-                            <AlertTriangle className="w-5 h-5" />
-                            Discontinued Items Stock
-                        </h3>
-                        <Link to="/inventory/items?lifecycle_status=discontinued">
-                            <Badge variant="secondary" className="cursor-pointer hover:bg-amber-200">
-                                View Items →
-                            </Badge>
-                        </Link>
+                <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
+                    <div className="flex items-center gap-2 text-amber-800">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span className="text-sm font-medium">
+                            Discontinued Stock: {discontinuedSummary.total_quantity} items
+                        </span>
+                        <span className="text-xs text-amber-600 hidden sm:inline">
+                            — These items cannot be allocated but may still be awaiting return.
+                        </span>
                     </div>
-                    <p className="text-sm text-amber-700 mb-3">
-                        Stock from discontinued items. These items can no longer be allocated but may have pending returns.
-                    </p>
-                    <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
-                        <div className="bg-white/60 rounded-lg p-2 text-center">
-                            <p className="text-lg font-bold text-amber-800">{discontinuedSummary.total_quantity}</p>
-                            <p className="text-xs text-amber-600">Total</p>
-                        </div>
-                        <div className="bg-white/60 rounded-lg p-2 text-center">
-                            <p className="text-lg font-bold text-amber-800">{discontinuedSummary.available_quantity}</p>
-                            <p className="text-xs text-amber-600">Available</p>
-                        </div>
-                        <div className="bg-white/60 rounded-lg p-2 text-center">
-                            <p className="text-lg font-bold text-amber-800">{discontinuedSummary.allocated_quantity}</p>
-                            <p className="text-xs text-amber-600">Allocated</p>
-                        </div>
-                        <div className="bg-white/60 rounded-lg p-2 text-center">
-                            <p className="text-lg font-bold text-amber-800">{discontinuedSummary.damaged_quantity}</p>
-                            <p className="text-xs text-amber-600">Damaged</p>
-                        </div>
-                        <div className="bg-white/60 rounded-lg p-2 text-center">
-                            <p className="text-lg font-bold text-amber-800">{discontinuedSummary.in_repair_quantity}</p>
-                            <p className="text-xs text-amber-600">In Repair</p>
-                        </div>
-                        <div className="bg-white/60 rounded-lg p-2 text-center">
-                            <p className="text-lg font-bold text-amber-800">{discontinuedSummary.lost_quantity}</p>
-                            <p className="text-xs text-amber-600">Lost</p>
-                        </div>
-                    </div>
-                </Card>
+                    <Link to="/inventory/items?lifecycle_status=discontinued">
+                        <Button variant="outline" size="sm" className="border-amber-300 text-amber-800 hover:bg-amber-100 text-xs px-3 py-1 h-7">
+                            View Discontinued Items
+                        </Button>
+                    </Link>
+                </div>
             )}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -681,36 +609,6 @@ export default function InventoryOverviewPage() {
                 </Card>
             </div>
 
-            {/* Lifecycle Breakdown */}
-            <Card>
-                <h3 className="font-semibold mb-4">Item Lifecycle Status</h3>
-                <div className="flex items-center gap-4">
-                    {lifecycleCounts.map((lc) => (
-                        <div key={lc.status} className="flex items-center gap-2">
-                            <div className={`w-3 h-3 rounded-full ${lc.color}`} />
-                            <span className="text-sm">
-                                {lc.label}: <strong>{lc.count}</strong>
-                            </span>
-                        </div>
-                    ))}
-                </div>
-
-                {/* Progress Bar */}
-                <div className="mt-4 h-4 rounded-full overflow-hidden flex bg-gray-200">
-                    {lifecycleCounts.map((lc) => {
-                        const total = lifecycleCounts.reduce((acc, c) => acc + c.count, 0);
-                        const width = total > 0 ? (lc.count / total) * 100 : 0;
-                        return (
-                            <div
-                                key={lc.status}
-                                className={`${lc.color} transition-all`}
-                                style={{ width: `${width}%` }}
-                                title={`${lc.label}: ${lc.count}`}
-                            />
-                        );
-                    })}
-                </div>
-            </Card>
 
             {/* Quick Actions */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -721,8 +619,8 @@ export default function InventoryOverviewPage() {
                     link="/inventory/items"
                 />
                 <QuickActionCard
-                    title="Allocations"
-                    description="Process returns and allocations"
+                    title="Send / Receive"
+                    description="Send items out and record returns"
                     icon={<TrendingDown className="w-6 h-6" />}
                     link="/inventory/allocate"
                 />

@@ -95,9 +95,18 @@ export default function InventoryMovementsPage() {
       adjustment: 'bg-yellow-100 text-yellow-800',
     };
 
+    const labels: Record<MovementType, string> = {
+      stock_in: 'Added',
+      allocation: 'Sent Out',
+      return: 'Returned',
+      damage: 'Damaged',
+      loss: 'Lost',
+      adjustment: 'Adjustment',
+    };
+
     return (
       <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${colors[type]}`}>
-        {type.replace('_', ' ').toUpperCase()}
+        {labels[type] || type.replace('_', ' ').toUpperCase()}
       </span>
     );
   }
@@ -199,11 +208,11 @@ export default function InventoryMovementsPage() {
             onChange={(e) => setMovementType(e.target.value as MovementType | '')}
           >
             <option value="">All Types</option>
-            <option value="stock_in">Stock In</option>
-            <option value="allocation">Allocation</option>
-            <option value="return">Return</option>
-            <option value="damage">Damage</option>
-            <option value="loss">Loss</option>
+            <option value="stock_in">Added</option>
+            <option value="allocation">Sent Out</option>
+            <option value="return">Returned</option>
+            <option value="damage">Damaged</option>
+            <option value="loss">Lost</option>
             <option value="adjustment">Adjustment</option>
           </Select>
 

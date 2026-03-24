@@ -4,7 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getEventById, completeEvent, cancelEvent } from '@/services/eventService';
-import type { Event } from '@/types';
+import { getAllocationsByReference } from '@/services/allocationService';
+import type { Event, InventoryAllocation } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -12,6 +13,9 @@ import { Alert } from '@/components/ui/Alert';
 import { Spinner } from '@/components/ui/Spinner';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/utils/billingDate';
+import { Package, Plus } from 'lucide-react';
+import AllocateInventoryModal from '@/components/inventory/AllocateInventoryModal';
+import ReturnDamageLossModal from '@/components/inventory/ReturnDamageLossModal';
 
 export default function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -29,9 +33,34 @@ export default function EventDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'complete' | 'cancel' | null>(null);
 
+  // Inventory allocations
+  const [allocations, setAllocations] = useState<InventoryAllocation[]>([]);
+  const [allocationsLoading, setAllocationsLoading] = useState(false);
+  const [showAllocateModal, setShowAllocateModal] = useState(false);
+  const [returnAllocation, setReturnAllocation] = useState<InventoryAllocation | null>(null);
+
   useEffect(() => {
     loadEvent();
   }, [id]);
+
+  useEffect(() => {
+    if (event && user?.id && event.status !== 'cancelled') {
+      loadAllocations();
+    }
+  }, [event?.id, user?.id]);
+
+  async function loadAllocations() {
+    if (!user?.id || !id) return;
+    try {
+      setAllocationsLoading(true);
+      const data = await getAllocationsByReference(user.id, 'event', id);
+      setAllocations(data);
+    } catch (err) {
+      console.error('Failed to load allocations:', err);
+    } finally {
+      setAllocationsLoading(false);
+    }
+  }
 
   async function loadEvent() {
     if (!id) return;
@@ -119,6 +148,15 @@ export default function EventDetailPage() {
           <p className="text-muted-foreground mt-1">View event information</p>
         </div>
         <div className="flex gap-2">
+          {user?.role !== 'accountant' && event.status !== 'cancelled' && (
+            <Link to={`/inventory/allocate?type=event&ref=${id}`}>
+              <Button variant="outline">
+                <Package className="w-4 h-4 mr-2" />
+                Allocate Inventory
+              </Button>
+            </Link>
+          )}
+
           {user?.role !== 'accountant' && canEdit && (
             <>
               <Link to={`/events/${id}/edit`}>
@@ -218,6 +256,100 @@ export default function EventDetailPage() {
         </div>
       </Card>
 
+      {/* Event Inventory */}
+      {event.status !== 'cancelled' && (
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <Package className="w-5 h-5" />
+              Event Inventory
+            </h2>
+            {user?.role !== 'accountant' && (
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => setShowAllocateModal(true)}>
+                  <Plus className="w-4 h-4 mr-1" />
+                  Allocate Items
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {allocationsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Spinner />
+            </div>
+          ) : allocations.length === 0 ? (
+            <div className="text-center py-8">
+              <Package className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+              <p className="text-muted-foreground mb-4">No items have been sent for this event yet</p>
+              {user?.role !== 'accountant' && (
+                <Button onClick={() => setShowAllocateModal(true)}>
+                  <Plus className="w-4 h-4 mr-1" />
+                  Allocate Items
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="border-b">
+                  <tr>
+                    <th className="text-left py-3 px-4">Item</th>
+                    <th className="text-right py-3 px-4">Sent</th>
+                    <th className="text-right py-3 px-4">Returned</th>
+                    <th className="text-right py-3 px-4">Pending Return</th>
+                    <th className="text-center py-3 px-4">Status</th>
+                    {user?.role !== 'accountant' && (
+                      <th className="text-center py-3 px-4">Actions</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {allocations.map((alloc) => {
+                    const sent = alloc.allocated_quantity;
+                    const pending = alloc.outstanding_quantity || 0;
+                    const returned = sent - pending;
+                    return (
+                      <tr key={alloc.id} className="border-b hover:bg-muted/50">
+                        <td className="py-3 px-4">
+                          <p className="font-medium">{alloc.item_name}</p>
+                          {alloc.item_category && (
+                            <p className="text-xs text-muted-foreground">{alloc.item_category}</p>
+                          )}
+                        </td>
+                        <td className="text-right py-3 px-4 font-semibold">{sent}</td>
+                        <td className="text-right py-3 px-4 text-green-600 font-semibold">{returned}</td>
+                        <td className="text-right py-3 px-4 text-orange-600 font-semibold">{pending}</td>
+                        <td className="text-center py-3 px-4">
+                          {pending === 0 ? (
+                            <Badge variant="success">Fully Returned</Badge>
+                          ) : (
+                            <Badge variant="default">In Use</Badge>
+                          )}
+                        </td>
+                        {user?.role !== 'accountant' && (
+                          <td className="text-center py-3 px-4">
+                            {pending > 0 && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setReturnAllocation(alloc)}
+                              >
+                                Process Return
+                              </Button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+
       {/* Notes */}
       {event.notes && (
         <Card>
@@ -253,6 +385,42 @@ export default function EventDetailPage() {
             Invoice generation will be available after Phase 5 (Invoices) is implemented.
           </p>
         </Card>
+      )}
+
+      {/* Allocate Inventory Modal */}
+      {showAllocateModal && event.outlet_id && (
+        <AllocateInventoryModal
+          isOpen={showAllocateModal}
+          onClose={() => setShowAllocateModal(false)}
+          onSuccess={() => {
+            loadAllocations();
+            showToast('Inventory allocated successfully', 'success');
+          }}
+          userId={user?.id || ''}
+          outletId={event.outlet_id}
+          referenceType="event"
+          referenceId={id || ''}
+          referenceName={event.event_name}
+        />
+      )}
+
+      {/* Process Return Modal */}
+      {returnAllocation && event.outlet_id && (
+        <ReturnDamageLossModal
+          isOpen={!!returnAllocation}
+          onClose={() => setReturnAllocation(null)}
+          onSuccess={() => {
+            loadAllocations();
+            showToast('Return processed successfully', 'success');
+          }}
+          userId={user?.id || ''}
+          outletId={event.outlet_id}
+          inventoryItemId={returnAllocation.inventory_item_id}
+          itemName={returnAllocation.item_name || ''}
+          referenceType="event"
+          referenceId={id || ''}
+          outstandingQuantity={returnAllocation.outstanding_quantity || 0}
+        />
       )}
 
       {/* Confirmation Dialog - Complete */}

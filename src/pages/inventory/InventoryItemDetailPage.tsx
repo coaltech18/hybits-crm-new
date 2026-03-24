@@ -235,7 +235,7 @@ export default function InventoryItemDetailPage() {
                                 className="flex items-center gap-2"
                             >
                                 <RotateCcw className="w-4 h-4" />
-                                Receive Back
+                                Record Return
                             </Button>
                         )}
 

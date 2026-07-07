@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { allocateInventory, returnInventory } from './inventoryMovementService';
+import { allocateInventoryV2, returnInventoryV2 } from './inventoryMovementServiceV2';
 import { createAllocation, closeAllocationsByReference } from './allocationService';
 
 // ================================================================
@@ -146,12 +146,14 @@ export async function onSubscriptionCancelled(subscriptionId: string): Promise<v
       const outstanding = allocation.outstanding_quantity || 0;
 
       if (outstanding > 0) {
-        await returnInventory(userId, {
+        await returnInventoryV2(userId, {
           outlet_id: subscription.outlet_id,
           inventory_item_id: allocation.inventory_item_id,
           quantity: outstanding,
           reference_type: 'subscription',
           reference_id: subscriptionId,
+          is_damaged: false,
+          reason_code: 'early_return',
           notes: 'Subscription cancelled - auto return',
         });
       }
@@ -310,12 +312,14 @@ export async function onEventCancelled(eventId: string): Promise<void> {
       const outstanding = allocation.outstanding_quantity || 0;
 
       if (outstanding > 0) {
-        await returnInventory(userId, {
+        await returnInventoryV2(userId, {
           outlet_id: event.outlet_id,
           inventory_item_id: allocation.inventory_item_id,
           quantity: outstanding,
           reference_type: 'event',
           reference_id: eventId,
+          is_damaged: false,
+          reason_code: 'early_return',
           notes: 'Event cancelled - auto return',
         });
       }
@@ -356,12 +360,13 @@ export async function allocateMultipleItems(
   try {
     for (const item of items) {
       // Create allocation movement
-      await allocateInventory(userId, {
+      await allocateInventoryV2(userId, {
         outlet_id: outletId,
         inventory_item_id: item.inventory_item_id,
         quantity: item.quantity,
         reference_type: referenceType,
         reference_id: referenceId,
+        reason_code: referenceType === 'event' ? 'event_dispatch' : 'subscription_start',
         notes: `${referenceType} allocation`,
       });
 

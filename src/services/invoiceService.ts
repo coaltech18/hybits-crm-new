@@ -10,7 +10,7 @@ import type {
 import { ALLOWED_GST_RATES } from '@/types';
 import { getClientById } from './clientService';
 import { getEventById } from './eventService';
-import { roundCurrency } from '@/utils/format';
+import { roundCurrency, SETTLEMENT_TOLERANCE } from '@/utils/format';
 
 // ================================================================
 // INVOICE SERVICE
@@ -21,8 +21,13 @@ import { roundCurrency } from '@/utils/format';
 // Invoice Lifecycle:
 //   draft → finalized → partially_paid → paid
 //   draft → cancelled
+//   finalized → paid (single full payment)
 //   finalized → cancelled
 //   partially_paid → finalized (payment reversal)
+//   paid → partially_paid / finalized (payment reversal)
+//
+// This map must stay in sync with the DB trigger
+// validate_invoice_status_transition() (migration 034).
 // ================================================================
 
 // ================================================================
@@ -31,9 +36,9 @@ import { roundCurrency } from '@/utils/format';
 
 const ALLOWED_TRANSITIONS: Record<InvoiceStatus, InvoiceStatus[]> = {
   draft: ['finalized', 'cancelled'],
-  finalized: ['partially_paid', 'cancelled'],
+  finalized: ['partially_paid', 'paid', 'cancelled'],
   partially_paid: ['paid', 'finalized'],
-  paid: [],
+  paid: ['partially_paid', 'finalized'],
   cancelled: [],
 };
 
@@ -611,8 +616,12 @@ export async function syncInvoicePaymentStatus(
     return;
   }
 
+  // Settlement tolerance: balances within ₹0.05 count as fully paid,
+  // matching invoices_with_payment_status and the payment forms.
+  const balance = roundCurrency(grandTotal - amountPaid);
+
   let targetStatus: InvoiceStatus;
-  if (amountPaid >= grandTotal) {
+  if (amountPaid > 0 && balance <= SETTLEMENT_TOLERANCE) {
     targetStatus = 'paid';
   } else if (amountPaid > 0) {
     targetStatus = 'partially_paid';
@@ -622,14 +631,19 @@ export async function syncInvoicePaymentStatus(
 
   // Only update if status actually changes
   if (invoice.status !== targetStatus) {
-    // Direct update (skip transition validation since payment sync is trusted)
+    validateStatusTransition(invoice.status, targetStatus);
+
     const { error } = await supabase
       .from('invoices')
       .update({ status: targetStatus })
       .eq('id', invoiceId);
 
     if (error) {
-      console.error('Failed to sync invoice payment status:', error.message);
+      // The payment row is already saved at this point; surface the
+      // failure instead of leaving the invoice silently stuck.
+      throw new Error(
+        `Payment was saved, but updating the invoice status to "${targetStatus}" failed: ${error.message}`
+      );
     }
   }
 }

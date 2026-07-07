@@ -6,10 +6,9 @@ import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
 import { Textarea } from '@/components/ui/Textarea';
 import {
-  returnInventory,
-  markDamage,
-  markLoss,
-} from '@/services/inventoryMovementService';
+  returnInventoryV2,
+  writeOffInventoryV2,
+} from '@/services/inventoryMovementServiceV2';
 import type { ReferenceType } from '@/types';
 
 // ================================================================
@@ -95,17 +94,33 @@ export default function ReturnDamageLossModal({
         outlet_id: outletId,
         inventory_item_id: inventoryItemId,
         quantity: qty,
-        reference_type: referenceType,
+        reference_type: referenceType as 'subscription' | 'event',
         reference_id: referenceId,
-        notes: notes.trim() || undefined,
       };
 
       if (actionType === 'return') {
-        await returnInventory(userId, { ...input, reference_type: referenceType as 'subscription' | 'event' });
+        // Good return: allocated → available
+        await returnInventoryV2(userId, {
+          ...input,
+          is_damaged: false,
+          reason_code: 'normal_return',
+          notes: notes.trim() || undefined,
+        });
       } else if (actionType === 'damage') {
-        await markDamage(userId, { ...input, reference_type: referenceType as 'subscription' | 'event', notes: notes.trim() });
+        // Damaged return: allocated → damaged
+        await returnInventoryV2(userId, {
+          ...input,
+          is_damaged: true,
+          reason_code: 'client_damage',
+          notes: notes.trim(),
+        });
       } else if (actionType === 'loss') {
-        await markLoss(userId, { ...input, reference_type: referenceType as 'subscription' | 'event', notes: notes.trim() });
+        // Loss: allocated ↓, total ↓, lost ↑
+        await writeOffInventoryV2(userId, {
+          ...input,
+          reason_code: 'client_lost',
+          notes: notes.trim(),
+        });
       }
 
       onSuccess();

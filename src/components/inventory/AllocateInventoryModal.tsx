@@ -5,8 +5,8 @@ import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
 import { Spinner } from '@/components/ui/Spinner';
-import { getInventoryItems } from '@/services/inventoryService';
-import { allocateInventory } from '@/services/inventoryMovementService';
+import { getItemsForAllocation } from '@/services/inventoryServiceV2';
+import { allocateInventoryV2 } from '@/services/inventoryMovementServiceV2';
 import type { InventoryItem, ReferenceType } from '@/types';
 
 // ================================================================
@@ -69,11 +69,8 @@ export default function AllocateInventoryModal({
   async function loadItems() {
     try {
       setLoadingItems(true);
-      // Fetch items for this outlet with available stock
-      const data = await getInventoryItems(userId, {
-        outlet_id: outletId,
-        is_active: true,
-      });
+      // Fetch ACTIVE items for this outlet (only active items can be allocated)
+      const data = await getItemsForAllocation(userId, outletId);
       // Filter items with available stock
       const availableItems = data.filter(item => item.available_quantity > 0);
       setItems(availableItems);
@@ -111,12 +108,13 @@ export default function AllocateInventoryModal({
 
       // Create allocation movement (DB trigger updates quantities AND creates allocation record)
       // NOTE: sync_allocation_on_movement trigger automatically creates/updates inventory_allocations
-      await allocateInventory(userId, {
+      await allocateInventoryV2(userId, {
         outlet_id: outletId,
         inventory_item_id: selectedItemId,
         quantity: qty,
         reference_type: referenceType as 'subscription' | 'event',
         reference_id: referenceId,
+        reason_code: referenceType === 'event' ? 'event_dispatch' : 'subscription_start',
         notes: notes.trim() || undefined,
       });
 

@@ -243,15 +243,21 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS block_payment_allocation_delete ON payment_allocations;
-
-CREATE TRIGGER block_payment_allocation_delete
-    BEFORE DELETE ON payment_allocations
-    FOR EACH ROW
-    EXECUTE FUNCTION prevent_payment_allocation_delete();
-
-COMMENT ON TRIGGER block_payment_allocation_delete ON payment_allocations IS 
-    'Prevents hard deletion of payment allocations. Audit trail must be preserved.';
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'payment_allocations'
+  ) THEN
+    DROP TRIGGER IF EXISTS block_payment_allocation_delete ON payment_allocations;
+    CREATE TRIGGER block_payment_allocation_delete
+        BEFORE DELETE ON payment_allocations
+        FOR EACH ROW
+        EXECUTE FUNCTION prevent_payment_allocation_delete();
+    EXECUTE 'COMMENT ON TRIGGER block_payment_allocation_delete ON payment_allocations IS '
+      || quote_literal('Prevents hard deletion of payment allocations. Audit trail must be preserved.');
+  END IF;
+END $$;
 
 -- ============================================================================
 -- 10. USER PROFILES - BLOCK DELETE ALWAYS

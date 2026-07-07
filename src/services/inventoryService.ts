@@ -5,7 +5,7 @@ import type {
   UpdateInventoryItemInput,
   InventoryFilters,
 } from '@/types';
-import { createStockIn } from './inventoryMovementService';
+import { createStockInV2 } from './inventoryMovementServiceV2';
 
 // ================================================================
 // INVENTORY SERVICE (ITEM MASTER)
@@ -200,11 +200,12 @@ export async function createInventoryItem(
   // If initial stock > 0, create stock_in movement
   // This will trigger DB function to update quantities
   if (input.initial_stock > 0) {
-    await createStockIn(userId, {
+    await createStockInV2(userId, {
       outlet_id: input.outlet_id,
       inventory_item_id: item.id,
       quantity: input.initial_stock,
-      notes: 'Initial stock',
+      reason_code: 'opening_balance',
+      notes: 'Initial stock on item creation',
     });
   }
 

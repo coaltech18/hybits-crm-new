@@ -30,6 +30,9 @@ export default function EditInvoicePage() {
     // Editable form state
     const [items, setItems] = useState<CreateInvoiceItemInput[]>([]);
     const [termsAndConditions, setTermsAndConditions] = useState('');
+    // Invoice date. Back-date it to re-enter a historical invoice.
+    const today = new Date().toISOString().slice(0, 10);
+    const [issuedAt, setIssuedAt] = useState(today);
 
     useEffect(() => {
         loadInvoice();
@@ -67,6 +70,7 @@ export default function EditInvoicePage() {
             );
 
             setTermsAndConditions(data.terms_and_conditions || '');
+            setIssuedAt((data.issued_at || data.created_at).slice(0, 10));
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load invoice');
         } finally {
@@ -129,6 +133,7 @@ export default function EditInvoicePage() {
             await updateInvoice(user.id, id, {
                 items,
                 terms_and_conditions: termsAndConditions,
+                issued_at: issuedAt,
             });
 
             showToast('Invoice updated successfully', 'success');
@@ -202,6 +207,20 @@ export default function EditInvoicePage() {
             </Card>
 
             <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Invoice Date */}
+                <Card>
+                    <h2 className="text-lg font-semibold mb-4">Invoice Date</h2>
+                    <Input
+                        type="date"
+                        label="Invoice Date"
+                        value={issuedAt}
+                        max={today}
+                        onChange={(e) => setIssuedAt(e.target.value)}
+                        required
+                        helperText="Back-date this to re-enter a past invoice. Drives reports and GST sheets. Locked once finalized."
+                    />
+                </Card>
+
                 {/* Editable Items */}
                 <Card>
                     <div className="flex items-center justify-between mb-4">

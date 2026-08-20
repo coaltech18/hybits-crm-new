@@ -44,6 +44,9 @@ export default function CreateInvoicePage() {
   ]);
   const [termsAndConditions, setTermsAndConditions] = useState(DEFAULT_TERMS_AND_CONDITIONS);
   const [invoiceNumberFormat, setInvoiceNumberFormat] = useState<InvoiceNumberFormat>('default');
+  // Invoice date. Defaults to today; back-date it to re-enter a historical invoice.
+  const today = new Date().toISOString().slice(0, 10);
+  const [issuedAt, setIssuedAt] = useState(today);
 
   const availableOutlets: Outlet[] = outlets || [];
 
@@ -159,6 +162,7 @@ export default function CreateInvoicePage() {
         items,
         terms_and_conditions: termsAndConditions,
         invoice_number_format: invoiceNumberFormat,
+        issued_at: issuedAt,
       };
 
       await createInvoice(user.id, input);
@@ -281,6 +285,17 @@ export default function CreateInvoicePage() {
                 ))}
               </Select>
             )}
+
+            {/* Invoice Date */}
+            <Input
+              type="date"
+              label="Invoice Date"
+              value={issuedAt}
+              max={today}
+              onChange={(e) => setIssuedAt(e.target.value)}
+              required
+              helperText="Back-date this to re-enter a past invoice. Drives the invoice number, reports and GST sheets."
+            />
           </div>
 
           {clients.length === 0 && outletId && (

@@ -446,6 +446,8 @@ export interface CreateInvoiceInput {
   items: CreateInvoiceItemInput[];
   terms_and_conditions?: string;
   invoice_number_format?: string;
+  /** Invoice date (YYYY-MM-DD). Omit for today. Used for re-entering historical invoices. */
+  issued_at?: string | null;
 }
 
 export interface UpdateInvoiceInput {
@@ -453,6 +455,8 @@ export interface UpdateInvoiceInput {
   // Editable fields (draft only)
   items?: CreateInvoiceItemInput[];
   terms_and_conditions?: string;
+  /** Invoice date (YYYY-MM-DD). Draft only. */
+  issued_at?: string | null;
 }
 
 export interface InvoiceFilters {

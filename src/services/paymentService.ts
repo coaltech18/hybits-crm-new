@@ -282,8 +282,7 @@ export async function createPayment(
   }
 
   // Sync invoice payment status
-  const summary = await getPaymentSummary(input.invoice_id);
-  await syncInvoicePaymentStatus(userId, input.invoice_id, summary.amount_paid, summary.invoice_total);
+  await syncInvoicePaymentStatus(userId, input.invoice_id);
 
   return completePayment;
 }
@@ -396,8 +395,7 @@ export async function updatePayment(
   }
 
   // Sync invoice payment status
-  const summary = await getPaymentSummary(payment.invoice_id);
-  await syncInvoicePaymentStatus(userId, payment.invoice_id, summary.amount_paid, summary.invoice_total);
+  await syncInvoicePaymentStatus(userId, payment.invoice_id);
 
   return updatedPayment;
 }
@@ -472,8 +470,7 @@ export async function deactivatePayment(userId: string, paymentId: string): Prom
   }
 
   // Sync invoice payment status (payment removed → may revert status)
-  const summary = await getPaymentSummary(payment.invoice_id);
-  await syncInvoicePaymentStatus(userId, payment.invoice_id, summary.amount_paid, summary.invoice_total);
+  await syncInvoicePaymentStatus(userId, payment.invoice_id);
 }
 
 /**
@@ -534,8 +531,7 @@ export async function reactivatePayment(userId: string, paymentId: string): Prom
   }
 
   // Sync invoice payment status (payment reactivated → may advance status)
-  const summary = await getPaymentSummary(payment.invoice_id);
-  await syncInvoicePaymentStatus(userId, payment.invoice_id, summary.amount_paid, summary.invoice_total);
+  await syncInvoicePaymentStatus(userId, payment.invoice_id);
 }
 
 /**

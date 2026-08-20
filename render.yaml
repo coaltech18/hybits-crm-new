@@ -15,6 +15,29 @@ services:
     buildCommand: npm install && npm run build
     staticPublishPath: ./build
     pullRequestPreviewsEnabled: true
+
+    # ================================================================
+    # BUILD-TIME ENVIRONMENT (REQUIRED)
+    # ================================================================
+    # Vite inlines VITE_* variables at BUILD time, not at runtime.
+    # If these are missing when Render runs `npm run build`, they
+    # compile to undefined and src/lib/supabase.ts throws on module
+    # load -- before React mounts. The result is a blank white page
+    # with no error UI and no way to log in.
+    #
+    # `sync: false` means Render will NOT read these from this file;
+    # you must set the values in the Render dashboard
+    # (Environment -> Environment Variables) for the service, and for
+    # PR previews if you use them. The local .env is gitignored and
+    # never reaches the build.
+    #
+    # After changing either value you must trigger a REBUILD, not
+    # just a redeploy -- the values are baked into the bundle.
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
     routes:
       # CRITICAL: This rewrite rule fixes 404 on page refresh
       # 

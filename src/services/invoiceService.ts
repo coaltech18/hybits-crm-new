@@ -219,6 +219,37 @@ export async function getInvoiceById(invoiceId: string): Promise<Invoice | null>
  * - Client outlet must match invoice outlet
  * - Status is always 'draft' on creation
  */
+/**
+ * Validate a user-supplied invoice date.
+ *
+ * issued_at is the invoice date used by the PDF, all report_* views,
+ * the aging buckets and the GST working sheets. A future-dated tax
+ * invoice is invalid, so reject it here rather than at the form only.
+ *
+ * Returns the date to store, or null to let the DB default to today.
+ */
+function normalizeIssuedAt(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error('Invoice date must be a valid date');
+  }
+
+  // Compare as plain dates so timezone never shifts the boundary
+  const today = new Date();
+  const todayStr = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0'),
+  ].join('-');
+
+  if (value > todayStr) {
+    throw new Error('Invoice date cannot be in the future');
+  }
+
+  return value;
+}
+
 export async function createInvoice(
   userId: string,
   input: CreateInvoiceInput
@@ -332,6 +363,7 @@ export async function createInvoice(
       grand_total: totals.grand_total,
       terms_and_conditions: input.terms_and_conditions || null,
       invoice_number_format: input.invoice_number_format || null,
+      issued_at: normalizeIssuedAt(input.issued_at),
     })
     .select()
     .maybeSingle();
@@ -481,6 +513,10 @@ export async function updateInvoice(
       invoiceUpdate.terms_and_conditions = updates.terms_and_conditions;
     }
 
+    if (updates.issued_at !== undefined) {
+      invoiceUpdate.issued_at = normalizeIssuedAt(updates.issued_at);
+    }
+
     const { error: updateError } = await supabase
       .from('invoices')
       .update(invoiceUpdate)
@@ -489,11 +525,24 @@ export async function updateInvoice(
     if (updateError) {
       throw new Error(updateError.message);
     }
-  } else if (updates.terms_and_conditions !== undefined) {
-    // Only updating terms (no item changes)
+  } else if (
+    updates.terms_and_conditions !== undefined ||
+    updates.issued_at !== undefined
+  ) {
+    // Only updating terms and/or invoice date (no item changes)
+    const invoiceUpdate: Record<string, any> = {};
+
+    if (updates.terms_and_conditions !== undefined) {
+      invoiceUpdate.terms_and_conditions = updates.terms_and_conditions;
+    }
+
+    if (updates.issued_at !== undefined) {
+      invoiceUpdate.issued_at = normalizeIssuedAt(updates.issued_at);
+    }
+
     const { error: updateError } = await supabase
       .from('invoices')
-      .update({ terms_and_conditions: updates.terms_and_conditions })
+      .update(invoiceUpdate)
       .eq('id', invoiceId);
 
     if (updateError) {
@@ -604,9 +653,7 @@ export async function cancelInvoice(userId: string, invoiceId: string): Promise<
  */
 export async function syncInvoicePaymentStatus(
   _userId: string,
-  invoiceId: string,
-  amountPaid: number,
-  grandTotal: number
+  invoiceId: string
 ): Promise<void> {
   const invoice = await getInvoiceById(invoiceId);
   if (!invoice) return;
@@ -615,6 +662,25 @@ export async function syncInvoicePaymentStatus(
   if (!['finalized', 'partially_paid', 'paid'].includes(invoice.status)) {
     return;
   }
+
+  // Read the totals here rather than accepting them as arguments.
+  // Callers used to fetch the summary themselves and pass it in, which
+  // left a window where the numbers could go stale between their read
+  // and this write, and made it possible to sync against figures that
+  // never matched the database.
+  const { data: summary, error: summaryError } = await supabase
+    .from('invoices_with_payment_status')
+    .select('amount_paid, grand_total')
+    .eq('id', invoiceId)
+    .maybeSingle();
+
+  if (summaryError) {
+    throw new Error(summaryError.message);
+  }
+  if (!summary) return;
+
+  const amountPaid = Number(summary.amount_paid) || 0;
+  const grandTotal = Number(summary.grand_total) || 0;
 
   // Settlement tolerance: balances within ₹0.05 count as fully paid,
   // matching invoices_with_payment_status and the payment forms.

@@ -4,14 +4,48 @@ import type {
   EventFilters,
   CreateEventInput,
   UpdateEventInput,
+  Invoice,
+  UserRole,
 } from '@/types';
 import { getClientById } from './clientService';
+import { getAllocationSummary } from './allocationService';
 
 // ================================================================
 // EVENT SERVICE
 // ================================================================
 // All CRUD operations for events with role-based access control
+// Lifecycle: planned -> completed | planned -> cancelled
 // ================================================================
+
+async function getUserRole(userId: string): Promise<UserRole> {
+  const { data: profile, error } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
+
+  return profile.role as UserRole;
+}
+
+/** Only admins and managers may change events. */
+async function requireEventWriter(userId: string, action: string): Promise<UserRole> {
+  const role = await getUserRole(userId);
+  if (role === 'admin' || role === 'manager') {
+    return role;
+  }
+  throw new Error(`You do not have permission to ${action} events`);
+}
+
+function isValidGuestCount(value: number | null | undefined): boolean {
+  return value == null || (Number.isInteger(value) && value > 0);
+}
 
 /**
  * Get all events with filters (role-based)
@@ -22,16 +56,7 @@ export async function getEvents(
   userId: string,
   filters: EventFilters = {}
 ): Promise<Event[]> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
+  const role = await getUserRole(userId);
 
   let query = supabase
     .from('events')
@@ -54,12 +79,16 @@ export async function getEvents(
     .order('event_date', { ascending: false });
 
   // Role-based outlet filtering
-  if (profile.role === 'manager') {
+  if (role === 'manager') {
     // Managers only see their assigned outlet events
-    const { data: assignments } = await supabase
+    const { data: assignments, error: assignmentsError } = await supabase
       .from('user_outlet_assignments')
       .select('outlet_id')
       .eq('user_id', userId);
+
+    if (assignmentsError) {
+      throw new Error(assignmentsError.message);
+    }
 
     if (assignments && assignments.length > 0) {
       const outletIds = assignments.map(a => a.outlet_id);
@@ -70,8 +99,8 @@ export async function getEvents(
     }
   }
 
-  // Admin/Accountant can optionally filter by specific outlet
-  if (filters.outlet_id && ['admin', 'accountant'].includes(profile.role)) {
+  // Optional outlet filter (for managers this intersects with their assignments)
+  if (filters.outlet_id) {
     query = query.eq('outlet_id', filters.outlet_id);
   }
 
@@ -103,7 +132,7 @@ export async function getEvents(
 }
 
 /**
- * Get event by ID
+ * Get event by ID. Returns null when the event does not exist or RLS hides it.
  */
 export async function getEventById(eventId: string): Promise<Event | null> {
   const { data, error } = await supabase
@@ -130,9 +159,6 @@ export async function getEventById(eventId: string): Promise<Event | null> {
     .maybeSingle();
 
   if (error) {
-    if (error.code === 'PGRST116') {
-      return null; // Not found or no access
-    }
     throw new Error(error.message);
   }
 
@@ -140,8 +166,27 @@ export async function getEventById(eventId: string): Promise<Event | null> {
 }
 
 /**
+ * Invoices linked to an event (newest first).
+ */
+export async function getEventInvoices(
+  eventId: string
+): Promise<Pick<Invoice, 'id' | 'invoice_number' | 'status' | 'grand_total' | 'issued_at' | 'created_at'>[]> {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('id, invoice_number, status, grand_total, issued_at, created_at')
+    .eq('event_id', eventId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data || [];
+}
+
+/**
  * Create new event
- * 
+ *
  * LOCKED RULES ENFORCED:
  * - Client must be event type
  * - Client outlet must match event outlet
@@ -151,23 +196,13 @@ export async function createEvent(
   userId: string,
   input: CreateEventInput
 ): Promise<Event> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot create events
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to create events');
-  }
+  const role = await requireEventWriter(userId, 'create');
 
   // Validate required fields
+  if (!input.outlet_id) {
+    throw new Error('Outlet is required');
+  }
+
   if (!input.client_id) {
     throw new Error('Client is required');
   }
@@ -180,8 +215,8 @@ export async function createEvent(
     throw new Error('Event date is required');
   }
 
-  if (input.guest_count !== undefined && input.guest_count <= 0) {
-    throw new Error('Guest count must be greater than 0');
+  if (!isValidGuestCount(input.guest_count)) {
+    throw new Error('Guest count must be a whole number greater than 0');
   }
 
   // Validate client exists and is event type
@@ -200,11 +235,15 @@ export async function createEvent(
   }
 
   // If manager, verify outlet is in their assigned outlets
-  if (profile.role === 'manager') {
-    const { data: assignments } = await supabase
+  if (role === 'manager') {
+    const { data: assignments, error: assignmentsError } = await supabase
       .from('user_outlet_assignments')
       .select('outlet_id')
       .eq('user_id', userId);
+
+    if (assignmentsError) {
+      throw new Error(assignmentsError.message);
+    }
 
     const allowedOutlets = assignments?.map(a => a.outlet_id) || [];
 
@@ -222,7 +261,7 @@ export async function createEvent(
       event_name: input.event_name.trim(),
       event_type: input.event_type?.trim() || null,
       event_date: input.event_date,
-      guest_count: input.guest_count || null,
+      guest_count: input.guest_count ?? null,
       notes: input.notes?.trim() || null,
       status: 'planned',
     })
@@ -237,39 +276,31 @@ export async function createEvent(
     throw new Error(error.message);
   }
 
+  if (!data) {
+    throw new Error('Event could not be created. You may no longer have access to this outlet.');
+  }
+
   return data;
 }
 
 /**
- * Update event
- * 
+ * Update a planned event
+ *
  * LOCKED RULES:
+ * - Only planned events can be edited
  * - Managers cannot change outlet_id or client_id (enforced by trigger)
  * - Accountants cannot update
+ * - Status changes go through completeEvent / cancelEvent
  */
 export async function updateEvent(
   userId: string,
   eventId: string,
   updates: UpdateEventInput
 ): Promise<Event> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot update events
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to update events');
-  }
+  const role = await requireEventWriter(userId, 'update');
 
   // Managers cannot change outlet_id or client_id
-  if (profile.role === 'manager') {
+  if (role === 'manager') {
     if (updates.outlet_id !== undefined) {
       throw new Error('Only admins can change outlet assignment');
     }
@@ -278,27 +309,33 @@ export async function updateEvent(
     }
   }
 
-  // Validate guest count if provided
-  if (updates.guest_count !== undefined && updates.guest_count <= 0) {
-    throw new Error('Guest count must be greater than 0');
+  if (updates.event_name !== undefined && updates.event_name.trim() === '') {
+    throw new Error('Event name is required');
+  }
+
+  // Validate guest count if provided (null clears it)
+  if (!isValidGuestCount(updates.guest_count)) {
+    throw new Error('Guest count must be a whole number greater than 0');
   }
 
   // Build update object (trim strings)
-  const updateData: any = {};
+  const updateData: Partial<Pick<Event,
+    'event_name' | 'event_type' | 'event_date' | 'guest_count' | 'notes' | 'outlet_id' | 'client_id'
+  >> = {};
   if (updates.event_name !== undefined) updateData.event_name = updates.event_name.trim();
   if (updates.event_type !== undefined) updateData.event_type = updates.event_type?.trim() || null;
   if (updates.event_date !== undefined) updateData.event_date = updates.event_date;
   if (updates.guest_count !== undefined) updateData.guest_count = updates.guest_count;
   if (updates.notes !== undefined) updateData.notes = updates.notes?.trim() || null;
-  if (updates.status !== undefined) updateData.status = updates.status;
   if (updates.outlet_id !== undefined) updateData.outlet_id = updates.outlet_id;
   if (updates.client_id !== undefined) updateData.client_id = updates.client_id;
 
-  // Update event
+  // Update event (only while it is still planned)
   const { data, error } = await supabase
     .from('events')
     .update(updateData)
     .eq('id', eventId)
+    .eq('status', 'planned')
     .select(`
       *,
       clients (id, name, client_type, phone),
@@ -310,36 +347,54 @@ export async function updateEvent(
     throw new Error(error.message);
   }
 
+  if (!data) {
+    throw new Error(
+      'Event was not updated. It may no longer be planned, or you no longer have access. Reload the page and try again.'
+    );
+  }
+
   return data;
+}
+
+/**
+ * Move a planned event to a final status. The status predicate makes this
+ * safe against double clicks and concurrent complete/cancel: only the first
+ * write matches.
+ */
+async function transitionFromPlanned(
+  eventId: string,
+  status: 'completed' | 'cancelled'
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('events')
+    .update({ status })
+    .eq('id', eventId)
+    .eq('status', 'planned')
+    .select('id');
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data || data.length === 0) {
+    throw new Error(
+      'Event was changed by someone else or is no longer planned. Reload the page and try again.'
+    );
+  }
 }
 
 /**
  * Complete event
  * - Sets status to 'completed'
- * - Event is considered done
- * - Ready for invoice generation (Phase 5)
+ * - The event can then be invoiced
  */
 export async function completeEvent(
   userId: string,
   eventId: string
 ): Promise<void> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  await requireEventWriter(userId, 'complete');
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot complete events
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to complete events');
-  }
-
-  // Verify event exists and is planned
+  // Verify event exists and is planned (friendly message; the update re-checks)
   const event = await getEventById(eventId);
   if (!event) {
     throw new Error('Event not found');
@@ -349,43 +404,21 @@ export async function completeEvent(
     throw new Error('Only planned events can be completed');
   }
 
-  // Complete event
-  const { error } = await supabase
-    .from('events')
-    .update({ status: 'completed' })
-    .eq('id', eventId);
-
-  if (error) {
-    throw new Error(error.message);
-  }
+  await transitionFromPlanned(eventId, 'completed');
 }
 
 /**
  * Cancel event
  * - Sets status to 'cancelled'
  * - No invoice will be generated
+ * - Blocked while dishware sent to the event is still outstanding
  */
 export async function cancelEvent(
   userId: string,
   eventId: string
 ): Promise<void> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  await requireEventWriter(userId, 'cancel');
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot cancel events
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to cancel events');
-  }
-
-  // Verify event exists and is not already cancelled
   const event = await getEventById(eventId);
   if (!event) {
     throw new Error('Event not found');
@@ -399,137 +432,13 @@ export async function cancelEvent(
     throw new Error('Cannot cancel a completed event');
   }
 
-  // Cancel event
-  const { error } = await supabase
-    .from('events')
-    .update({ status: 'cancelled' })
-    .eq('id', eventId);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-}
-
-/**
- * Archive event
- * - Sets status to 'archived'
- * - Event is hidden from active views but data is preserved
- * - Use when event is completed but no longer relevant
- */
-export async function archiveEvent(
-  userId: string,
-  eventId: string
-): Promise<void> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot archive events
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to archive events');
-  }
-
-  // Verify event exists
-  const event = await getEventById(eventId);
-  if (!event) {
-    throw new Error('Event not found');
-  }
-
-  if (event.status === 'archived') {
-    throw new Error('Event is already archived');
-  }
-
-  // Archive event
-  const { error } = await supabase
-    .from('events')
-    .update({ status: 'archived' })
-    .eq('id', eventId);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-}
-
-/**
- * Delete event (CONDITIONAL)
- * 
- * BUSINESS RULES:
- * - Events with invoices CANNOT be deleted
- * - Events without invoices CAN be deleted
- * 
- * This service performs a pre-check before attempting delete.
- * The database trigger provides a second safety net.
- */
-export async function deleteEvent(
-  userId: string,
-  eventId: string
-): Promise<void> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot delete events
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to delete events');
-  }
-
-  // Verify event exists
-  const event = await getEventById(eventId);
-  if (!event) {
-    throw new Error('Event not found');
-  }
-
-  // ================================================================
-  // PRE-CHECK: Does this event have invoices?
-  // ================================================================
-  const { count: invoiceCount, error: countError } = await supabase
-    .from('invoices')
-    .select('id', { count: 'exact', head: true })
-    .eq('event_id', eventId);
-
-  if (countError) {
-    throw new Error(`Failed to check invoices: ${countError.message}`);
-  }
-
-  // BLOCK: Event has invoices
-  if (invoiceCount && invoiceCount > 0) {
+  const { totalOutstanding } = await getAllocationSummary(userId, 'event', eventId);
+  if (totalOutstanding > 0) {
     throw new Error(
-      `This event has ${invoiceCount} invoice(s) and cannot be deleted. ` +
-      'Archive or cancel the event instead.'
+      `This event still has ${totalOutstanding} item(s) out. ` +
+      'Record their return, damage or loss before cancelling the event.'
     );
   }
 
-  // ================================================================
-  // SAFE TO DELETE: No invoices exist
-  // ================================================================
-  const { error } = await supabase
-    .from('events')
-    .delete()
-    .eq('id', eventId);
-
-  if (error) {
-    // Catch DB trigger error and convert to business message
-    if (error.message.includes('cannot be deleted') ||
-      error.message.includes('invoice')) {
-      throw new Error(
-        'This event has invoices and cannot be deleted. ' +
-        'Archive or cancel the event instead.'
-      );
-    }
-    throw new Error(error.message);
-  }
+  await transitionFromPlanned(eventId, 'cancelled');
 }

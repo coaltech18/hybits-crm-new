@@ -1,5 +1,6 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 
 // ================================================================
 // ERROR BOUNDARY COMPONENT
@@ -10,6 +11,11 @@ import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
 
 interface Props {
     children: ReactNode;
+    /**
+     * 'page' (default) fills the screen; 'section' renders inside the app
+     * shell so the sidebar survives a page crash.
+     */
+    variant?: 'page' | 'section';
 }
 
 interface State {
@@ -62,30 +68,38 @@ export class ErrorBoundary extends Component<Props, State> {
 
     render(): ReactNode {
         if (this.state.hasError) {
+            const section = this.props.variant === 'section';
             return (
-                <div className="min-h-screen bg-brand-bg flex items-center justify-center p-4">
-                    <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8 text-center">
-                        {/* Error Icon */}
-                        <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-6">
-                            <AlertTriangle className="w-8 h-8 text-red-600" />
+                <div
+                    className={
+                        section
+                            ? 'py-6 sm:py-10'
+                            : 'flex min-h-screen items-center justify-center bg-paper p-4'
+                    }
+                >
+                    <div role="alert" className={section ? 'sheet max-w-2xl p-6 sm:p-8' : 'sheet w-full max-w-md p-6 sm:p-8'}>
+                        <div className="flex items-start gap-4">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger-tint text-danger">
+                                <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+                            </div>
+                            <div className="min-w-0">
+                                <h1 className="text-2xl font-bold text-ink">Something went wrong</h1>
+                                <p className="mt-1.5 text-sm text-ink-muted">
+                                    This page hit an unexpected error. Anything already saved is safe. Try
+                                    again, or go back to the dashboard. If it keeps happening, tell your admin
+                                    what you were doing.
+                                </p>
+                            </div>
                         </div>
-
-                        {/* Error Message */}
-                        <h1 className="text-2xl font-bold text-brand-text mb-2">
-                            Something went wrong
-                        </h1>
-                        <p className="text-brand-text/70 mb-6">
-                            We're sorry, but something unexpected happened. Please try again or contact support if the problem persists.
-                        </p>
 
                         {/* Error Details (Development Only) */}
                         {import.meta.env.DEV && this.state.error && (
-                            <div className="mb-6 p-4 bg-red-50 rounded-lg text-left overflow-auto max-h-40">
-                                <p className="text-sm font-mono text-red-800 break-all">
+                            <div className="mt-6 max-h-48 overflow-auto rounded-lg border border-danger-rule bg-danger-tint p-4 text-left">
+                                <p className="serial break-all text-sm text-danger">
                                     {this.state.error.toString()}
                                 </p>
                                 {this.state.errorInfo && (
-                                    <pre className="text-xs text-red-600 mt-2 whitespace-pre-wrap">
+                                    <pre className="mt-2 whitespace-pre-wrap font-mono text-xs text-danger">
                                         {this.state.errorInfo.componentStack}
                                     </pre>
                                 )}
@@ -93,31 +107,26 @@ export class ErrorBoundary extends Component<Props, State> {
                         )}
 
                         {/* Action Buttons */}
-                        <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                            <button
-                                onClick={this.handleRetry}
-                                className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-brand-primary text-white font-medium rounded-lg hover:bg-brand-primaryDark transition-colors"
-                            >
-                                <RefreshCw className="w-4 h-4" />
-                                Try Again
-                            </button>
-                            <button
-                                onClick={this.handleGoHome}
-                                className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-brand-text font-medium rounded-lg hover:bg-gray-200 transition-colors"
-                            >
-                                <Home className="w-4 h-4" />
-                                Go to Dashboard
-                            </button>
+                        <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+                            <Button type="button" onClick={this.handleRetry}>
+                                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                                Try again
+                            </Button>
+                            <Button type="button" variant="outline" onClick={this.handleGoHome}>
+                                <Home className="h-4 w-4" aria-hidden="true" />
+                                Go to dashboard
+                            </Button>
                         </div>
 
                         {/* Reload Link */}
-                        <p className="mt-6 text-sm text-brand-text/50">
-                            If the problem persists,{' '}
+                        <p className="mt-6 border-t border-rule pt-4 text-sm text-ink-muted">
+                            Still stuck?{' '}
                             <button
+                                type="button"
                                 onClick={this.handleReload}
-                                className="text-brand-primary hover:underline"
+                                className="font-semibold text-brand-primary hover:underline"
                             >
-                                reload the page
+                                Reload the page
                             </button>
                         </p>
                     </div>

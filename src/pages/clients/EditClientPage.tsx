@@ -1,18 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { getClientById, updateClient } from '@/services/clientService';
+import { getClientById, updateClient, getClientUsageCounts } from '@/services/clientService';
 import type { Client, UpdateClientInput, ClientType, ClientGstType } from '@/types';
-import { Button } from '@/components/ui/Button';
+import { Button, LinkButton } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { Card } from '@/components/ui/Card';
+import { Textarea } from '@/components/ui/Textarea';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Alert } from '@/components/ui/Alert';
-import { Spinner } from '@/components/ui/Spinner';
-import { validateGSTIN, validatePhone } from '@/utils/validation';
+import { Skeleton } from '@/components/ui/Spinner';
+import { validateGSTIN, validatePhone, validateEmail } from '@/utils/validation';
+import { ClientTypeChoice, ClientTypeReadout, FormActionBar, FormSection } from './ClientParts';
 
 export function EditClientPage() {
   const { id } = useParams<{ id: string }>();
@@ -21,7 +22,7 @@ export function EditClientPage() {
   const { showToast } = useToast();
 
   // Dynamic document title
-  const [pageTitle, setPageTitle] = useState('Edit Client');
+  const [pageTitle, setPageTitle] = useState('Edit client');
   useDocumentTitle(pageTitle);
 
   const [client, setClient] = useState<Client | null>(null);
@@ -31,18 +32,26 @@ export function EditClientPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    if (id) {
-      loadClient();
-    }
-  }, [id]);
+  // Type changes are blocked once the client has subscriptions, events or invoices
+  // (the DB rules on those rows would then reject every later update).
+  // null = unknown (still loading or failed): treat as locked.
+  const [hasLinkedRecords, setHasLinkedRecords] = useState<boolean | null>(null);
 
-  const loadClient = async () => {
+  // Only the latest load may write state (the :id can change while a load is in flight).
+  const requestId = useRef(0);
+
+  const loadClient = useCallback(async () => {
     if (!id) return;
+    const reqId = ++requestId.current;
 
     setIsLoading(true);
+    setSubmitError('');
+    setErrors({});
+    setClient(null);
+    setHasLinkedRecords(null);
     try {
       const data = await getClientById(id);
+      if (reqId !== requestId.current) return;
       if (data) {
         setClient(data);
         setPageTitle(`Edit ${data.name}`);
@@ -55,29 +64,68 @@ export function EditClientPage() {
           billing_address: data.billing_address || '',
           gst_type: data.gst_type || null,
         });
+
+        try {
+          const usage = await getClientUsageCounts(id);
+          if (reqId !== requestId.current) return;
+          setHasLinkedRecords(usage.subscriptions + usage.events + usage.invoices > 0);
+        } catch {
+          if (reqId === requestId.current) setHasLinkedRecords(null);
+        }
       }
-    } catch (err: any) {
-      setSubmitError(err.message || 'Failed to load client');
+    } catch (err: unknown) {
+      if (reqId === requestId.current) {
+        setSubmitError(err instanceof Error ? err.message : 'Failed to load client');
+      }
     } finally {
-      setIsLoading(false);
+      if (reqId === requestId.current) setIsLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    loadClient();
+  }, [loadClient]);
+
+  const effectiveType: ClientType | undefined = formData.client_type || client?.client_type;
+  const typeLocked = hasLinkedRecords !== false;
+
+  const handleTypeChange = (type: ClientType) => {
+    setFormData((prev) => ({
+      ...prev,
+      client_type: type,
+      gstin: type === 'event' ? '' : prev.gstin,
+      // GST type applies to corporate clients only (same rule as Add client)
+      gst_type: type === 'event' ? null : prev.gst_type ?? 'domestic',
+    }));
+    if (type === 'event' && errors.gstin) {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.gstin;
+        return next;
+      });
     }
   };
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
 
-    if (formData.name && formData.name?.trim().length < 2) {
+    if (formData.name !== undefined && formData.name.trim().length < 2) {
       newErrors.name = 'Client name must be at least 2 characters';
     }
 
-    if (formData.phone) {
+    if (formData.phone !== undefined) {
       const phoneValidation = validatePhone(formData.phone);
       if (!phoneValidation.valid) {
         newErrors.phone = phoneValidation.error!;
       }
     }
 
-    if (formData.gstin && formData.gstin?.trim()) {
+    const emailValidation = validateEmail(formData.email || '');
+    if (!emailValidation.valid) {
+      newErrors.email = emailValidation.error!;
+    }
+
+    if (effectiveType === 'corporate' && formData.gstin && formData.gstin.trim()) {
       const gstinValidation = validateGSTIN(formData.gstin);
       if (!gstinValidation.valid) {
         newErrors.gstin = gstinValidation.error!;
@@ -90,17 +138,27 @@ export function EditClientPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !id || !validateForm()) return;
+    if (isSaving || !user || !id || !client || !validateForm()) return;
 
     setSubmitError('');
     setIsSaving(true);
 
     try {
-      await updateClient(user.id, id, formData);
+      const payload: UpdateClientInput = { ...formData };
+      // Only send a type change when it really changes and is allowed
+      if (!isAdmin || typeLocked || payload.client_type === client.client_type) {
+        delete payload.client_type;
+      }
+      // GSTIN and GST type apply to corporate clients only
+      if (effectiveType !== 'corporate') {
+        delete payload.gstin;
+        payload.gst_type = null;
+      }
+      await updateClient(user.id, id, payload);
       showToast('Client updated successfully', 'success');
       navigate(`/clients/${id}`);
-    } catch (err: any) {
-      const errorMessage = err.message || 'Failed to update client';
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update client';
       setSubmitError(errorMessage);
       showToast(errorMessage, 'error');
     } finally {
@@ -108,207 +166,171 @@ export function EditClientPage() {
     }
   };
 
+  const back = { to: `/clients/${id}`, label: client?.name || 'Client' };
+
   if (isLoading) {
     return (
-      <div className="flex justify-center py-12">
-        <Spinner size="lg" />
+      <div role="status" aria-label="Loading client">
+        <PageHeader back={{ to: '/clients', label: 'Clients' }} title="Edit client" />
+        <div className="sheet">
+          {Array.from({ length: 3 }, (_, section) => (
+            <div key={section} className="border-t border-rule px-5 py-6 first:border-t-0 sm:px-6">
+              <Skeleton className="mb-5 h-6 w-32" />
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                {Array.from({ length: 2 }, (_, i) => (
+                  <div key={i} className="space-y-2">
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-10" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
 
   if (!client) {
     return (
-      <div className="space-y-6">
-        <Alert variant="error">Client not found or you do not have access</Alert>
-        <Button variant="ghost" onClick={() => navigate('/clients')}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Clients
-        </Button>
+      <div>
+        <PageHeader back={{ to: '/clients', label: 'Clients' }} title="Client not found" />
+        <Alert variant="error">{submitError || 'Client not found or you do not have access'}</Alert>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="sm" onClick={() => navigate(`/clients/${id}`)}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div>
-          <h1 className="text-3xl font-bold text-brand-text">Edit Client</h1>
-          <p className="text-brand-text/70 mt-1">{client.name}</p>
-        </div>
-      </div>
+    <div>
+      <PageHeader back={back} title="Edit client" description={client.name} />
 
-      {submitError && <Alert variant="error">{submitError}</Alert>}
+      {submitError && <Alert variant="error" className="mb-6">{submitError}</Alert>}
 
-      <Card>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Client Type (admin only) */}
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-brand-text mb-2">
-                Client Type
-                {!isAdmin && (
-                  <span className="ml-2 text-xs text-brand-text/70">(Admin only)</span>
-                )}
-              </label>
-              {isAdmin ? (
-                <div className="flex gap-4">
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      name="client_type"
-                      value="corporate"
-                      checked={
-                        (formData.client_type || client.client_type) === 'corporate'
-                      }
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          client_type: e.target.value as ClientType,
-                        })
-                      }
-                      className="mr-2"
-                    />
-                    <span>Corporate (Subscriptions)</span>
-                  </label>
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      name="client_type"
-                      value="event"
-                      checked={(formData.client_type || client.client_type) === 'event'}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          client_type: e.target.value as ClientType,
-                        })
-                      }
-                      className="mr-2"
-                    />
-                    <span>Event (One-time)</span>
-                  </label>
-                </div>
-              ) : (
-                <div className="px-3 py-2 bg-brand-bg border border-brand-border rounded-lg text-sm capitalize">
-                  {client.client_type}
-                </div>
-              )}
-            </div>
-
-            {/* Outlet (disabled for managers) */}
-            <div className="md:col-span-2">
-              <Input
-                label={`Outlet ${!isAdmin ? '(Admin only)' : ''}`}
-                value={client.outlets?.name || ''}
-                disabled
-              />
-            </div>
-
-            {/* Name */}
-            <Input
-              label="Client Name"
-              required
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              error={errors.name}
-            />
-
-            {/* Contact Person */}
-            <Input
-              label="Contact Person"
-              value={formData.contact_person}
-              onChange={(e) =>
-                setFormData({ ...formData, contact_person: e.target.value })
+      <form onSubmit={handleSubmit} className="sheet">
+        <FormSection id="client-type-h" title="Client type" description="Decides how this client is billed.">
+          {/* Client type: admins only, and only before any linked records exist */}
+          {isAdmin && !typeLocked ? (
+            <ClientTypeChoice value={effectiveType} onChange={handleTypeChange} />
+          ) : (
+            <ClientTypeReadout
+              type={client.client_type}
+              note={
+                !isAdmin
+                  ? 'Only an admin can change the client type.'
+                  : hasLinkedRecords === null
+                    ? 'Type cannot be changed right now: linked records could not be checked.'
+                    : 'Type cannot be changed because this client already has subscriptions, events or invoices.'
               }
             />
+          )}
+        </FormSection>
 
-            {/* Phone */}
+        <FormSection id="client-outlet-h" title="Outlet">
+          <Input
+            label="Outlet"
+            value={client.outlets?.name || ''}
+            disabled
+            helperText="A client stays with the outlet it was registered at."
+          />
+        </FormSection>
+
+        <FormSection id="client-contact-h" title="Contact">
+          <Input
+            label="Client name"
+            required
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            error={errors.name}
+          />
+
+          <Input
+            label="Contact person"
+            value={formData.contact_person}
+            onChange={(e) =>
+              setFormData({ ...formData, contact_person: e.target.value })
+            }
+          />
+
+          <Input
+            label="Phone number"
+            required
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            value={formData.phone}
+            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+            error={errors.phone}
+          />
+
+          <Input
+            label="Email"
+            type="email"
+            autoComplete="email"
+            value={formData.email}
+            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            error={errors.email}
+          />
+        </FormSection>
+
+        {/* GSTIN and GST type apply to corporate clients only */}
+        {effectiveType === 'corporate' && (
+          <FormSection id="client-tax-h" title="Tax details" description="Printed on invoices and used to file GST.">
             <Input
-              label="Phone Number"
-              required
-              type="tel"
-              value={formData.phone}
-              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-              error={errors.phone}
+              label="GSTIN"
+              value={formData.gstin}
+              onChange={(e) =>
+                setFormData({ ...formData, gstin: e.target.value.toUpperCase() })
+              }
+              error={errors.gstin}
+              placeholder="27AAPFU0939F1ZV"
+              helperText="15 characters. Leave blank if the client is not registered."
+              className="serial"
+              autoCapitalize="characters"
+              spellCheck={false}
             />
 
-            {/* Email */}
-            <Input
-              label="Email"
-              type="email"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-            />
-
-            {/* GSTIN (only for corporate) */}
-            {(formData.client_type || client.client_type) === 'corporate' && (
-              <div className="md:col-span-2">
-                <Input
-                  label="GSTIN"
-                  value={formData.gstin}
-                  onChange={(e) =>
-                    setFormData({ ...formData, gstin: e.target.value.toUpperCase() })
-                  }
-                  error={errors.gstin}
-                  placeholder="27AABCU9603R1ZV"
-                />
-              </div>
-            )}
-
-            {/* GST Type for Reports */}
-            <div className="md:col-span-2">
-              <Select
-                label="GST Type (for Reports)"
-                value={formData.gst_type || ''}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    gst_type: (e.target.value || null) as ClientGstType | null,
-                  })
-                }
-              >
-                <option value="">-- Select GST Type --</option>
-                <option value="domestic">Domestic</option>
-                <option value="sez">SEZ</option>
-                <option value="export">Export</option>
-              </Select>
-              <p className="text-xs text-brand-text/60 mt-1">
-                Used for GST Working Reports. Select based on client's GST classification.
-              </p>
-            </div>
-
-            {/* Billing Address */}
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-brand-text mb-1">
-                Billing Address
-              </label>
-              <textarea
-                value={formData.billing_address}
-                onChange={(e) =>
-                  setFormData({ ...formData, billing_address: e.target.value })
-                }
-                rows={3}
-                className="block w-full px-3 py-2 border border-brand-border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-primary"
-              />
-            </div>
-          </div>
-
-          <div className="flex gap-4">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => navigate(`/clients/${id}`)}
+            <Select
+              label="GST type"
+              value={formData.gst_type || ''}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  gst_type: (e.target.value || null) as ClientGstType | null,
+                })
+              }
+              helperText="Decides which GST working sheet this client's invoices appear in."
             >
-              Cancel
-            </Button>
-            <Button type="submit" isLoading={isSaving}>
-              Save Changes
-            </Button>
+              <option value="">Not set</option>
+              <option value="domestic">Domestic</option>
+              <option value="sez">SEZ</option>
+              <option value="export">Export</option>
+            </Select>
+          </FormSection>
+        )}
+
+        <FormSection id="client-address-h" title="Address">
+          <div className="md:col-span-2">
+            <Textarea
+              label="Billing address"
+              value={formData.billing_address}
+              onChange={(e) =>
+                setFormData({ ...formData, billing_address: e.target.value })
+              }
+              rows={3}
+              helperText="Printed on the client's invoices."
+            />
           </div>
-        </form>
-      </Card>
+        </FormSection>
+
+        <FormActionBar>
+          <LinkButton to={`/clients/${id}`} variant="outline">
+            Cancel
+          </LinkButton>
+          <Button type="submit" isLoading={isSaving}>
+            Save changes
+          </Button>
+        </FormActionBar>
+      </form>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
+import { ChoiceGroup, FactWell, ModalActions } from '../ModalParts';
 import { adjustInventoryV2 } from '@/services/inventoryMovementServiceV2';
 
 // ================================================================
@@ -56,6 +57,7 @@ export default function AdjustStockModal({
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (loading) return;
         setError(null);
 
         const qty = parseInt(quantity);
@@ -96,98 +98,81 @@ export default function AdjustStockModal({
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Adjust Stock (Admin)">
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Adjust stock"
+            description="Admin correction. Every adjustment is logged with its reason."
+            dismissable={!loading}
+        >
             <form onSubmit={handleSubmit} className="space-y-4">
                 {error && <Alert variant="error">{error}</Alert>}
 
-                {/* Item Info */}
-                <div className="bg-muted p-4 rounded">
-                    <p className="text-sm text-muted-foreground">Item</p>
-                    <p className="font-semibold">{itemName}</p>
-                    <div className="grid grid-cols-2 gap-4 mt-2">
-                        <div>
-                            <p className="text-sm text-muted-foreground">Total</p>
-                            <p className="text-lg font-bold">{totalQuantity}</p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-muted-foreground">Available</p>
-                            <p className="text-lg font-bold text-green-600">{availableQuantity}</p>
-                        </div>
-                    </div>
-                </div>
+                <FactWell
+                    eyebrow="Item"
+                    title={itemName}
+                    facts={[
+                        { label: 'Total', value: totalQuantity },
+                        { label: 'Available', value: availableQuantity, tone: 'final' },
+                    ]}
+                />
 
-                {/* Direction Toggle */}
-                <div>
-                    <label className="block text-sm font-medium mb-2">Adjustment Direction</label>
-                    <div className="flex gap-2">
-                        <button
-                            type="button"
-                            onClick={() => setDirection('increase')}
-                            className={`flex-1 py-3 px-4 rounded-lg border-2 text-center font-medium transition-colors ${direction === 'increase'
-                                    ? 'border-green-500 bg-green-50 text-green-700'
-                                    : 'border-gray-200 text-gray-500 hover:border-gray-300'
-                                }`}
-                        >
-                            ↑ Increase
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setDirection('decrease')}
-                            className={`flex-1 py-3 px-4 rounded-lg border-2 text-center font-medium transition-colors ${direction === 'decrease'
-                                    ? 'border-red-500 bg-red-50 text-red-700'
-                                    : 'border-gray-200 text-gray-500 hover:border-gray-300'
-                                }`}
-                        >
-                            ↓ Decrease
-                        </button>
-                    </div>
-                </div>
+                <ChoiceGroup<'increase' | 'decrease'>
+                    legend="Direction"
+                    name="adjust-direction"
+                    value={direction}
+                    onChange={setDirection}
+                    options={[
+                        { value: 'increase', label: 'Increase', hint: 'Count found more', tone: 'final' },
+                        { value: 'decrease', label: 'Decrease', hint: 'Count found fewer', tone: 'overdue' },
+                    ]}
+                />
 
-                {/* Quantity */}
                 <Input
                     type="number"
-                    label={`Quantity to ${direction === 'increase' ? 'Add' : 'Remove'}`}
+                    inputMode="numeric"
+                    label={direction === 'increase' ? 'Pieces to add' : 'Pieces to remove'}
                     value={quantity}
                     onChange={(e) => setQuantity(e.target.value)}
                     min="1"
                     max={direction === 'decrease' ? availableQuantity : undefined}
                     required
-                    placeholder={direction === 'decrease' ? `Max: ${availableQuantity}` : 'Enter quantity'}
+                    placeholder={direction === 'decrease' ? `Up to ${availableQuantity}` : undefined}
+                    className="tabular"
                 />
 
-                {/* Notes (REQUIRED) */}
                 <Textarea
-                    label="Reason for Adjustment (required)"
+                    label="Reason"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="e.g., Physical count mismatch, audit correction..."
+                    placeholder="e.g. Physical count mismatch, audit correction"
+                    helperText="Required"
                     required
                     rows={3}
                 />
 
                 {direction === 'decrease' && (
                     <Alert variant="warning">
-                        Negative adjustments reduce available and total stock. This action is logged and auditable.
+                        A decrease reduces available and total stock. It is logged and auditable.
                     </Alert>
                 )}
 
-                {/* Buttons */}
-                <div className="flex justify-end gap-2 pt-4">
+                <ModalActions>
                     <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
                         Cancel
                     </Button>
                     <Button
                         type="submit"
-                        disabled={loading}
-                        variant={direction === 'decrease' ? 'destructive' : 'default'}
+                        isLoading={loading}
+                        variant={direction === 'decrease' ? 'danger' : 'primary'}
                     >
                         {loading
-                            ? 'Adjusting...'
+                            ? 'Adjusting…'
                             : direction === 'increase'
-                                ? 'Increase Stock'
-                                : 'Decrease Stock'}
+                                ? 'Increase stock'
+                                : 'Decrease stock'}
                     </Button>
-                </div>
+                </ModalActions>
             </form>
         </Modal>
     );

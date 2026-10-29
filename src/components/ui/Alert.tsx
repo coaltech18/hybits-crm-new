@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, CheckCircle, Info, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react';
 import { cn } from '@/utils/cn';
 
 interface AlertProps {
@@ -8,33 +8,24 @@ interface AlertProps {
   className?: string;
 }
 
+const variantStyles = {
+  success: 'bg-final-tint text-final border-final-rule',
+  error: 'bg-danger-tint text-danger border-danger-rule',
+  warning: 'bg-partial-tint text-partial border-partial-rule',
+  info: 'bg-info-tint text-info border-info-rule',
+};
+
+const icons = { success: CheckCircle2, error: XCircle, warning: AlertTriangle, info: Info };
+
 export function Alert({ children, variant = 'info', className }: AlertProps) {
-  const variantStyles = {
-    success: 'bg-brand-primary/10 text-brand-primary border-brand-primary/30',
-    error: 'bg-red-50 text-red-800 border-red-200',
-    warning: 'bg-brand-primary/10 text-brand-text border-brand-border',
-    info: 'bg-brand-primary/10 text-brand-primary border-brand-primary/30',
-  };
-
-  const icons = {
-    success: CheckCircle,
-    error: XCircle,
-    warning: AlertCircle,
-    info: Info,
-  };
-
   const Icon = icons[variant];
-
   return (
     <div
-      className={cn(
-        'flex items-start gap-3 p-4 rounded-lg border',
-        variantStyles[variant],
-        className
-      )}
+      role={variant === 'error' ? 'alert' : 'status'}
+      className={cn('flex items-start gap-3 rounded-lg border px-4 py-3 text-sm', variantStyles[variant], className)}
     >
-      <Icon className="h-5 w-5 flex-shrink-0 mt-0.5" />
-      <div className="flex-1">{children}</div>
+      <Icon className="mt-0.5 h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+      <div className="min-w-0 flex-1 [&_p]:text-current">{children}</div>
     </div>
   );
 }

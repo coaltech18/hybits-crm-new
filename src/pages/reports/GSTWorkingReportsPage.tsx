@@ -1,18 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
+import { DateInput } from '@/components/ui/DateInput';
 import { Select } from '@/components/ui/Select';
 import { Alert } from '@/components/ui/Alert';
-import { Download, FileSpreadsheet } from 'lucide-react';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { TableSkeleton } from '@/components/ui/Spinner';
 import {
     getGSTDomesticReport,
-    getGSTDomesticTotals,
     getGSTSEZReport,
-    getGSTSEZTotals,
     getGSTExportReport,
-    getGSTExportTotals,
+    computeGSTTotals,
+    formatGSTRate,
     exportGSTDomesticCSV,
     exportGSTSEZCSV,
     exportGSTExportCSV,
@@ -21,16 +22,32 @@ import type {
     GSTWorkingReportRow,
     GSTWorkingExportRow,
     GSTWorkingTotalsRow,
+    GSTReportFilters,
     Outlet,
 } from '@/types';
 import { formatCurrency } from '@/utils/format';
+import { downloadCsv } from '@/utils/csv';
+import { todayISO } from '@/utils/date';
+import { cn } from '@/utils/cn';
+import { useReportLoader } from './useReportLoader';
+import { ReportTabs, TabPanel, FigureStrip, Figure, LedgerSheet, ExportButton, LedgerEmpty } from './ReportKit';
+import { TFOOT_CELL, fmtCount, fmtDate } from './reportFormat';
+
+// ================================================================
+// GST WORKING — one sheet per GST type, in the accountant's Excel
+// column order (the CSV matches it exactly). Totals strip above,
+// dense ledger below with the totals row in the footer.
+// ================================================================
 
 type GSTTabType = 'domestic' | 'sez' | 'export';
 
+const TAB_PREFIX = 'gst';
+
 export default function GSTWorkingReportsPage() {
+    useDocumentTitle('GST working');
+
     const { user, outlets } = useAuth();
     const [activeTab, setActiveTab] = useState<GSTTabType>('domestic');
-    const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     // Common filters
@@ -41,6 +58,8 @@ export default function GSTWorkingReportsPage() {
     // Available outlets for dropdown
     const availableOutlets: Outlet[] = outlets || [];
     const showOutletFilter = user?.role === 'admin' || user?.role === 'accountant';
+    const userId = user?.id || '';
+    const failed = Boolean(error);
 
     const tabs = [
         { id: 'domestic' as const, label: 'Domestic' },
@@ -48,135 +67,92 @@ export default function GSTWorkingReportsPage() {
         { id: 'export' as const, label: 'Export' },
     ];
 
-    function downloadCSV(content: string, filename: string) {
-        const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', filename);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
-
     return (
-        <div className="p-6 space-y-6">
-            {/* Header */}
-            <div className="flex items-center gap-3">
-                <FileSpreadsheet className="w-8 h-8 text-brand-primary" />
-                <div>
-                    <h1 className="text-2xl font-bold text-brand-text">GST Working Reports</h1>
-                    <p className="text-sm text-brand-text/60">
-                        Download GST reports matching accountant's Excel format
-                    </p>
-                </div>
-            </div>
+        <div>
+            <PageHeader
+                title="GST working"
+                description="Finalized invoices laid out like the accountant's Excel sheet, one tab per GST type. The CSV matches the columns exactly."
+            />
 
-            {/* Error */}
-            {error && (
-                <Alert variant="error">
-                    <div className="flex items-center justify-between">
-                        <span>{error}</span>
-                        <button
-                            onClick={() => setError(null)}
-                            className="text-red-600 hover:text-red-800 font-medium text-sm"
-                        >
-                            Dismiss
-                        </button>
+            <div className="space-y-6">
+                <ReportTabs tabs={tabs} active={activeTab} onChange={setActiveTab} idPrefix={TAB_PREFIX} label="GST sheet" />
+
+                {/* Common filters */}
+                <Card padding="sm">
+                    <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+                        <div className="w-full sm:w-44">
+                            <DateInput label="From" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+                        </div>
+                        <div className="w-full sm:w-44">
+                            <DateInput label="To" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+                        </div>
+                        {showOutletFilter && (
+                            <div className="w-full sm:w-56">
+                                <Select label="Outlet" value={outletId} onChange={(e) => setOutletId(e.target.value)}>
+                                    <option value="">All outlets</option>
+                                    {availableOutlets.map((outlet) => (
+                                        <option key={outlet.id} value={outlet.id}>
+                                            {outlet.name}
+                                        </option>
+                                    ))}
+                                </Select>
+                            </div>
+                        )}
                     </div>
-                </Alert>
-            )}
+                </Card>
 
-            {/* Tabs */}
-            <div className="border-b border-brand-border">
-                <nav className="flex gap-2">
-                    {tabs.map((tab) => (
-                        <button
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id
-                                ? 'border-brand-primary text-brand-primary'
-                                : 'border-transparent text-brand-text/60 hover:text-brand-text'
-                                }`}
-                        >
-                            {tab.label}
-                        </button>
-                    ))}
-                </nav>
+                {error && (
+                    <Alert variant="error">
+                        <div className="flex items-start justify-between gap-4">
+                            <span>{error}</span>
+                            <button
+                                type="button"
+                                onClick={() => setError(null)}
+                                className="shrink-0 rounded font-semibold underline underline-offset-2 hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-danger"
+                            >
+                                Dismiss
+                            </button>
+                        </div>
+                    </Alert>
+                )}
+
+                {userId && (
+                    <TabPanel idPrefix={TAB_PREFIX} active={activeTab}>
+                        {activeTab === 'domestic' && (
+                            <GSTDomesticTab
+                                userId={userId}
+                                dateFrom={dateFrom}
+                                dateTo={dateTo}
+                                outletId={outletId}
+                                setError={setError}
+                                failed={failed}
+                            />
+                        )}
+
+                        {activeTab === 'sez' && (
+                            <GSTSEZTab
+                                userId={userId}
+                                dateFrom={dateFrom}
+                                dateTo={dateTo}
+                                outletId={outletId}
+                                setError={setError}
+                                failed={failed}
+                            />
+                        )}
+
+                        {activeTab === 'export' && (
+                            <GSTExportTab
+                                userId={userId}
+                                dateFrom={dateFrom}
+                                dateTo={dateTo}
+                                outletId={outletId}
+                                setError={setError}
+                                failed={failed}
+                            />
+                        )}
+                    </TabPanel>
+                )}
             </div>
-
-            {/* Common Filters */}
-            <Card className="p-4">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <Input
-                        type="date"
-                        label="From Date"
-                        value={dateFrom}
-                        onChange={(e) => setDateFrom(e.target.value)}
-                    />
-                    <Input
-                        type="date"
-                        label="To Date"
-                        value={dateTo}
-                        onChange={(e) => setDateTo(e.target.value)}
-                    />
-                    {showOutletFilter && (
-                        <Select
-                            label="Outlet"
-                            value={outletId}
-                            onChange={(e) => setOutletId(e.target.value)}
-                        >
-                            <option value="">All Outlets</option>
-                            {availableOutlets.map((outlet) => (
-                                <option key={outlet.id} value={outlet.id}>
-                                    {outlet.name}
-                                </option>
-                            ))}
-                        </Select>
-                    )}
-                </div>
-            </Card>
-
-            {/* Tab Content */}
-            {activeTab === 'domestic' && (
-                <GSTDomesticTab
-                    userId={user?.id || ''}
-                    dateFrom={dateFrom}
-                    dateTo={dateTo}
-                    outletId={outletId}
-                    loading={loading}
-                    setLoading={setLoading}
-                    setError={setError}
-                    downloadCSV={downloadCSV}
-                />
-            )}
-
-            {activeTab === 'sez' && (
-                <GSTSEZTab
-                    userId={user?.id || ''}
-                    dateFrom={dateFrom}
-                    dateTo={dateTo}
-                    outletId={outletId}
-                    loading={loading}
-                    setLoading={setLoading}
-                    setError={setError}
-                    downloadCSV={downloadCSV}
-                />
-            )}
-
-            {activeTab === 'export' && (
-                <GSTExportTab
-                    userId={user?.id || ''}
-                    dateFrom={dateFrom}
-                    dateTo={dateTo}
-                    outletId={outletId}
-                    loading={loading}
-                    setLoading={setLoading}
-                    setError={setError}
-                    downloadCSV={downloadCSV}
-                />
-            )}
         </div>
     );
 }
@@ -190,136 +166,193 @@ interface GSTTabProps {
     dateFrom: string;
     dateTo: string;
     outletId: string;
-    loading: boolean;
-    setLoading: (v: boolean) => void;
     setError: (v: string | null) => void;
-    downloadCSV: (content: string, filename: string) => void;
+    /** Presentation only: lets the empty state say the sheet failed rather than "no data". */
+    failed: boolean;
+}
+
+/** Loads one GST sheet with a stale-response guard, plus its totals row. */
+function useGSTSheet<T extends GSTWorkingReportRow>(
+    fetchSheet: (userId: string, filters: GSTReportFilters) => Promise<T[]>,
+    { userId, dateFrom, dateTo, outletId, setError }: GSTTabProps
+) {
+    const loader = useCallback(
+        () =>
+            fetchSheet(userId, {
+                date_from: dateFrom || undefined,
+                date_to: dateTo || undefined,
+                outlet_id: outletId || undefined,
+            }),
+        [fetchSheet, userId, dateFrom, dateTo, outletId]
+    );
+    const { data, loading } = useReportLoader<T[]>(loader, [], setError);
+    const totals = useMemo(() => computeGSTTotals(data, outletId || undefined), [data, outletId]);
+    return { data, loading, totals };
+}
+
+// ================================================================
+// SHARED SHEET (strip + ledger), identical for all three GST types
+// ================================================================
+
+function GSTSheet<T extends GSTWorkingReportRow>({
+    sheetId,
+    title,
+    hsnLabel,
+    data,
+    loading,
+    totals,
+    failed,
+    emptyTitle,
+    emptyDescription,
+    onExport,
+    currency,
+}: {
+    sheetId: string;
+    title: string;
+    hsnLabel: string;
+    data: T[];
+    loading: boolean;
+    totals: GSTWorkingTotalsRow | null;
+    failed: boolean;
+    emptyTitle: string;
+    emptyDescription: string;
+    onExport: () => void;
+    /** Export sheet only: the trailing Currency column. */
+    currency?: (row: T) => string;
+}) {
+    const withCurrency = Boolean(currency);
+    const num = (n: number | undefined) => formatCurrency(n ?? 0);
+
+    return (
+        <>
+            <FigureStrip label={`${title} totals`} className="grid-cols-2 lg:grid-cols-4">
+                <Figure label="Taxable value" big loading={loading} className="col-span-2 lg:col-span-4">
+                    {num(totals?.total_taxable_value)}
+                </Figure>
+                <Figure label="IGST" loading={loading}>
+                    {num(totals?.total_igst)}
+                </Figure>
+                <Figure label="CGST" loading={loading}>
+                    {num(totals?.total_cgst)}
+                </Figure>
+                <Figure label="SGST" loading={loading}>
+                    {num(totals?.total_sgst)}
+                </Figure>
+                <Figure label="Total" loading={loading}>
+                    {num(totals?.grand_total)}
+                </Figure>
+            </FigureStrip>
+
+            <LedgerSheet
+                id={`${sheetId}-ledger-h`}
+                title={title}
+                summary={loading ? 'Loading…' : `${fmtCount(data.length)} ${data.length === 1 ? 'invoice' : 'invoices'}`}
+                tools={<ExportButton label="Download CSV" onClick={onExport} disabled={loading || data.length === 0} />}
+            >
+                {loading ? (
+                    <TableSkeleton rows={6} cols={8} />
+                ) : data.length === 0 ? (
+                    <LedgerEmpty failed={failed} title={emptyTitle} description={emptyDescription} />
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="ledger">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Invoice date</th>
+                                    <th scope="col">Invoice no.</th>
+                                    <th scope="col">Party name</th>
+                                    <th scope="col">GSTIN</th>
+                                    <th scope="col">{hsnLabel}</th>
+                                    <th scope="col" className="text-right">As per invoice</th>
+                                    <th scope="col" className="text-right">Taxable value</th>
+                                    <th scope="col" className="text-right">Rate</th>
+                                    <th scope="col" className="text-right">IGST</th>
+                                    <th scope="col" className="text-right">CGST</th>
+                                    <th scope="col" className="text-right">SGST</th>
+                                    <th scope="col" className="text-right">Total</th>
+                                    {withCurrency && <th scope="col">Currency</th>}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.map((row) => (
+                                    <tr key={row.invoice_id}>
+                                        <td className="whitespace-nowrap text-ink-muted">{fmtDate(row.invoice_date)}</td>
+                                        <td className="whitespace-nowrap">
+                                            <Link
+                                                to={`/invoices/${row.invoice_id}`}
+                                                className="serial font-semibold text-ink hover:text-brand-primary"
+                                            >
+                                                {row.invoice_number}
+                                            </Link>
+                                        </td>
+                                        <td className="max-w-[16rem] truncate">{row.party_name}</td>
+                                        <td className="whitespace-nowrap">
+                                            {row.gst_number ? <span className="serial">{row.gst_number}</span> : <span className="text-ink-faint">—</span>}
+                                        </td>
+                                        <td className="whitespace-nowrap">
+                                            {row.hsn_sac_code ? <span className="serial">{row.hsn_sac_code}</span> : <span className="text-ink-faint">—</span>}
+                                        </td>
+                                        <td className="amount text-right">{formatCurrency(row.as_per_your_invoice)}</td>
+                                        <td className="amount text-right">{formatCurrency(row.taxable_value)}</td>
+                                        <td className={cn('amount text-right', row.rate_label && 'font-semibold text-ink')}>
+                                            {formatGSTRate(row)}
+                                        </td>
+                                        <td className="amount text-right">{formatCurrency(row.igst)}</td>
+                                        <td className="amount text-right">{formatCurrency(row.cgst)}</td>
+                                        <td className="amount text-right">{formatCurrency(row.sgst)}</td>
+                                        <td className="amount text-right font-semibold">{formatCurrency(row.total)}</td>
+                                        {currency && <td className="serial">{currency(row)}</td>}
+                                    </tr>
+                                ))}
+                            </tbody>
+                            {totals && (
+                                <tfoot>
+                                    <tr>
+                                        <th scope="row" colSpan={6} className={cn(TFOOT_CELL, 'text-left')}>
+                                            Total
+                                        </th>
+                                        <td className={cn(TFOOT_CELL, 'amount text-right')}>{formatCurrency(totals.total_taxable_value)}</td>
+                                        <td className={TFOOT_CELL} />
+                                        <td className={cn(TFOOT_CELL, 'amount text-right')}>{formatCurrency(totals.total_igst)}</td>
+                                        <td className={cn(TFOOT_CELL, 'amount text-right')}>{formatCurrency(totals.total_cgst)}</td>
+                                        <td className={cn(TFOOT_CELL, 'amount text-right')}>{formatCurrency(totals.total_sgst)}</td>
+                                        <td className={cn(TFOOT_CELL, 'amount text-right')}>{formatCurrency(totals.grand_total)}</td>
+                                        {withCurrency && <td className={TFOOT_CELL} />}
+                                    </tr>
+                                </tfoot>
+                            )}
+                        </table>
+                    </div>
+                )}
+            </LedgerSheet>
+        </>
+    );
 }
 
 // ================================================================
 // DOMESTIC GST TAB
 // ================================================================
 
-function GSTDomesticTab({
-    userId,
-    dateFrom,
-    dateTo,
-    outletId,
-    loading,
-    setLoading,
-    setError,
-    downloadCSV,
-}: GSTTabProps) {
-    const [data, setData] = useState<GSTWorkingReportRow[]>([]);
-    const [totals, setTotals] = useState<GSTWorkingTotalsRow | null>(null);
-
-    const filters = {
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-        outlet_id: outletId || undefined,
-    };
-
-    useEffect(() => {
-        loadData();
-    }, [dateFrom, dateTo, outletId]);
-
-    async function loadData() {
-        if (!userId) return;
-        setLoading(true);
-        setError(null);
-        try {
-            const [reportData, totalsData] = await Promise.all([
-                getGSTDomesticReport(userId, filters),
-                getGSTDomesticTotals(userId, filters),
-            ]);
-            setData(reportData);
-            setTotals(totalsData);
-        } catch (err: any) {
-            setError(err.message || 'Failed to load domestic GST report');
-        } finally {
-            setLoading(false);
-        }
-    }
+function GSTDomesticTab(props: GSTTabProps) {
+    const { data, loading, totals } = useGSTSheet<GSTWorkingReportRow>(getGSTDomesticReport, props);
 
     function handleExport() {
-        const csv = exportGSTDomesticCSV(data, totals);
-        const dateStr = new Date().toISOString().split('T')[0];
-        downloadCSV(csv, `gst_working_domestic_${dateStr}.csv`);
+        downloadCsv(`gst_working_domestic_${todayISO()}.csv`, exportGSTDomesticCSV(data, totals));
     }
 
     return (
-        <>
-            {/* Export Button */}
-            <div className="flex justify-end">
-                <Button onClick={handleExport} disabled={loading || data.length === 0}>
-                    <Download className="w-4 h-4 mr-2" />
-                    Download CSV
-                </Button>
-            </div>
-
-            {/* Data Table */}
-            <Card className="p-4">
-                <h3 className="text-lg font-semibold mb-4">Domestic GST Working</h3>
-                {loading ? (
-                    <p className="text-center py-8">Loading...</p>
-                ) : data.length === 0 ? (
-                    <p className="text-center text-brand-text/60 py-8">
-                        No domestic GST data found. Ensure clients have GST Type set to "Domestic".
-                    </p>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead className="border-b bg-brand-surface">
-                                <tr>
-                                    <th className="text-left py-2 px-2">Invoice Date</th>
-                                    <th className="text-left py-2 px-2">Invoice Number</th>
-                                    <th className="text-left py-2 px-2">Party Name</th>
-                                    <th className="text-left py-2 px-2">GST NUMBER</th>
-                                    <th className="text-left py-2 px-2">HSN/SAC CODE</th>
-                                    <th className="text-right py-2 px-2">As per your Invoice</th>
-                                    <th className="text-right py-2 px-2">Taxable Value</th>
-                                    <th className="text-right py-2 px-2">RATE</th>
-                                    <th className="text-right py-2 px-2">IGST</th>
-                                    <th className="text-right py-2 px-2">CGST</th>
-                                    <th className="text-right py-2 px-2">SGST</th>
-                                    <th className="text-right py-2 px-2">TOTAL</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {data.map((row) => (
-                                    <tr key={row.invoice_id} className="border-b hover:bg-brand-surface/50">
-                                        <td className="py-2 px-2">{row.invoice_date}</td>
-                                        <td className="py-2 px-2 font-medium">{row.invoice_number}</td>
-                                        <td className="py-2 px-2">{row.party_name}</td>
-                                        <td className="py-2 px-2">{row.gst_number || '-'}</td>
-                                        <td className="py-2 px-2">{row.hsn_sac_code || '-'}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.as_per_your_invoice)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.taxable_value)}</td>
-                                        <td className="text-right py-2 px-2">{row.rate}%</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.igst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.cgst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.sgst)}</td>
-                                        <td className="text-right py-2 px-2 font-semibold">{formatCurrency(row.total)}</td>
-                                    </tr>
-                                ))}
-                                {/* Totals Row */}
-                                {totals && (
-                                    <tr className="bg-brand-primary/10 font-semibold">
-                                        <td colSpan={6} className="py-2 px-2 text-right">Total</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_taxable_value)}</td>
-                                        <td className="py-2 px-2"></td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_igst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_cgst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_sgst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.grand_total)}</td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </Card>
-        </>
+        <GSTSheet
+            sheetId="gst-domestic"
+            title="Domestic GST working"
+            hsnLabel="HSN/SAC"
+            data={data}
+            loading={loading}
+            totals={totals}
+            failed={props.failed}
+            emptyTitle="No domestic invoices in this period"
+            emptyDescription="No finalized invoices for Domestic or blank-GST-type clients in this period."
+            onExport={handleExport}
+        />
     );
 }
 
@@ -327,126 +360,26 @@ function GSTDomesticTab({
 // SEZ GST TAB
 // ================================================================
 
-function GSTSEZTab({
-    userId,
-    dateFrom,
-    dateTo,
-    outletId,
-    loading,
-    setLoading,
-    setError,
-    downloadCSV,
-}: GSTTabProps) {
-    const [data, setData] = useState<GSTWorkingReportRow[]>([]);
-    const [totals, setTotals] = useState<GSTWorkingTotalsRow | null>(null);
-
-    const filters = {
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-        outlet_id: outletId || undefined,
-    };
-
-    useEffect(() => {
-        loadData();
-    }, [dateFrom, dateTo, outletId]);
-
-    async function loadData() {
-        if (!userId) return;
-        setLoading(true);
-        setError(null);
-        try {
-            const [reportData, totalsData] = await Promise.all([
-                getGSTSEZReport(userId, filters),
-                getGSTSEZTotals(userId, filters),
-            ]);
-            setData(reportData);
-            setTotals(totalsData);
-        } catch (err: any) {
-            setError(err.message || 'Failed to load SEZ GST report');
-        } finally {
-            setLoading(false);
-        }
-    }
+function GSTSEZTab(props: GSTTabProps) {
+    const { data, loading, totals } = useGSTSheet<GSTWorkingReportRow>(getGSTSEZReport, props);
 
     function handleExport() {
-        const csv = exportGSTSEZCSV(data, totals);
-        const dateStr = new Date().toISOString().split('T')[0];
-        downloadCSV(csv, `gst_working_sez_${dateStr}.csv`);
+        downloadCsv(`gst_working_sez_${todayISO()}.csv`, exportGSTSEZCSV(data, totals));
     }
 
     return (
-        <>
-            {/* Export Button */}
-            <div className="flex justify-end">
-                <Button onClick={handleExport} disabled={loading || data.length === 0}>
-                    <Download className="w-4 h-4 mr-2" />
-                    Download CSV
-                </Button>
-            </div>
-
-            {/* Data Table */}
-            <Card className="p-4">
-                <h3 className="text-lg font-semibold mb-4">SEZ GST Working</h3>
-                {loading ? (
-                    <p className="text-center py-8">Loading...</p>
-                ) : data.length === 0 ? (
-                    <p className="text-center text-brand-text/60 py-8">
-                        No SEZ GST data found. Ensure clients have GST Type set to "SEZ".
-                    </p>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead className="border-b bg-brand-surface">
-                                <tr>
-                                    <th className="text-left py-2 px-2">Invoice Date</th>
-                                    <th className="text-left py-2 px-2">Invoice Number</th>
-                                    <th className="text-left py-2 px-2">Party Name</th>
-                                    <th className="text-left py-2 px-2">GST NUMBER</th>
-                                    <th className="text-left py-2 px-2">HSN CODE</th>
-                                    <th className="text-right py-2 px-2">As per your Invoice</th>
-                                    <th className="text-right py-2 px-2">Taxable Value</th>
-                                    <th className="text-right py-2 px-2">RATE</th>
-                                    <th className="text-right py-2 px-2">IGST</th>
-                                    <th className="text-right py-2 px-2">CGST</th>
-                                    <th className="text-right py-2 px-2">SGST</th>
-                                    <th className="text-right py-2 px-2">TOTAL</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {data.map((row) => (
-                                    <tr key={row.invoice_id} className="border-b hover:bg-brand-surface/50">
-                                        <td className="py-2 px-2">{row.invoice_date}</td>
-                                        <td className="py-2 px-2 font-medium">{row.invoice_number}</td>
-                                        <td className="py-2 px-2">{row.party_name}</td>
-                                        <td className="py-2 px-2">{row.gst_number || '-'}</td>
-                                        <td className="py-2 px-2">{row.hsn_sac_code || '-'}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.as_per_your_invoice)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.taxable_value)}</td>
-                                        <td className="text-right py-2 px-2">{row.rate}%</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.igst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.cgst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.sgst)}</td>
-                                        <td className="text-right py-2 px-2 font-semibold">{formatCurrency(row.total)}</td>
-                                    </tr>
-                                ))}
-                                {/* Totals Row */}
-                                {totals && (
-                                    <tr className="bg-brand-primary/10 font-semibold">
-                                        <td colSpan={6} className="py-2 px-2 text-right">Total</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_taxable_value)}</td>
-                                        <td className="py-2 px-2"></td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_igst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_cgst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_sgst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.grand_total)}</td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </Card>
-        </>
+        <GSTSheet
+            sheetId="gst-sez"
+            title="SEZ GST working"
+            hsnLabel="HSN"
+            data={data}
+            loading={loading}
+            totals={totals}
+            failed={props.failed}
+            emptyTitle="No SEZ invoices in this period"
+            emptyDescription="Only clients whose GST type is set to SEZ appear on this sheet."
+            onExport={handleExport}
+        />
     );
 }
 
@@ -454,128 +387,26 @@ function GSTSEZTab({
 // EXPORT GST TAB
 // ================================================================
 
-function GSTExportTab({
-    userId,
-    dateFrom,
-    dateTo,
-    outletId,
-    loading,
-    setLoading,
-    setError,
-    downloadCSV,
-}: GSTTabProps) {
-    const [data, setData] = useState<GSTWorkingExportRow[]>([]);
-    const [totals, setTotals] = useState<GSTWorkingTotalsRow | null>(null);
-
-    const filters = {
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-        outlet_id: outletId || undefined,
-    };
-
-    useEffect(() => {
-        loadData();
-    }, [dateFrom, dateTo, outletId]);
-
-    async function loadData() {
-        if (!userId) return;
-        setLoading(true);
-        setError(null);
-        try {
-            const [reportData, totalsData] = await Promise.all([
-                getGSTExportReport(userId, filters),
-                getGSTExportTotals(userId, filters),
-            ]);
-            setData(reportData);
-            setTotals(totalsData);
-        } catch (err: any) {
-            setError(err.message || 'Failed to load export GST report');
-        } finally {
-            setLoading(false);
-        }
-    }
+function GSTExportTab(props: GSTTabProps) {
+    const { data, loading, totals } = useGSTSheet<GSTWorkingExportRow>(getGSTExportReport, props);
 
     function handleExport() {
-        const csv = exportGSTExportCSV(data, totals);
-        const dateStr = new Date().toISOString().split('T')[0];
-        downloadCSV(csv, `gst_working_export_${dateStr}.csv`);
+        downloadCsv(`gst_working_export_${todayISO()}.csv`, exportGSTExportCSV(data, totals));
     }
 
     return (
-        <>
-            {/* Export Button */}
-            <div className="flex justify-end">
-                <Button onClick={handleExport} disabled={loading || data.length === 0}>
-                    <Download className="w-4 h-4 mr-2" />
-                    Download CSV
-                </Button>
-            </div>
-
-            {/* Data Table */}
-            <Card className="p-4">
-                <h3 className="text-lg font-semibold mb-4">Export GST Working</h3>
-                {loading ? (
-                    <p className="text-center py-8">Loading...</p>
-                ) : data.length === 0 ? (
-                    <p className="text-center text-brand-text/60 py-8">
-                        No export GST data found. Ensure clients have GST Type set to "Export".
-                    </p>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead className="border-b bg-brand-surface">
-                                <tr>
-                                    <th className="text-left py-2 px-2">Invoice Date</th>
-                                    <th className="text-left py-2 px-2">Invoice Number</th>
-                                    <th className="text-left py-2 px-2">Party Name</th>
-                                    <th className="text-left py-2 px-2">GST NUMBER</th>
-                                    <th className="text-left py-2 px-2">HSN CODE</th>
-                                    <th className="text-right py-2 px-2">As per your Invoice</th>
-                                    <th className="text-right py-2 px-2">Taxable Value</th>
-                                    <th className="text-right py-2 px-2">RATE</th>
-                                    <th className="text-right py-2 px-2">IGST</th>
-                                    <th className="text-right py-2 px-2">CGST</th>
-                                    <th className="text-right py-2 px-2">SGST</th>
-                                    <th className="text-right py-2 px-2">TOTAL</th>
-                                    <th className="text-left py-2 px-2">Currency</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {data.map((row) => (
-                                    <tr key={row.invoice_id} className="border-b hover:bg-brand-surface/50">
-                                        <td className="py-2 px-2">{row.invoice_date}</td>
-                                        <td className="py-2 px-2 font-medium">{row.invoice_number}</td>
-                                        <td className="py-2 px-2">{row.party_name}</td>
-                                        <td className="py-2 px-2">{row.gst_number || '-'}</td>
-                                        <td className="py-2 px-2">{row.hsn_sac_code || '-'}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.as_per_your_invoice)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.taxable_value)}</td>
-                                        <td className="text-right py-2 px-2">{row.rate}%</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.igst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.cgst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(row.sgst)}</td>
-                                        <td className="text-right py-2 px-2 font-semibold">{formatCurrency(row.total)}</td>
-                                        <td className="py-2 px-2">{row.currency}</td>
-                                    </tr>
-                                ))}
-                                {/* Totals Row */}
-                                {totals && (
-                                    <tr className="bg-brand-primary/10 font-semibold">
-                                        <td colSpan={6} className="py-2 px-2 text-right">Total</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_taxable_value)}</td>
-                                        <td className="py-2 px-2"></td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_igst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_cgst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.total_sgst)}</td>
-                                        <td className="text-right py-2 px-2">{formatCurrency(totals.grand_total)}</td>
-                                        <td className="py-2 px-2"></td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </Card>
-        </>
+        <GSTSheet
+            sheetId="gst-export"
+            title="Export GST working"
+            hsnLabel="HSN"
+            data={data}
+            loading={loading}
+            totals={totals}
+            failed={props.failed}
+            emptyTitle="No export invoices in this period"
+            emptyDescription="Only clients whose GST type is set to Export appear on this sheet."
+            onExport={handleExport}
+            currency={(row) => row.currency}
+        />
     );
 }

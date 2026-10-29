@@ -1,24 +1,35 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Users } from 'lucide-react';
+import { Plus, Search, Users } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getClients } from '@/services/clientService';
-import type { Client, ClientFilters } from '@/types';
-import { Button } from '@/components/ui/Button';
+import type { Client, ClientFilters, ClientType } from '@/types';
+import { LinkButton } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Card } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
-import { Spinner } from '@/components/ui/Spinner';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton, TableSkeleton } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { formatPhone } from '@/utils/format';
+import { cn } from '@/utils/cn';
+import { ClientActiveBadge, ClientTypeBadge } from './ClientParts';
+
+// ================================================================
+// CLIENTS — the client register.
+// Count line → filters (search, type, active/inactive) → ledger.
+// ================================================================
+
+const count = (n: number) => new Intl.NumberFormat('en-IN').format(n);
 
 export function ClientsPage() {
   useDocumentTitle('Clients');
 
   const navigate = useNavigate();
-  const { user, isAccountant, isAuthReady } = useAuth();
+  const { user, isAdmin, isManager, isAuthReady } = useAuth();
+  const canEdit = isAdmin || isManager;
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -26,191 +37,213 @@ export function ClientsPage() {
     is_active: true,
   });
 
+  // Debounce the search text so each keystroke does not fire a request
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   useEffect(() => {
-    if (!isAuthReady) return;
-    loadClients();
-  }, [isAuthReady, filters, user]);
-  const loadClients = async () => {
-    if (!user) return;
+    const t = setTimeout(() => setDebouncedSearch(filters.search || ''), 300);
+    return () => clearTimeout(t);
+  }, [filters.search]);
+
+  // Only the latest request may update the table
+  const requestSeq = useRef(0);
+  const userId = user?.id;
+  const { client_type: clientType, is_active: isActive } = filters;
+
+  const loadClients = useCallback(async () => {
+    if (!userId) return;
+    const seq = ++requestSeq.current;
 
     setIsLoading(true);
     setError('');
 
     try {
-      const data = await getClients(user.id, filters);
-      setClients(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load clients');
+      const data = await getClients(userId, {
+        client_type: clientType,
+        is_active: isActive,
+        search: debouncedSearch,
+      });
+      if (seq === requestSeq.current) setClients(data);
+    } catch (err: unknown) {
+      if (seq === requestSeq.current) {
+        setError(err instanceof Error ? err.message : 'Failed to load clients');
+      }
     } finally {
-      setIsLoading(false);
+      if (seq === requestSeq.current) setIsLoading(false);
     }
-  };
+  }, [userId, clientType, isActive, debouncedSearch]);
+
+  useEffect(() => {
+    if (!isAuthReady) return;
+    loadClients();
+  }, [isAuthReady, loadClients]);
+
+  const statusWord = filters.is_active ? 'active' : 'inactive';
+  const typeWord = filters.client_type === 'corporate' ? ' corporate' : filters.client_type === 'event' ? ' event' : '';
+  const isFiltered = Boolean((filters.search || '').trim() || filters.client_type);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-brand-text">Clients</h1>
-          <p className="text-brand-text/70 mt-1">Manage your client database</p>
-        </div>
-        {!isAccountant && (
-          <Link to="/clients/new">
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Client
-            </Button>
-          </Link>
-        )}
-      </div>
+    <div>
+      <PageHeader
+        title="Clients"
+        description="The client register for your outlets: corporate subscribers and event bookings."
+        actions={
+          canEdit && (
+            <LinkButton to="/clients/new">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              New client
+            </LinkButton>
+          )
+        }
+      />
 
-      {/* Filters */}
-      <Card>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Input
-            placeholder="Search by name or phone..."
-            value={filters.search || ''}
-            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-          />
+      {/* Filters stay mounted while the list reloads */}
+      <Card padding="sm" className="mb-4">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end">
+          <div className="relative md:flex-1">
+            <Input
+              label="Search"
+              type="search"
+              placeholder="Name or phone"
+              value={filters.search || ''}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+              className="pl-9"
+            />
+            <Search className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-ink-faint" aria-hidden="true" />
+          </div>
 
-          <Select
-            value={filters.client_type || ''}
-            onChange={(e) =>
-              setFilters({
-                ...filters,
-                client_type: e.target.value as any,
-              })
-            }
-            options={[
-              { value: '', label: 'All Types' },
-              { value: 'corporate', label: 'Corporate' },
-              { value: 'event', label: 'Event' },
-            ]}
-          />
+          <div className="md:w-48">
+            <Select
+              label="Type"
+              value={filters.client_type || ''}
+              onChange={(e) =>
+                setFilters({
+                  ...filters,
+                  client_type: (e.target.value || undefined) as ClientType | undefined,
+                })
+              }
+              options={[
+                { value: '', label: 'All types' },
+                { value: 'corporate', label: 'Corporate' },
+                { value: 'event', label: 'Event' },
+              ]}
+            />
+          </div>
 
-          <Select
-            value={filters.is_active ? 'true' : 'false'}
-            onChange={(e) =>
-              setFilters({
-                ...filters,
-                is_active: e.target.value === 'true',
-              })
-            }
-            options={[
-              { value: 'true', label: 'Active' },
-              { value: 'false', label: 'Inactive' },
-            ]}
-          />
+          <div role="group" aria-labelledby="client-status-label" className="shrink-0">
+            <span id="client-status-label" className="mb-1.5 block text-sm font-semibold text-ink">
+              Status
+            </span>
+            <div className="inline-flex h-10 rounded-lg border border-rule-strong bg-paper-sunk p-0.5">
+              {([true, false] as const).map((active) => {
+                const pressed = filters.is_active === active;
+                return (
+                  <button
+                    key={String(active)}
+                    type="button"
+                    aria-pressed={pressed}
+                    onClick={() => setFilters({ ...filters, is_active: active })}
+                    className={cn(
+                      'rounded-md px-4 text-sm font-semibold transition-colors',
+                      'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-logo',
+                      pressed ? 'bg-white text-ink shadow-sheet' : 'text-ink-muted hover:text-ink'
+                    )}
+                  >
+                    {active ? 'Active' : 'Inactive'}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </Card>
 
-      {/* Error */}
-      {error && <Alert variant="error">{error}</Alert>}
+      {/* Count line */}
+      <div className="mb-3 min-h-[1.5rem] text-sm text-ink-muted" aria-live="polite">
+        {isLoading ? (
+          <Skeleton className="inline-block h-4 w-40 align-middle" />
+        ) : error ? null : (
+          <>
+            <span className="tabular font-semibold text-ink">{count(clients.length)}</span>{' '}
+            {statusWord}
+            {typeWord} client{clients.length === 1 ? '' : 's'}
+            {debouncedSearch.trim() ? ` matching “${debouncedSearch.trim()}”` : ''}
+          </>
+        )}
+      </div>
 
-      {/* Loading */}
-      {isLoading && (
-        <div className="flex justify-center py-12">
-          <Spinner size="lg" />
-        </div>
-      )}
+      {error && <Alert variant="error" className="mb-4">{error}</Alert>}
 
-      {/* Empty State */}
-      {!isLoading && !error && clients.length === 0 && (
-        <Card>
-          <EmptyState
-            icon={Users}
-            title="No clients found"
-            description={!isAccountant ? "Create your first client to get started." : "No clients match your current filters."}
-            action={!isAccountant ? { label: 'Add Client', onClick: () => navigate('/clients/new') } : undefined}
-          />
-        </Card>
-      )}
-
-      {/* Clients Table */}
-      {!isLoading && !error && clients.length > 0 && (
-        <Card padding="none">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-brand-bg border-b border-brand-border">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Client Name
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Type
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Phone
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Outlet
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-brand-border">
-                {clients.map((client) => (
-                  <tr key={client.id} className="hover:bg-brand-primary/5">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-brand-text">
-                        {client.name}
-                      </div>
-                      {client.contact_person && (
-                        <div className="text-sm text-brand-text/70">
-                          {client.contact_person}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <Badge
-                        variant={
-                          client.client_type === 'corporate'
-                            ? 'info'
-                            : 'warning'
-                        }
-                      >
-                        {client.client_type}
-                      </Badge>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-brand-text">
-                      {client.phone}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-brand-text">
-                      {client.outlets?.name || '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <Badge
-                        variant={client.is_active ? 'success' : 'danger'}
-                      >
-                        {client.is_active ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                      <Link
-                        to={`/clients/${client.id}`}
-                        className="text-brand-primary hover:text-brand-primaryDark"
-                      >
-                        View
-                      </Link>
-                      {!isAccountant && (
-                        <Link
-                          to={`/clients/${client.id}/edit`}
-                          className="text-brand-primary hover:text-brand-primaryDark"
-                        >
-                          Edit
-                        </Link>
-                      )}
-                    </td>
+      {!error && (
+        <Card padding="none" className="overflow-hidden">
+          {isLoading ? (
+            <TableSkeleton rows={6} cols={6} />
+          ) : clients.length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title={isFiltered ? 'No clients match these filters' : filters.is_active ? 'No active clients yet' : 'No inactive clients'}
+              description={
+                isFiltered
+                  ? 'Try a different name or phone number, or clear the type filter.'
+                  : filters.is_active
+                    ? canEdit
+                      ? 'Register a client to start raising invoices and sending dishware.'
+                      : 'Clients registered at your outlets will be listed here.'
+                    : 'Clients you deactivate are kept here, with their history intact.'
+              }
+              action={canEdit ? { label: 'New client', onClick: () => navigate('/clients/new') } : undefined}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="ledger">
+                <thead>
+                  <tr>
+                    <th scope="col">Client</th>
+                    <th scope="col">Contact</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Outlet</th>
+                    <th scope="col">Status</th>
+                    {canEdit && <th scope="col" data-nolabel className="w-px"><span className="sr-only">Actions</span></th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {clients.map((client) => (
+                    <tr key={client.id} className={client.is_active ? undefined : 'row-void'}>
+                      <td className="max-w-[18rem]">
+                        <Link
+                          to={`/clients/${client.id}`}
+                          className="inline-block max-w-full truncate align-top font-semibold text-ink hover:text-brand-primary"
+                        >
+                          {client.name}
+                        </Link>
+                      </td>
+                      <td className="max-w-[16rem]">
+                        <div className="min-w-0">
+                          <span className="block truncate">{client.contact_person || '—'}</span>
+                          {client.phone && (
+                            <span className="tabular block whitespace-nowrap text-ink-muted">{formatPhone(client.phone)}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td><ClientTypeBadge type={client.client_type} /></td>
+                      <td className="cell-hide-sm whitespace-nowrap">{client.outlets?.name || '—'}</td>
+                      <td><ClientActiveBadge active={client.is_active} /></td>
+                      {canEdit && (
+                        <td className="text-right">
+                          <Link
+                            to={`/clients/${client.id}/edit`}
+                            className="text-sm font-semibold text-brand-primary hover:underline"
+                            aria-label={`Edit ${client.name}`}
+                          >
+                            Edit
+                          </Link>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Card>
       )}
     </div>

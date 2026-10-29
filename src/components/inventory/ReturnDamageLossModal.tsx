@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
 import { Textarea } from '@/components/ui/Textarea';
+import { ChoiceGroup, FactWell, ModalActions } from './ModalParts';
 import {
   returnInventoryV2,
   writeOffInventoryV2,
@@ -66,6 +66,7 @@ export default function ReturnDamageLossModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setError(null);
 
     // Validation
@@ -133,77 +134,81 @@ export default function ReturnDamageLossModal({
     }
   }
 
+  const actionLabel =
+    actionType === 'return' ? 'Receive back' : actionType === 'damage' ? 'Mark damaged' : 'Mark lost';
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Process Return"
+      title="Receive back"
+      description="Record what came back in good condition, what came back damaged, and what was lost."
+      dismissable={!loading}
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <Alert variant="error">{error}</Alert>}
 
-        {/* Item Info */}
-        <div className="bg-muted p-4 rounded">
-          <p className="text-sm text-muted-foreground">Item</p>
-          <p className="font-semibold">{itemName}</p>
-          <p className="text-sm text-muted-foreground mt-2">Pending Return</p>
-          <p className="text-lg font-bold text-orange-600">{outstandingQuantity}</p>
-        </div>
+        <FactWell
+          eyebrow="Item"
+          title={itemName}
+          facts={[{ label: 'Still out', value: outstandingQuantity, tone: 'partial' }]}
+        />
 
-        {/* Action Type */}
-        <Select
-          label="Action"
+        <ChoiceGroup<'return' | 'damage' | 'loss'>
+          legend="What happened"
+          name="return-action"
           value={actionType}
-          onChange={(e) => setActionType(e.target.value as 'return' | 'damage' | 'loss')}
-          required
-        >
-          <option value="return">Return (Good Condition)</option>
-          <option value="damage">Mark as Damaged</option>
-          <option value="loss">Mark as Lost</option>
-        </Select>
+          onChange={setActionType}
+          options={[
+            { value: 'return', label: 'Returned', hint: 'Good condition', tone: 'final' },
+            { value: 'damage', label: 'Damaged', hint: 'Back, not usable', tone: 'partial' },
+            { value: 'loss', label: 'Lost', hint: 'Not coming back', tone: 'overdue' },
+          ]}
+        />
 
-        {/* Quantity */}
         <Input
           type="number"
-          label="Quantity"
+          inputMode="numeric"
+          label="Pieces"
           value={quantity}
           onChange={(e) => setQuantity(e.target.value)}
           min="1"
           max={outstandingQuantity}
           required
-          placeholder={`Max: ${outstandingQuantity}`}
+          placeholder={`Up to ${outstandingQuantity}`}
+          className="tabular"
         />
 
-        {/* Notes */}
         <Textarea
-          label={actionType === 'return' ? 'Notes (optional)' : 'Notes (required)'}
+          label="Notes"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder={
             actionType === 'return'
-              ? 'Optional notes about the return'
-              : 'Explain what happened (mandatory)'
+              ? 'Anything worth recording about the return'
+              : 'Explain what happened'
           }
+          helperText={actionType === 'return' ? 'Optional' : 'Required for damage and loss'}
           required={actionType !== 'return'}
-          rows={4}
+          rows={3}
         />
 
         {actionType !== 'return' && (
           <Alert variant="warning">
-            <strong>Note:</strong> {actionType === 'damage' ? 'Damaged' : 'Lost'} items will be
-            tracked separately and reduce available stock.
+            {actionType === 'damage'
+              ? "Damaged pieces come off this client's outstanding count and move to damaged stock."
+              : "Lost pieces come off this client's outstanding count and are removed from total stock."}
           </Alert>
         )}
 
-        {/* Buttons */}
-        <div className="flex justify-end gap-2 pt-4">
+        <ModalActions>
           <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
             Cancel
           </Button>
-          <Button type="submit" disabled={loading}>
-            {loading ? 'Processing...' : actionType === 'return' ? 'Process Return' : `Mark as ${actionType}`}
+          <Button type="submit" isLoading={loading} variant={actionType === 'loss' ? 'danger' : 'primary'}>
+            {loading ? 'Saving…' : actionLabel}
           </Button>
-        </div>
+        </ModalActions>
       </form>
     </Modal>
   );

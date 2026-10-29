@@ -1,9 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Users, Plus, Power, MapPin } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { supabase } from '@/lib/supabase';
 import {
   getUsers,
+  getAllOutletAssignments,
+  getUserOutletIds,
   createUser,
   toggleUserActive,
   assignUserOutlets,
@@ -13,6 +17,15 @@ import {
 import { AddEditUserModal, type UserFormData } from '@/components/admin/AddEditUserModal';
 import { ConfirmationModal } from '@/components/admin/ConfirmationModal';
 import type { Outlet } from '@/types';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Alert } from '@/components/ui/Alert';
+import { Badge, type BadgeVariant } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Modal } from '@/components/ui/Modal';
+import { Skeleton, TableSkeleton } from '@/components/ui/Spinner';
+import { cn } from '@/utils/cn';
+import { formatDateTime } from '@/utils/format';
 
 // ================================================================
 // USERS MANAGEMENT PAGE (ADMIN ONLY)
@@ -20,9 +33,17 @@ import type { Outlet } from '@/types';
 // Manage all users, roles, and outlet assignments
 // ================================================================
 
+const ROLE_LABEL: Record<string, string> = { admin: 'Admin', manager: 'Manager', accountant: 'Accountant' };
+const ROLE_VARIANT: Record<string, BadgeVariant> = { admin: 'paid', manager: 'final', accountant: 'info' };
+
 export default function UsersManagementPage() {
+  useDocumentTitle('Users');
+
   const { user } = useAuth();
+  const userId = user?.id;
+  const { showToast } = useToast();
   const [users, setUsers] = useState<UserSummary[]>([]);
+  const [assignmentsByUser, setAssignmentsByUser] = useState<Record<string, string[]>>({});
   const [allOutlets, setAllOutlets] = useState<Outlet[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,46 +55,49 @@ export default function UsersManagementPage() {
   const [selectedUser, setSelectedUser] = useState<UserSummary | null>(null);
   const [toggleAction, setToggleAction] = useState<'activate' | 'deactivate'>('deactivate');
 
-  useEffect(() => {
-    loadUsers();
-    loadOutlets();
-  }, [user]);
-
-  async function loadUsers() {
-    if (!user?.id) return;
+  const loadUsers = useCallback(async () => {
+    if (!userId) return;
 
     try {
       setLoading(true);
       setError(null);
-      const data = await getUsers(user.id);
+      const [data, assignments] = await Promise.all([
+        getUsers(userId),
+        getAllOutletAssignments(userId),
+      ]);
       setUsers(data);
+      setAssignmentsByUser(assignments);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load users');
     } finally {
       setLoading(false);
     }
-  }
+  }, [userId]);
 
-  async function loadOutlets() {
-    try {
-      const { data, error: outletsError } = await supabase
-        .from('outlets')
-        .select('*')
-        .order('name');
+  const loadOutlets = useCallback(async () => {
+    const { data, error: outletsError } = await supabase
+      .from('outlets')
+      .select('*')
+      .order('name');
 
-      if (outletsError) {
-        console.error('Error fetching outlets:', outletsError);
-        return;
-      }
-
-      setAllOutlets(data || []);
-    } catch (err) {
-      console.error('Error loading outlets:', err);
+    if (outletsError) {
+      showToast(`Failed to load outlets: ${outletsError.message}`, 'error');
+      return;
     }
-  }
+
+    setAllOutlets(data || []);
+  }, [showToast]);
+
+  // Keyed on the user id, not the user object, so token refreshes don't
+  // refetch and unmount open modals.
+  useEffect(() => {
+    if (!userId) return;
+    loadUsers();
+    loadOutlets();
+  }, [userId, loadUsers, loadOutlets]);
 
   async function handleCreateUser(formData: UserFormData) {
-    if (!user?.id) return;
+    if (!userId) return;
 
     const input: CreateUserInput = {
       email: formData.email,
@@ -83,27 +107,39 @@ export default function UsersManagementPage() {
       outlet_ids: formData.outlet_ids,
     };
 
-    await createUser(user.id, input);
+    await createUser(userId, input);
     await loadUsers();
   }
 
   async function handleToggleStatus() {
-    if (!user?.id || !selectedUser) return;
+    if (!userId || !selectedUser) return;
 
     const newStatus = toggleAction === 'activate';
-    await toggleUserActive(user.id, selectedUser.user_id, newStatus);
-    await loadUsers();
+    // A failure is thrown to ConfirmationModal, which stays open and shows it inline.
+    try {
+      await toggleUserActive(userId, selectedUser.user_id, newStatus);
+    } catch (err) {
+      throw err instanceof Error ? err : new Error(`Failed to ${toggleAction} user`);
+    }
+
+    showToast(
+      `${selectedUser.full_name} ${newStatus ? 'activated' : 'deactivated'}`,
+      'success'
+    );
     setIsToggleModalOpen(false);
     setSelectedUser(null);
+    await loadUsers();
   }
 
+  // Errors propagate to AssignOutletsModal, which shows them inline
   async function handleAssignOutlets(outletIds: string[]) {
-    if (!user?.id || !selectedUser) return;
+    if (!userId || !selectedUser) return;
 
-    await assignUserOutlets(user.id, selectedUser.user_id, outletIds);
-    await loadUsers();
+    await assignUserOutlets(userId, selectedUser.user_id, outletIds);
+    showToast(`Outlets updated for ${selectedUser.full_name}`, 'success');
     setIsAssignModalOpen(false);
     setSelectedUser(null);
+    await loadUsers();
   }
 
   function openToggleModal(targetUser: UserSummary, action: 'activate' | 'deactivate') {
@@ -112,183 +148,168 @@ export default function UsersManagementPage() {
     setIsToggleModalOpen(true);
   }
 
-  const getRoleBadgeColor = (role: string) => {
-    switch (role) {
-      case 'admin':
-        return 'bg-brand-deep/20 text-brand-deep';
-      case 'manager':
-        return 'bg-brand-primary/20 text-brand-primary';
-      case 'accountant':
-        return 'bg-brand-primary/20 text-brand-primary';
-      default:
-        return 'bg-brand-border/50 text-brand-text';
-    }
-  };
+  const outletActive = (outletId: string) =>
+    allOutlets.find((o) => o.id === outletId)?.is_active ?? true;
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto"></div>
-          <p className="mt-4 text-brand-text/70">Loading users...</p>
-        </div>
-      </div>
-    );
-  }
+  const outletName = (outletId: string) => allOutlets.find((o) => o.id === outletId);
+
+  const first = loading && users.length === 0;
+  const n = (v: number) => new Intl.NumberFormat('en-IN').format(v);
+  const activeCount = users.filter((u) => u.is_active).length;
+  const adminCount = users.filter((u) => u.role === 'admin' && u.is_active).length;
+  const managerCount = users.filter((u) => u.role === 'manager' && u.is_active).length;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Users className="w-8 h-8" />
-            User Management
-          </h1>
-          <p className="text-brand-text/70 mt-1">
-            Manage users, roles, and outlet assignments
-          </p>
-        </div>
-        <button
-          onClick={() => setIsAddModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark"
-        >
-          <Plus className="w-5 h-5" />
-          Add User
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        title="Users"
+        description="Everyone who can sign in, their role, and which outlets each manager can see."
+        actions={
+          <Button type="button" onClick={() => setIsAddModalOpen(true)}>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Add user
+          </Button>
+        }
+      />
 
-      {error && (
-        <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      )}
+      {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Total Users</p>
-          <p className="text-2xl font-bold text-brand-text">{users.length}</p>
+      <section className="sheet overflow-hidden" aria-labelledby="users-h">
+        <div className="border-b border-rule px-5 py-4">
+          <h2 id="users-h" className="text-lg font-semibold text-ink">All users</h2>
+          {first ? (
+            <Skeleton className="mt-1.5 h-4 w-64 max-w-full" />
+          ) : (
+            <p className="tabular text-sm text-ink-muted">
+              {n(users.length)} user{users.length === 1 ? '' : 's'} · {n(activeCount)} active · {n(adminCount)} admin
+              {adminCount === 1 ? '' : 's'} · {n(managerCount)} manager{managerCount === 1 ? '' : 's'}
+            </p>
+          )}
         </div>
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Active Users</p>
-          <p className="text-2xl font-bold text-brand-primary">
-            {users.filter((u) => u.is_active).length}
-          </p>
-        </div>
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Admins</p>
-          <p className="text-2xl font-bold text-brand-text">
-            {users.filter((u) => u.role === 'admin' && u.is_active).length}
-          </p>
-        </div>
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Managers</p>
-          <p className="text-2xl font-bold text-brand-primary">
-            {users.filter((u) => u.role === 'manager' && u.is_active).length}
-          </p>
-        </div>
-      </div>
 
-      {/* Users Table */}
-      <div className="bg-white rounded-lg border border-brand-border overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-brand-bg border-b border-brand-border">
-              <tr>
-                <th className="text-left py-3 px-4 font-medium text-brand-text">Name</th>
-                <th className="text-left py-3 px-4 font-medium text-brand-text">Email</th>
-                <th className="text-left py-3 px-4 font-medium text-brand-text">Role</th>
-                <th className="text-left py-3 px-4 font-medium text-brand-text">Outlets</th>
-                <th className="text-left py-3 px-4 font-medium text-brand-text">Status</th>
-                <th className="text-left py-3 px-4 font-medium text-brand-text">Last Login</th>
-                <th className="text-right py-3 px-4 font-medium text-brand-text">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-border">
-              {users.map((u) => (
-                <tr key={u.user_id} className="hover:bg-brand-primary/5">
-                  <td className="py-3 px-4 font-medium">{u.full_name}</td>
-                  <td className="py-3 px-4 text-sm text-brand-text/80">
-                    {u.email}
-                  </td>
-                  <td className="py-3 px-4">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getRoleBadgeColor(
-                        u.role
-                      )}`}
-                    >
-                      {u.role.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-sm">
-                    {u.role === 'manager' ? (
-                      u.assigned_outlets.length > 0 ? (
-                        <span className="text-brand-text/80">
-                          {u.assigned_outlets.length} outlet(s)
-                        </span>
-                      ) : (
-                        <span className="text-red-600 dark:text-red-400">No outlets</span>
-                      )
-                    ) : (
-                      <span className="text-brand-text/60">-</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4">
-                    {u.is_active ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-brand-primary/20 text-brand-primary">
-                        Active
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                        Inactive
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-sm text-brand-text/80">
-                    {u.last_login
-                      ? new Date(u.last_login).toLocaleDateString()
-                      : 'Never'}
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center justify-end gap-2">
-                      {u.role === 'manager' && (
-                        <button
-                          onClick={() => {
-                            setSelectedUser(u);
-                            setIsAssignModalOpen(true);
-                          }}
-                          className="p-1.5 text-brand-primary hover:bg-brand-primary/10 rounded"
-                          title="Assign Outlets"
-                        >
-                          <MapPin className="w-4 h-4" />
-                        </button>
-                      )}
-                      {u.is_active ? (
-                        <button
-                          onClick={() => openToggleModal(u, 'deactivate')}
-                          className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                          title="Deactivate User"
-                        >
-                          <Power className="w-4 h-4" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => openToggleModal(u, 'activate')}
-                          className="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded"
-                          title="Activate User"
-                        >
-                          <Power className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
+        {first ? (
+          <TableSkeleton rows={6} cols={5} />
+        ) : users.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title="No users found"
+            description="Users are added in Supabase. Add user shows the steps."
+            action={{ label: 'Add user', onClick: () => setIsAddModalOpen(true) }}
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="ledger">
+              <thead>
+                <tr>
+                  <th scope="col">Name</th>
+                  <th scope="col">Role</th>
+                  <th scope="col">Outlets</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Last login</th>
+                  <th scope="col" data-nolabel className="w-px text-right"><span className="sr-only">Actions</span></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              </thead>
+              <tbody>
+                {users.map((u) => {
+                  const assigned = assignmentsByUser[u.user_id] ?? [];
+                  const inactiveCount = assigned.filter((id) => !outletActive(id)).length;
+                  const isSelf = u.user_id === userId;
+                  const names = assigned.map((id) => outletName(id)?.name).filter(Boolean) as string[];
+
+                  return (
+                    <tr key={u.user_id} className={cn(!u.is_active && 'row-void')}>
+                      <td className="min-w-[14rem]">
+                        <div className="inline-block max-w-full align-top">
+                          <div className={cn('font-semibold', u.is_active ? 'text-ink' : 'text-void')}>
+                            {u.full_name}
+                            {isSelf && <span className="ml-2 text-xs font-normal text-ink-muted">(you)</span>}
+                          </div>
+                          <div className="break-all text-sm text-ink-muted">{u.email}</div>
+                        </div>
+                      </td>
+                      <td>
+                        <Badge variant={ROLE_VARIANT[u.role] ?? 'default'}>{ROLE_LABEL[u.role] ?? u.role}</Badge>
+                      </td>
+                      <td className="min-w-[10rem]">
+                        {u.role === 'manager' ? (
+                          assigned.length > 0 ? (
+                            <span className="text-ink">
+                              {names.length === assigned.length && names.length <= 2
+                                ? names.join(', ')
+                                : `${n(assigned.length)} outlet${assigned.length === 1 ? '' : 's'}`}
+                              {inactiveCount > 0 && (
+                                <span className="text-ink-muted"> ({inactiveCount} inactive)</span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="font-semibold text-danger">No outlets</span>
+                          )
+                        ) : (
+                          <span className="text-ink-muted">All outlets</span>
+                        )}
+                      </td>
+                      <td>
+                        {u.is_active ? <Badge variant="final">Active</Badge> : <Badge variant="void">Inactive</Badge>}
+                      </td>
+                      <td className="whitespace-nowrap text-ink-muted">
+                        {u.last_login
+                          ? formatDateTime(u.last_login)
+                          : 'Never'}
+                      </td>
+                      <td>
+                        <div className="flex items-center justify-end gap-1">
+                          {u.role === 'manager' && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedUser(u);
+                                setIsAssignModalOpen(true);
+                              }}
+                              aria-label={`Assign outlets to ${u.full_name}`}
+                            >
+                              <MapPin className="h-4 w-4" aria-hidden="true" />
+                              Outlets
+                            </Button>
+                          )}
+                          {/* You cannot deactivate your own account */}
+                          {u.is_active && !isSelf && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openToggleModal(u, 'deactivate')}
+                              className="text-danger hover:bg-danger-tint hover:text-danger"
+                              aria-label={`Deactivate ${u.full_name}`}
+                            >
+                              <Power className="h-4 w-4" aria-hidden="true" />
+                              Deactivate
+                            </Button>
+                          )}
+                          {!u.is_active && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openToggleModal(u, 'activate')}
+                              className="text-brand-primary hover:text-brand-primaryDark"
+                              aria-label={`Activate ${u.full_name}`}
+                            >
+                              <Power className="h-4 w-4" aria-hidden="true" />
+                              Activate
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* Add User Modal */}
       <AddEditUserModal
@@ -296,7 +317,6 @@ export default function UsersManagementPage() {
         onClose={() => setIsAddModalOpen(false)}
         onSubmit={handleCreateUser}
         outlets={allOutlets}
-        mode="create"
       />
 
       {/* Toggle Status Confirmation */}
@@ -307,7 +327,7 @@ export default function UsersManagementPage() {
           setSelectedUser(null);
         }}
         onConfirm={handleToggleStatus}
-        title={toggleAction === 'activate' ? 'Activate User' : 'Deactivate User'}
+        title={toggleAction === 'activate' ? 'Activate user?' : 'Deactivate user?'}
         message={
           toggleAction === 'activate'
             ? `Are you sure you want to activate ${selectedUser?.full_name}?`
@@ -318,14 +338,14 @@ export default function UsersManagementPage() {
       />
 
       {/* Assign Outlets Modal */}
-      {isAssignModalOpen && selectedUser && (
+      {isAssignModalOpen && selectedUser && userId && (
         <AssignOutletsModal
-          isOpen={isAssignModalOpen}
           onClose={() => {
             setIsAssignModalOpen(false);
             setSelectedUser(null);
           }}
           onSubmit={handleAssignOutlets}
+          adminUserId={userId}
           user={selectedUser}
           outlets={allOutlets}
         />
@@ -337,109 +357,148 @@ export default function UsersManagementPage() {
 // ================================================================
 // ASSIGN OUTLETS MODAL (INLINE)
 // ================================================================
+// Loads and pre-selects the manager's current assignments, because saving
+// replaces the whole set.
+// ================================================================
 
 interface AssignOutletsModalProps {
-  isOpen: boolean;
   onClose: () => void;
   onSubmit: (outletIds: string[]) => Promise<void>;
+  adminUserId: string;
   user: UserSummary;
-  outlets: any[];
+  outlets: Outlet[];
 }
 
 function AssignOutletsModal({
-  isOpen,
   onClose,
   onSubmit,
+  adminUserId,
   user,
   outlets,
 }: AssignOutletsModalProps) {
   const [selectedOutlets, setSelectedOutlets] = useState<string[]>([]);
+  const [loadingCurrent, setLoadingCurrent] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const targetUserId = user.user_id;
+
   useEffect(() => {
-    if (isOpen) {
-      // Initialize with current outlet assignments
-      // Note: user.assigned_outlets is string[] of outlet names, need to map to IDs
-      setSelectedOutlets([]);
-    }
-  }, [isOpen, user]);
+    let cancelled = false;
+    setLoadingCurrent(true);
+    setLoadError(null);
+    getUserOutletIds(adminUserId, targetUserId)
+      .then((ids) => {
+        if (!cancelled) setSelectedOutlets(ids);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setLoadError(err instanceof Error ? err.message : 'Failed to load current assignments');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCurrent(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [adminUserId, targetUserId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting || loadingCurrent || loadError) return;
+    setError(null);
 
     if (selectedOutlets.length === 0) {
-      alert('Please select at least one outlet for this manager');
+      setError('Select at least one outlet. A manager needs an outlet to see any data; to remove all access, deactivate the user instead.');
       return;
     }
 
     try {
       setIsSubmitting(true);
       await onSubmit(selectedOutlets);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save assignments');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (!isOpen) return null;
+  // Active outlets, plus any inactive outlet the manager is still assigned to
+  const visibleOutlets = outlets.filter(
+    (o) => o.is_active || selectedOutlets.includes(o.id)
+  );
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="flex items-center justify-between p-4 border-b border-brand-border">
-          <h2 className="text-lg font-semibold text-brand-text">Assign Outlets</h2>
-          <button onClick={onClose} className="text-brand-text/60 hover:text-brand-text">
-            <Users className="w-5 h-5" />
-          </button>
-        </div>
+    <Modal
+      isOpen
+      onClose={onClose}
+      title="Assign outlets"
+      description={`Outlets ${user.full_name} can see. Saving replaces the current list.`}
+      maxWidth="md"
+      dismissable={!isSubmitting}
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {loadError && (
+          <Alert variant="error">
+            {loadError}. Close and try again; saving is disabled so existing assignments are not lost.
+          </Alert>
+        )}
+        {error && <Alert variant="error">{error}</Alert>}
 
-        <form onSubmit={handleSubmit} className="p-6">
-          <p className="text-sm text-brand-text/70 mb-4">
-            Assign outlets to <strong>{user.full_name}</strong>
-          </p>
-
-          <div className="border border-brand-border rounded-md p-3 space-y-2 max-h-60 overflow-y-auto">
-            {outlets
-              .filter((o) => o.is_active)
-              .map((outlet) => (
-                <label key={outlet.id} className="flex items-center gap-2 cursor-pointer">
+        <fieldset disabled={isSubmitting || !!loadError}>
+          <legend className="mb-1.5 text-sm font-semibold text-ink">
+            Outlets<span className="ml-0.5 text-danger" aria-hidden="true">*</span>
+            <span className="ml-2 font-normal text-ink-muted">at least one</span>
+          </legend>
+          <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg border border-rule-strong p-2" aria-busy={loadingCurrent || undefined}>
+            {loadingCurrent ? (
+              <div className="space-y-3 p-2" role="status" aria-label="Loading current assignments">
+                {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-5" />)}
+              </div>
+            ) : visibleOutlets.length === 0 ? (
+              <p className="px-2 py-3 text-sm text-ink-muted">No active outlets to assign.</p>
+            ) : (
+              visibleOutlets.map((outlet) => (
+                <label
+                  key={outlet.id}
+                  className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-sm text-ink hover:bg-paper"
+                >
                   <input
                     type="checkbox"
                     checked={selectedOutlets.includes(outlet.id)}
+                    disabled={isSubmitting || !!loadError}
                     onChange={(e) => {
+                      setError(null);
                       if (e.target.checked) {
                         setSelectedOutlets([...selectedOutlets, outlet.id]);
                       } else {
                         setSelectedOutlets(selectedOutlets.filter((id) => id !== outlet.id));
                       }
                     }}
-                    className="rounded"
+                    className="h-4 w-4 shrink-0 rounded accent-brand-primary"
                   />
-                  <span className="text-sm">
-                    {outlet.name} ({outlet.code})
+                  <span className="min-w-0 flex-1">
+                    {outlet.name}
+                    {!outlet.is_active && <span className="text-ink-muted"> (inactive)</span>}
                   </span>
+                  <span className="serial text-ink-muted">{outlet.code}</span>
                 </label>
-              ))}
+              ))
+            )}
           </div>
+        </fieldset>
 
-          <div className="flex items-center justify-end gap-3 mt-6">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-4 py-2 border border-brand-border rounded-md hover:bg-brand-bg"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark disabled:opacity-50"
-            >
-              {isSubmitting ? 'Saving...' : 'Save Assignments'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div className="flex flex-col-reverse gap-2 border-t border-rule pt-4 sm:flex-row sm:justify-end">
+          <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+            Cancel
+          </Button>
+          <Button type="submit" isLoading={isSubmitting} disabled={loadingCurrent || !!loadError}>
+            {isSubmitting ? 'Saving…' : 'Save outlets'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

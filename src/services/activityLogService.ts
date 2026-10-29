@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import Papa from 'papaparse';
+import { toCsv } from '@/utils/csv';
 
 // ================================================================
 // ACTIVITY LOG SERVICE
@@ -13,12 +13,17 @@ import Papa from 'papaparse';
 // - CSV must match table exactly
 // ================================================================
 
+/** Rows per page on the Activity log (PostgREST caps a response at 1000). */
+export const ACTIVITY_LOG_PAGE_SIZE = 100;
+
 export interface ActivityLogFilters {
   outlet_id?: string;
   user_id?: string;
   module?: string;
   action_type?: string;
+  /** Local (IST) calendar date, YYYY-MM-DD, inclusive */
   date_from?: string;
+  /** Local (IST) calendar date, YYYY-MM-DD, inclusive */
   date_to?: string;
 }
 
@@ -32,6 +37,52 @@ export interface ActivityLogEntry {
   action_type: string;
   entity_id: string;
   description: string;
+}
+
+export interface ActivityLogResult {
+  rows: ActivityLogEntry[];
+  /** Total matching rows in the view (may exceed rows.length). */
+  total: number;
+}
+
+// ----------------------------------------------------------------
+// Filter options
+// ----------------------------------------------------------------
+// Derived from admin_activity_log_unified (016) and the source enums, so
+// the dropdowns are complete regardless of which rows are most recent.
+// Update these when the view or the enums change.
+// ----------------------------------------------------------------
+
+const ACTION_TYPES_BY_MODULE: Record<string, string[]> = {
+  event: ['event_created', 'event_status_planned', 'event_status_completed', 'event_status_cancelled'],
+  inventory: [
+    'stock_in',
+    'allocation',
+    'return',
+    'return_damaged',
+    'damage',
+    'loss',
+    'disposal',
+    'send_to_repair',
+    'return_from_repair',
+    'adjustment',
+  ],
+  invoice: ['invoice_subscription', 'invoice_event'],
+  payment: ['payment_cash', 'payment_upi', 'payment_bank_transfer', 'payment_card', 'payment_cheque'],
+  subscription: [
+    'subscription_created',
+    'subscription_status_active',
+    'subscription_status_paused',
+    'subscription_status_cancelled',
+  ],
+};
+
+export const ACTIVITY_MODULES: string[] = Object.keys(ACTION_TYPES_BY_MODULE).sort();
+
+/** Action types for a module, or all of them when no module is chosen. */
+export function getActivityActionTypes(module?: string): string[] {
+  if (module) return ACTION_TYPES_BY_MODULE[module] ?? [];
+  return [...new Set(Object.values(ACTION_TYPES_BY_MODULE).flat())].sort();
 }
 
 /**
@@ -79,25 +130,37 @@ async function getUserRoleAndOutlets(userId: string): Promise<{
   return { role: profile.role, outletIds: null };
 }
 
+/** The calendar day after a YYYY-MM-DD date, as YYYY-MM-DD. */
+function nextCalendarDay(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const n = new Date(Date.UTC(y, m - 1, d + 1));
+  return `${n.getUTCFullYear()}-${String(n.getUTCMonth() + 1).padStart(2, '0')}-${String(n.getUTCDate()).padStart(2, '0')}`;
+}
+
 /**
- * Get activity logs (role-based filtering)
+ * Get one page of activity logs (role-based filtering), newest first,
+ * with the total matching count.
  */
 export async function getActivityLogs(
   userId: string,
-  filters: ActivityLogFilters = {}
-): Promise<ActivityLogEntry[]> {
+  filters: ActivityLogFilters = {},
+  { page = 0, pageSize = ACTIVITY_LOG_PAGE_SIZE }: { page?: number; pageSize?: number } = {}
+): Promise<ActivityLogResult> {
   const roleData = await getUserRoleAndOutlets(userId);
 
   let query = supabase
     .from('admin_activity_log_unified')
-    .select('*')
+    .select('*', { count: 'exact' })
+    // Tie-breakers keep the order stable across pages when timestamps repeat
     .order('occurred_at', { ascending: false })
-    .limit(1000); // Limit for performance
+    .order('module')
+    .order('action_type')
+    .order('entity_id');
 
   // Manager: Filter by assigned outlets
   if (roleData.role === 'manager' && roleData.outletIds) {
     if (roleData.outletIds.length === 0) {
-      return []; // No outlets assigned
+      return { rows: [], total: 0 }; // No outlets assigned
     }
     query = query.in('outlet_id', roleData.outletIds);
   }
@@ -122,133 +185,46 @@ export async function getActivityLogs(
     query = query.eq('action_type', filters.action_type);
   }
 
-  // Date range filters
+  // Date range: whole IST calendar days. occurred_at is timestamptz, so a bare
+  // 'YYYY-MM-DD' would mean UTC midnight (05:30 IST).
   if (filters.date_from) {
-    query = query.gte('occurred_at', filters.date_from);
+    query = query.gte('occurred_at', `${filters.date_from}T00:00:00+05:30`);
   }
   if (filters.date_to) {
-    query = query.lte('occurred_at', filters.date_to);
+    query = query.lt('occurred_at', `${nextCalendarDay(filters.date_to)}T00:00:00+05:30`);
   }
 
-  const { data, error } = await query;
+  const from = page * pageSize;
+  const { data, error, count } = await query.range(from, from + pageSize - 1);
 
   if (error) {
     throw new Error(`Failed to fetch activity logs: ${error.message}`);
   }
 
-  return data || [];
+  const rows = data || [];
+  return { rows, total: count ?? rows.length };
 }
 
 /**
- * Export activity logs as CSV (role-based filtering)
+ * Build the activity-log CSV from rows already on screen
+ * (formula-injection safe via @/utils/csv).
  */
-export async function exportActivityLogsCSV(
-  userId: string,
-  filters: ActivityLogFilters = {}
-): Promise<string> {
-  const data = await getActivityLogs(userId, filters);
-
-  // Map to CSV-friendly format
-  const csvData = data.map(row => ({
-    'Date': new Date(row.occurred_at).toLocaleDateString(),
-    'Time': new Date(row.occurred_at).toLocaleTimeString(),
-    'User': row.user_name || 'System',
-    'Outlet': row.outlet_name,
-    'Module': row.module.toUpperCase(),
-    'Action': row.action_type.replace(/_/g, ' ').toUpperCase(),
-    'Description': row.description,
-  }));
-
-  return Papa.unparse(csvData);
-}
-
-/**
- * Get available modules (for filter dropdowns)
- */
-export async function getActivityModules(userId: string): Promise<string[]> {
-  const roleData = await getUserRoleAndOutlets(userId);
-
-  let query = supabase
-    .from('admin_activity_log_unified')
-    .select('module');
-
-  // Manager: Filter by assigned outlets
-  if (roleData.role === 'manager' && roleData.outletIds) {
-    if (roleData.outletIds.length === 0) {
-      return [];
-    }
-    query = query.in('outlet_id', roleData.outletIds);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(`Failed to fetch modules: ${error.message}`);
-  }
-
-  // Get unique modules
-  const modules = [...new Set(data?.map(row => row.module) || [])];
-  return modules.sort();
-}
-
-/**
- * Get available action types (for filter dropdowns)
- */
-export async function getActivityActionTypes(
-  userId: string,
-  module?: string
-): Promise<string[]> {
-  const roleData = await getUserRoleAndOutlets(userId);
-
-  let query = supabase
-    .from('admin_activity_log_unified')
-    .select('action_type');
-
-  // Manager: Filter by assigned outlets
-  if (roleData.role === 'manager' && roleData.outletIds) {
-    if (roleData.outletIds.length === 0) {
-      return [];
-    }
-    query = query.in('outlet_id', roleData.outletIds);
-  }
-
-  // Module filter
-  if (module) {
-    query = query.eq('module', module);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(`Failed to fetch action types: ${error.message}`);
-  }
-
-  // Get unique action types
-  const actionTypes = [...new Set(data?.map(row => row.action_type) || [])];
-  return actionTypes.sort();
-}
-
-/**
- * Get activity log statistics (for dashboard cards)
- */
-export async function getActivityLogStats(
-  userId: string,
-  filters: ActivityLogFilters = {}
-): Promise<{
-  total_activities: number;
-  unique_users: number;
-  modules_active: number;
-}> {
-  const data = await getActivityLogs(userId, filters);
-
-  const uniqueUsers = new Set(data.map(row => row.user_id).filter(Boolean));
-  const uniqueModules = new Set(data.map(row => row.module));
-
-  return {
-    total_activities: data.length,
-    unique_users: uniqueUsers.size,
-    modules_active: uniqueModules.size,
-  };
+export function activityLogsToCSV(rows: ActivityLogEntry[]): string {
+  return toCsv(
+    ['Date', 'Time', 'User', 'Outlet', 'Module', 'Action', 'Description'],
+    rows.map((row) => {
+      const at = new Date(row.occurred_at);
+      return [
+        at.toLocaleDateString('en-IN'),
+        at.toLocaleTimeString('en-IN'),
+        row.user_name || 'System',
+        row.outlet_name,
+        row.module.toUpperCase(),
+        row.action_type.replace(/_/g, ' ').toUpperCase(),
+        row.description,
+      ];
+    })
+  );
 }
 
 // PHASE 9 STEP 2 COMPLETE (activityLogService.ts)

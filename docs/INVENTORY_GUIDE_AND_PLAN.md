@@ -1,11 +1,11 @@
-# Inventory Module — How It Works, How to Use It, and the Fix-It Plan
+# Inventory Module — How It Works, How to Use It, and What's Next
 
-_Last updated: 2026-07-08._
+_Last updated: 2026-10-29 (after migrations 042 + 043). Earlier versions of this guide warned that some screens were broken and told you to use only the Item Detail page; that is no longer true. The full reference is [SOFTWARE_OVERVIEW.md §3.9](SOFTWARE_OVERVIEW.md#39-inventory-dishware-stock)._
 
 This document has three parts:
-1. **The mental model** — how Hybits inventory is designed to track dishes.
-2. **How to actually use it today** (and the trap to avoid).
-3. **A plan to make it fully work** for the Hybits unit.
+1. **The mental model** — how Hybits inventory tracks dishes.
+2. **How to use it day to day.**
+3. **What is still missing.**
 
 ---
 
@@ -21,108 +21,96 @@ total = available + allocated + damaged + in_repair
 | Bucket | Meaning |
 |--------|---------|
 | **available** | In the warehouse, ready to send out |
-| **allocated** | Currently out with a client (event/subscription) |
-| **damaged** | Came back broken, not usable yet |
+| **allocated** | Currently out with a client (event/subscription) — shown as "Out" |
+| **damaged** | Broken, not usable yet |
 | **in_repair** | Sent to a repair vendor |
-| **lost** | Gone (client lost / theft / transit) — subtracted from total |
+| **lost** | Gone (client lost / missing at the outlet) — a lifetime counter outside total |
 
-**The golden rule:** you **never type a new stock number directly**. Instead you record a **movement** (stock in, allocate, return, damage, etc.), and the database automatically moves dishes between buckets. This gives you a permanent, audit-proof ledger of every dish's journey. The **Movements** page is that ledger.
+**The golden rule:** you **never type a new stock number directly**. You record a **movement** (stock in, send out, return, damage, etc.), and the database moves dishes between buckets. This gives a permanent, audit-proof ledger of every dish's journey. The **Movements** page is that ledger. Since migration 043 the database itself refuses any direct change to stock numbers, so the ledger is the only way in. Every movement is stamped with the signed-in user who made it.
 
-### The movement types
-| Action | What happens to buckets |
+### The actions
+| Action (button) | What happens to buckets |
 |--------|------------------------|
-| **Add Stock** (purchase / opening balance) | available ↑, total ↑ |
-| **Allocate** (send to event/subscription) | available ↓, allocated ↑ |
-| **Receive Back** (good condition) | allocated ↓, available ↑ |
-| **Mark Damaged** | allocated ↓ (or available ↓), damaged ↑ |
-| **Mark Lost** | allocated ↓, total ↓, lost ↑ |
-| **Send to Repair / Return from Repair** | damaged ↔ in_repair ↔ available |
-| **Dispose** (damaged beyond repair) | damaged ↓, total ↓ |
-| **Adjust** (audit correction) | available ↑/↓ (negative = admin only) |
+| **Add stock** (purchase / opening balance) | available ↑, total ↑ |
+| **Send out / Send dishes** (to an active subscription or planned event) | available ↓, allocated ↑ |
+| **Record return → good** | allocated ↓, available ↑ |
+| **Record return → damaged** (client or transit damage) | allocated ↓, damaged ↑ |
+| **Mark damaged** (warehouse handling damage) | available ↓, damaged ↑ |
+| **Mark lost** (by a client, or missing at the outlet) | allocated ↓ or available ↓, total ↓, lost ↑ |
+| **Dispose damaged** (end of life) | damaged ↓, total ↓ |
+| **Adjust stock** (admin only; count correction up, audit shortage down) | available ↑/↓, total ↑/↓ |
+| Send to repair / return from repair | damaged ↔ in_repair ↔ available — **supported by the database, no button yet** |
 
 ### Item lifecycle
-An item also has a lifecycle status: **draft** (being set up) → **active** (in use, can be allocated) → **discontinued** (phasing out, no new allocations) → **archived** (read-only history). Only **active** items can be allocated to clients.
+An item has a lifecycle status: **draft → active → discontinued → archived**. In practice the app creates items as **active**, and the only lifecycle button is **Deactivate** (→ discontinued: no new dispatches, but returns and write-offs still work). There is no reactivate or archive button. Only active items can be sent out.
 
-There's also an **"opening balance"** concept: when you first create an item you set its starting count; once you make the first allocation, that opening balance **locks** so it can't be quietly changed later. After locking, only admins can make corrections.
+### Opening balance
+When you create an item you enter its starting count (an "opening balance" stock-in). The opening balance **locks** automatically on the item's first dispatch. After locking — and for any decrease at any time — only an admin can adjust stock.
+
+### Bookings and allocations
+Each (item, event) or (item, subscription) pair has one allocation record that the database keeps in step with the ledger: it opens on the first dispatch, grows with more dispatches, and closes when everything is returned, damaged or lost. "Pending" / "still out" is always calculated from the ledger.
+
+A subscription's **planned dishware kit** (entered when the subscription is created) is only a plan. It does not move stock or create allocations.
 
 ---
 
-## Part 2 — How to use it today
+## Part 2 — How to use it
 
-### ✅ The reliable way (use this)
+You can send and receive dishes from three places; all of them use the same database rules:
 
-Do all stock actions from the **item's own detail page**:
+- **Send & receive** (sidebar → Dishware): search any event or subscription, then the **Send dishes** or **Receive back** tab. Works for **both events and subscriptions**.
+- **Event page**: Send dishes, and Record return from the event's dishware ledger.
+- **Item page** (Items → click an item): Add stock, Send out, Record return, Mark damaged, Mark lost, Dispose damaged, Adjust stock (admin).
 
-1. **Inventory → Items** → click an item → you're on the **Item Detail** page.
-2. Use the action buttons there: **Add Stock, Allocate, Receive Back, Mark Damaged, Mark Lost, Dispose, Adjust Stock.**
-3. These buttons are wired to the **new (V2)** logic and update the buckets correctly.
+Dishes can be sent only to an **active subscription** or a **planned event**.
 
-### ⚠️ The trap (FIXED — apply migrations 035a + 035b and deploy the code)
-
-There were **two other places** that also let you allocate/return dishes — the standalone **Inventory → Allocate** page and the **Event detail page** buttons — and they used the **old (V1)** code path that was out of sync with the database.
-
-**What went wrong (precisely):** V1 writes were missing the `movement_category` classification field. The on-hand bucket counts still updated (a fallback in the database handled that), but:
-- **All safety checks were silently skipped** — no "enough stock available" check, no "only active items" check, no "can't return more than outstanding" check.
-- **Returns/damage/loss recorded this way were invisible to the outstanding-return math**, so the app kept showing dishes as "pending return" after they were back, allocations never auto-closed, and it was possible to over-return (inflating available stock).
-- The opening-balance auto-lock never fired.
-
-**Separately**, three actions on the (good) Item Detail page — *Receive Back (damaged)*, *Dispose*, and the *repair* flow — failed outright with a database enum error, because the `movement_type` enum was never extended for V2.
-
-**All of this is fixed** by: the code changes (all screens now use the V2 services), migration **035a** (adds the missing enum values), and migration **035b** (auto-classifies any unclassified insert, backfills historical rows, makes the field mandatory, aligns allocation auto-close with the V2 math, and closes allocations that were already fully returned). Until those two migrations are applied to the production database, keep using the Item Detail page only.
-
-### Recommended day-to-day routine for the Hybits unit
-
-**Initial setup (one time):**
+### Initial setup (one time)
 1. Admin creates each outlet under **Admin → Outlets**.
-2. For each dish type, **Inventory → Items → Add Item** (name, category, material, unit = "pcs").
-3. Open each item → **Add Stock** with reason **"opening balance"** and your current physical count.
-4. Verify **available** now equals your real shelf count.
+2. For each dish type: **Dishware → Items → Add item** (name, category, material, unit), entering the current physical count as **opening stock**.
+3. Check that **Available** equals your real shelf count.
 
-**When dishes go out for an event/subscription:**
-1. Open the item → **Allocate** → quantity + link to the event/subscription.
-2. Repeat per dish type. (Or, once fixed, do it in bulk from the event page.)
+### When dishes go out for an event or subscription
+1. Open the event (or Send & receive → search the subscription) → **Send dishes** → item + quantity.
+2. Repeat per dish type (one item at a time).
 
-**When dishes come back:**
-1. Open the item → **Receive Back** for the good ones.
-2. **Mark Damaged** / **Mark Lost** for the rest (notes are mandatory — record what happened).
+### When dishes come back
+1. Event page ledger, or Send & receive → **Receive back**, or the item's **Record return**.
+2. Record **Returned** (good), **Damaged** or **Lost** quantities. Notes are mandatory for damaged and lost.
+3. You cannot return more than is still out for that booking. An event cannot be cancelled, and a subscription cannot be cancelled, while dishes are still out.
 
-**Monthly / periodic:**
-1. Do a physical count.
-2. **Inventory → Audit** to compare system vs. physical and post corrections (admin approves).
-3. Send broken dishes to **Repair**; **Dispose** the unrepairable.
+### In the warehouse
+- Broken on the shelf → item page → **Mark damaged**.
+- Can't be found → item page → **Mark lost** (missing at the outlet).
+- Beyond use → **Dispose damaged**.
+
+### Monthly stock audit
+1. **Stock audits → New audit**: outlet + month. The system snapshots the available count of every item.
+2. Count the shelves and enter the **physical count** for every item. Give a reason for every difference.
+3. **Submit.** If every count matches — or an admin submits with no shortages — it is approved automatically and the corrections are posted. Otherwise it waits for an **admin** to approve (posts the corrections) or reject (with a reason).
+4. An audit that has not been submitted can be cancelled.
+
+### Keeping an eye on things
+- **Stock overview**: totals per bucket, and a "Needs attention" list (unlocked opening balances, pending returns, damaged stock, items in repair, audits awaiting approval).
+- **Dashboard → Dishes out the longest**: bookings whose dishes have been out longest.
+- **Stock reports**: Stock summary, Dishes out, Damage and loss, Movements — all exportable to CSV.
 
 ---
 
-## Part 3 — The plan to make it fully work
+## Part 3 — What is still missing
 
-The root problem: the inventory backend was upgraded to **V2** (lifecycle statuses, repair flow, richer reasons), but the **frontend was only half-migrated** — some screens still call the old V1 code. That mismatch is why counts silently break in some places and not others. There is also a designed-but-not-built feature: **auto-allocating dishes when an event/subscription starts** (the code hooks exist but are empty placeholders, and there are no `event_items` / `subscription_items` tables to say "this event needs 500 plates").
+The earlier fix-it plan ("Phase A") is done: every screen uses the same ledger rules, the movement types that used to fail (damaged returns, disposal, repair) work in the database, subscriptions can be found and served in Send & receive, and Record return on the item page works. Migrations 042 and 043 also made audits work end to end and made the ledger the only way to change stock.
 
-### Phase A — Stop the silent data corruption ✅ DONE (2026-07-08)
-1. ✅ The two V1 screens now use V2 services: `AllocateInventoryModal` and `ReturnDamageLossModal` were rewired to `allocateInventoryV2` / `returnInventoryV2` / `writeOffInventoryV2`, which fixes both `InventoryAllocationPage` and `EventDetailPage`.
-2. ✅ Item creation with initial stock now uses `createStockInV2` with reason "opening balance".
-3. ✅ DB safety net (migration `035b`): a `BEFORE INSERT` trigger derives `movement_category` from `movement_type` when missing, and the column is now `NOT NULL` — a stray V1-style insert is auto-classified or rejected loudly, never silent.
-4. ✅ Data cleanup (migrations `035a` + `035b`): missing `movement_type` enum values added (`return_damaged`, `disposal`, `send_to_repair`, `return_from_repair` — these made damaged returns/dispose/repair fail outright); historical `NULL` classifications backfilled; the allocation auto-close trigger now uses the same category-based math as the views; already-fully-returned allocations were closed.
+Still open:
 
-> **Deployment note:** run `035a` by itself first, then `035b` (enum values must commit before use — same pattern as 030a/030b). Migration `034` (invoice status fix) is independent and can run any time.
-
-### Phase B — Make event/subscription allocation first-class (medium effort)
-1. Create `event_items` and `subscription_items` tables: `(reference_id, inventory_item_id, quantity)`.
-2. Add UI on the event/subscription pages to list "dishes required for this event."
-3. Implement the currently-empty hooks (`onEventPlanned`, `onSubscriptionActivated`, `onEventCompleted`, `onSubscriptionCancelled`) to auto-allocate on start and prompt for returns on completion — wrapped in a single database transaction (RPC) so a partial failure can't leave half-allocated stock.
-
-### Phase C — Operational polish (lower priority)
-1. A **"Pending Returns"** dashboard: for every completed event, show what's still `allocated` and not yet received/damaged/lost, so nothing is forgotten.
-2. **Low-stock alerts** per item (reorder threshold).
-3. **Per-outlet stock valuation** for reports (needs a unit cost field on items).
-4. Retire the V1 inventory services entirely once nothing imports them, to remove the two-code-paths confusion for good.
-
-### Suggested sequencing
-- **Week 1:** Phase A (1–4). After this, inventory counts are trustworthy everywhere and the unit can rely on the module.
-- **Weeks 2–3:** Phase B. After this, allocating dishes to an event is one click instead of item-by-item.
-- **Later:** Phase C as time allows.
+1. **Repair flow screens.** Send to repair / return from repair are supported by the database but have no button.
+2. **Lifecycle screens.** No reactivate (discontinued → active) or archive button; no screen to delete an item.
+3. **Bulk send.** Dishes are sent one item at a time. There are no "items required for this event" lists and no automatic dispatch when an event or subscription starts (the old empty "integration hooks" were removed rather than built).
+4. **Subscription dishware ledger.** The event page shows what is out with the client; the subscription page shows only the planned kit.
+5. **Low-stock alerts** per item and **stock valuation** (needs a unit cost field).
+6. **Known rough edges** (see [SOFTWARE_OVERVIEW.md §7.1](SOFTWARE_OVERVIEW.md#71-rough-edges-found-in-the-current-code)): "Send dishes" is offered on completed events but the database refuses it; a month with a rejected audit cannot be re-audited from the UI; Adjust stock is offered on discontinued items but refused; allocations at a deactivated outlet disappear from the dishware screens.
 
 ---
 
 ## Quick reference — is my count right?
 
-If `available + allocated + damaged + in_repair` does **not** equal `total` for an item, something wrote to the buckets incorrectly (almost certainly via the broken V1 screens). The database has a constraint that should prevent this, so if you see it, stop and investigate before trusting any inventory report.
+`available + allocated + damaged + in_repair` must equal `total` for every item. The database enforces this with a constraint and, since 043, refuses any write to the stock numbers that does not come from a movement. If a count looks wrong, look at the item's movement history (item page, or Movements filtered by item) to see which movement caused it, and correct it with a stock audit or an admin adjustment.

@@ -1,5 +1,15 @@
 import { supabase } from '@/lib/supabase';
-import Papa from 'papaparse';
+import { objectsToCsv } from '@/utils/csv';
+import type { InventoryAllocation, InventoryMovement, MovementType, ReferenceType } from '@/types';
+import {
+  fetchAllRows,
+  formatISTDateTime,
+  istDateTimeParts,
+  istDayStartISO,
+  istNextDayStartISO,
+} from '@/services/inventoryMovementService';
+import { movementTypeLabel } from '@/components/inventory/movementLabels';
+import { ilikePattern } from '@/utils/query';
 
 // ================================================================
 // INVENTORY REPORT SERVICE
@@ -7,41 +17,58 @@ import Papa from 'papaparse';
 // CRITICAL RULES:
 // - Reports are READ-ONLY
 // - Data from DB views ONLY (no UI calculations)
-// - CSV export matches table data exactly
-// - Role-based outlet filtering enforced
+// - Outlet scoping is enforced by RLS (managers only see assigned outlets)
+// - Every query is paged internally, so results are never truncated at
+//   PostgREST max_rows
+// - CSV goes through @/utils/csv (formula-injection safe)
 // - Soft-deleted records excluded
 // ================================================================
 
-/**
- * Get user role and assigned outlets (for managers)
- */
-async function getUserRoleAndOutlets(userId: string): Promise<{
-  role: string;
-  outletIds: string[] | null;
-}> {
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+// Row of view inventory_stock_summary (025)
+export interface StockSummaryRow {
+  item_id: string;
+  outlet_id: string;
+  outlet_name: string;
+  outlet_code: string;
+  item_name: string;
+  category: string;
+  material: string | null;
+  unit: string;
+  total_quantity: number;
+  available_quantity: number;
+  allocated_quantity: number;
+  damaged_quantity: number;
+  in_repair_quantity: number;
+  lost_quantity: number;
+  lifecycle_status: string;
+  opening_balance_confirmed: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
+// Row of view inventory_allocations_with_details (025)
+export interface AllocationReportRow extends Omit<InventoryAllocation, 'id'> {
+  allocation_id: string;
+  outlet_code?: string;
+  lifecycle_status?: string;
+}
 
-  // Managers: Get assigned outlets
-  if (profile.role === 'manager') {
-    const { data: assignments } = await supabase
-      .from('user_outlet_assignments')
-      .select('outlet_id')
-      .eq('user_id', userId);
-
-    const outletIds = assignments?.map(a => a.outlet_id) || [];
-    return { role: profile.role, outletIds };
-  }
-
-  // Admin/Accountant: All outlets
-  return { role: profile.role, outletIds: null };
+// Row of view inventory_damage_loss_report
+export interface DamageLossRow {
+  outlet_id: string;
+  outlet_name: string;
+  outlet_code: string;
+  inventory_item_id: string;
+  item_name: string;
+  item_category: string;
+  movement_type: 'damage' | 'loss';
+  incident_count: number;
+  total_quantity: number;
+  report_date: string;
+  reference_type: ReferenceType;
+  reference_id: string | null;
+  reference_name: string | null;
 }
 
 // ================================================================
@@ -55,47 +82,22 @@ export interface StockSummaryFilters {
 }
 
 export async function getStockSummaryReport(
-  userId: string,
+  _userId: string,
   filters: StockSummaryFilters = {}
-) {
-  const roleData = await getUserRoleAndOutlets(userId);
+): Promise<StockSummaryRow[]> {
+  return fetchAllRows<StockSummaryRow>((from, to) => {
+    let query = supabase
+      .from('inventory_stock_summary')
+      .select('*')
+      .order('item_name')
+      .order('item_id');
 
-  let query = supabase
-    .from('inventory_stock_summary')
-    .select('*')
-    .order('item_name');
+    if (filters.outlet_id) query = query.eq('outlet_id', filters.outlet_id);
+    if (filters.category?.trim()) query = query.ilike('category', ilikePattern(filters.category));
+    if (filters.is_active !== undefined) query = query.eq('is_active', filters.is_active);
 
-  // Manager: Filter by assigned outlets
-  if (roleData.role === 'manager' && roleData.outletIds) {
-    if (roleData.outletIds.length > 0) {
-      query = query.in('outlet_id', roleData.outletIds);
-    } else {
-      return [];
-    }
-  }
-
-  // Admin/Accountant: Optional outlet filter
-  if (filters.outlet_id && ['admin', 'accountant'].includes(roleData.role)) {
-    query = query.eq('outlet_id', filters.outlet_id);
-  }
-
-  // Category filter
-  if (filters.category) {
-    query = query.eq('category', filters.category);
-  }
-
-  // Active filter (default: true)
-  if (filters.is_active !== undefined) {
-    query = query.eq('is_active', filters.is_active);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return data || [];
+    return query.range(from, to);
+  });
 }
 
 export async function exportStockSummaryCSV(
@@ -104,7 +106,7 @@ export async function exportStockSummaryCSV(
 ): Promise<string> {
   const data = await getStockSummaryReport(userId, filters);
 
-  const csvData = data.map(row => ({
+  const csvData = data.map((row) => ({
     'Item Name': row.item_name,
     'Category': row.category,
     'Material': row.material || '',
@@ -115,11 +117,12 @@ export async function exportStockSummaryCSV(
     'Available': row.available_quantity,
     'Allocated': row.allocated_quantity,
     'Damaged': row.damaged_quantity,
-    'Lost': row.lost_quantity,
+    'In Repair': row.in_repair_quantity ?? 0,
+    'Lost (lifetime)': row.lost_quantity,
     'Status': row.is_active ? 'Active' : 'Inactive',
   }));
 
-  return Papa.unparse(csvData);
+  return objectsToCsv(csvData);
 }
 
 // ================================================================
@@ -133,47 +136,22 @@ export interface AllocationReportFilters {
 }
 
 export async function getAllocationReport(
-  userId: string,
+  _userId: string,
   filters: AllocationReportFilters = {}
-) {
-  const roleData = await getUserRoleAndOutlets(userId);
+): Promise<AllocationReportRow[]> {
+  return fetchAllRows<AllocationReportRow>((from, to) => {
+    let query = supabase
+      .from('inventory_allocations_with_details')
+      .select('*')
+      .order('item_name')
+      .order('allocation_id');
 
-  let query = supabase
-    .from('inventory_allocations_with_details')
-    .select('*')
-    .order('item_name');
+    if (filters.outlet_id) query = query.eq('outlet_id', filters.outlet_id);
+    if (filters.reference_type) query = query.eq('reference_type', filters.reference_type);
+    if (filters.inventory_item_id) query = query.eq('inventory_item_id', filters.inventory_item_id);
 
-  // Manager: Filter by assigned outlets
-  if (roleData.role === 'manager' && roleData.outletIds) {
-    if (roleData.outletIds.length > 0) {
-      query = query.in('outlet_id', roleData.outletIds);
-    } else {
-      return [];
-    }
-  }
-
-  // Admin/Accountant: Optional outlet filter
-  if (filters.outlet_id && ['admin', 'accountant'].includes(roleData.role)) {
-    query = query.eq('outlet_id', filters.outlet_id);
-  }
-
-  // Reference type filter
-  if (filters.reference_type) {
-    query = query.eq('reference_type', filters.reference_type);
-  }
-
-  // Item filter
-  if (filters.inventory_item_id) {
-    query = query.eq('inventory_item_id', filters.inventory_item_id);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return data || [];
+    return query.range(from, to);
+  });
 }
 
 export async function exportAllocationReportCSV(
@@ -182,7 +160,7 @@ export async function exportAllocationReportCSV(
 ): Promise<string> {
   const data = await getAllocationReport(userId, filters);
 
-  const csvData = data.map(row => ({
+  const csvData = data.map((row) => ({
     'Item Name': row.item_name,
     'Category': row.item_category,
     'Outlet': row.outlet_name,
@@ -191,10 +169,10 @@ export async function exportAllocationReportCSV(
     'Allocated Quantity': row.allocated_quantity,
     'Outstanding Quantity': row.outstanding_quantity,
     'Status': row.is_active ? 'Active' : 'Closed',
-    'Created At': new Date(row.created_at).toLocaleString(),
+    'Created At': formatISTDateTime(row.created_at),
   }));
 
-  return Papa.unparse(csvData);
+  return objectsToCsv(csvData);
 }
 
 // ================================================================
@@ -210,55 +188,27 @@ export interface DamageLossReportFilters {
 }
 
 export async function getDamageLossReport(
-  userId: string,
+  _userId: string,
   filters: DamageLossReportFilters = {}
-) {
-  const roleData = await getUserRoleAndOutlets(userId);
+): Promise<DamageLossRow[]> {
+  return fetchAllRows<DamageLossRow>((from, to) => {
+    let query = supabase
+      .from('inventory_damage_loss_report')
+      .select('*')
+      .order('report_date', { ascending: false })
+      .order('item_name')
+      .order('movement_type')
+      .order('reference_id');
 
-  let query = supabase
-    .from('inventory_damage_loss_report')
-    .select('*')
-    .order('report_date', { ascending: false });
+    if (filters.outlet_id) query = query.eq('outlet_id', filters.outlet_id);
+    if (filters.movement_type) query = query.eq('movement_type', filters.movement_type);
+    if (filters.inventory_item_id) query = query.eq('inventory_item_id', filters.inventory_item_id);
+    // report_date is a calendar date column, so plain YYYY-MM-DD comparison is correct
+    if (filters.date_from) query = query.gte('report_date', filters.date_from);
+    if (filters.date_to) query = query.lte('report_date', filters.date_to);
 
-  // Manager: Filter by assigned outlets
-  if (roleData.role === 'manager' && roleData.outletIds) {
-    if (roleData.outletIds.length > 0) {
-      query = query.in('outlet_id', roleData.outletIds);
-    } else {
-      return [];
-    }
-  }
-
-  // Admin/Accountant: Optional outlet filter
-  if (filters.outlet_id && ['admin', 'accountant'].includes(roleData.role)) {
-    query = query.eq('outlet_id', filters.outlet_id);
-  }
-
-  // Movement type filter
-  if (filters.movement_type) {
-    query = query.eq('movement_type', filters.movement_type);
-  }
-
-  // Item filter
-  if (filters.inventory_item_id) {
-    query = query.eq('inventory_item_id', filters.inventory_item_id);
-  }
-
-  // Date filters
-  if (filters.date_from) {
-    query = query.gte('report_date', filters.date_from);
-  }
-  if (filters.date_to) {
-    query = query.lte('report_date', filters.date_to);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return data || [];
+    return query.range(from, to);
+  });
 }
 
 export async function exportDamageLossCSV(
@@ -267,19 +217,19 @@ export async function exportDamageLossCSV(
 ): Promise<string> {
   const data = await getDamageLossReport(userId, filters);
 
-  const csvData = data.map(row => ({
+  const csvData = data.map((row) => ({
     'Date': row.report_date,
     'Item Name': row.item_name,
     'Category': row.item_category,
     'Outlet': row.outlet_name,
-    'Type': row.movement_type.toUpperCase(),
+    'Type': String(row.movement_type).toUpperCase(),
     'Incident Count': row.incident_count,
     'Total Quantity': row.total_quantity,
     'Reference Type': row.reference_type,
     'Reference': row.reference_name || 'Manual',
   }));
 
-  return Papa.unparse(csvData);
+  return objectsToCsv(csvData);
 }
 
 // ================================================================
@@ -289,61 +239,31 @@ export async function exportDamageLossCSV(
 export interface MovementHistoryReportFilters {
   outlet_id?: string;
   inventory_item_id?: string;
-  movement_type?: 'stock_in' | 'allocation' | 'return' | 'damage' | 'loss' | 'adjustment';
-  date_from?: string;
-  date_to?: string;
+  movement_type?: MovementType;
+  date_from?: string; // IST calendar day, inclusive
+  date_to?: string; // IST calendar day, inclusive
 }
 
 export async function getMovementHistoryReport(
-  userId: string,
+  _userId: string,
   filters: MovementHistoryReportFilters = {}
-) {
-  const roleData = await getUserRoleAndOutlets(userId);
+): Promise<InventoryMovement[]> {
+  const rows = await fetchAllRows<InventoryMovement & { movement_id?: string }>((from, to) => {
+    let query = supabase
+      .from('inventory_movements_with_details')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .order('movement_id', { ascending: false });
 
-  let query = supabase
-    .from('inventory_movements_with_details')
-    .select('*')
-    .order('created_at', { ascending: false });
+    if (filters.outlet_id) query = query.eq('outlet_id', filters.outlet_id);
+    if (filters.inventory_item_id) query = query.eq('inventory_item_id', filters.inventory_item_id);
+    if (filters.movement_type) query = query.eq('movement_type', filters.movement_type);
+    if (filters.date_from) query = query.gte('created_at', istDayStartISO(filters.date_from));
+    if (filters.date_to) query = query.lt('created_at', istNextDayStartISO(filters.date_to));
 
-  // Manager: Filter by assigned outlets
-  if (roleData.role === 'manager' && roleData.outletIds) {
-    if (roleData.outletIds.length > 0) {
-      query = query.in('outlet_id', roleData.outletIds);
-    } else {
-      return [];
-    }
-  }
-
-  // Admin/Accountant: Optional outlet filter
-  if (filters.outlet_id && ['admin', 'accountant'].includes(roleData.role)) {
-    query = query.eq('outlet_id', filters.outlet_id);
-  }
-
-  // Item filter
-  if (filters.inventory_item_id) {
-    query = query.eq('inventory_item_id', filters.inventory_item_id);
-  }
-
-  // Movement type filter
-  if (filters.movement_type) {
-    query = query.eq('movement_type', filters.movement_type);
-  }
-
-  // Date filters
-  if (filters.date_from) {
-    query = query.gte('created_at', filters.date_from);
-  }
-  if (filters.date_to) {
-    query = query.lte('created_at', filters.date_to);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return data || [];
+    return query.range(from, to);
+  });
+  return rows.map((row) => ({ ...row, id: row.id ?? (row.movement_id as string) }));
 }
 
 export async function exportMovementHistoryCSV(
@@ -352,19 +272,22 @@ export async function exportMovementHistoryCSV(
 ): Promise<string> {
   const data = await getMovementHistoryReport(userId, filters);
 
-  const csvData = data.map(row => ({
-    'Date': new Date(row.created_at).toLocaleDateString(),
-    'Time': new Date(row.created_at).toLocaleTimeString(),
-    'Item Name': row.item_name,
-    'Category': row.item_category,
-    'Outlet': row.outlet_name,
-    'Movement Type': row.movement_type.toUpperCase(),
-    'Quantity': row.quantity,
-    'Reference Type': row.reference_type,
-    'Reference': row.reference_name || 'Manual',
-    'Notes': row.notes || '',
-    'User': row.created_by_name,
-  }));
+  const csvData = data.map((row) => {
+    const { date, time } = istDateTimeParts(row.created_at);
+    return {
+      'Date': date,
+      'Time': time,
+      'Item Name': row.item_name,
+      'Category': row.item_category,
+      'Outlet': row.outlet_name,
+      'Movement Type': movementTypeLabel(row.movement_type),
+      'Quantity': row.quantity,
+      'Reference Type': row.reference_type,
+      'Reference': row.reference_name || 'Manual',
+      'Notes': row.notes || '',
+      'User': row.created_by_name || '',
+    };
+  });
 
-  return Papa.unparse(csvData);
+  return objectsToCsv(csvData);
 }

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { countErrorMessage } from '@/utils/query';
 import type { InventoryMovement } from '@/types';
 
 // ================================================================
@@ -144,6 +145,10 @@ export interface RepairV2Input {
 // HELPER FUNCTIONS
 // ================================================================
 
+// NOTE: rows below send created_by from the client. Migration 043 adds the
+// force_movement_actor trigger, which overwrites it with auth.uid() before
+// validate_movement_v2 runs, so a forged value is ignored.
+
 async function getUserRoleAndStatus(userId: string): Promise<{
     role: string;
     isActive: boolean;
@@ -193,7 +198,7 @@ export async function createStockInV2(
 ): Promise<InventoryMovement> {
     const { role } = await getUserRoleAndStatus(userId);
 
-    if (role === 'accountant') {
+    if (role !== 'admin' && role !== 'manager') {
         throw new Error('Accountants cannot create stock movements');
     }
 
@@ -239,7 +244,7 @@ export async function allocateInventoryV2(
 ): Promise<InventoryMovement> {
     const { role } = await getUserRoleAndStatus(userId);
 
-    if (role === 'accountant') {
+    if (role !== 'admin' && role !== 'manager') {
         throw new Error('Accountants cannot allocate inventory');
     }
 
@@ -290,7 +295,7 @@ export async function returnInventoryV2(
 ): Promise<InventoryMovement> {
     const { role } = await getUserRoleAndStatus(userId);
 
-    if (role === 'accountant') {
+    if (role !== 'admin' && role !== 'manager') {
         throw new Error('Accountants cannot return inventory');
     }
 
@@ -334,6 +339,10 @@ export async function adjustInventoryV2(
 ): Promise<InventoryMovement> {
     const { role } = await getUserRoleAndStatus(userId);
 
+    if (role !== 'admin' && role !== 'manager') {
+        throw new Error('Only admins and managers can adjust inventory');
+    }
+
     // Validate notes (mandatory)
     if (!input.notes || input.notes.trim() === '') {
         throw new Error('Notes are MANDATORY for inventory adjustments');
@@ -362,10 +371,13 @@ export async function adjustInventoryV2(
         throw new Error(`Cannot adjust below zero. Available: ${item.available_quantity}, Adjustment: ${input.quantity}`);
     }
 
-    // Determine reason code for negative adjustments
+    // The DB derives the sign from reason_code, so it must agree with is_negative.
+    const NEGATIVE_REASONS: ReasonCode[] = ['audit_shortage', 'missing_stock', 'count_correction_negative'];
     let reasonCode: ReasonCode = input.reason_code;
-    if (input.is_negative && !['audit_shortage', 'count_correction'].includes(input.reason_code)) {
-        reasonCode = 'count_correction_negative';
+    if (input.is_negative) {
+        reasonCode = NEGATIVE_REASONS.includes(input.reason_code) ? input.reason_code : 'count_correction_negative';
+    } else if (NEGATIVE_REASONS.includes(input.reason_code)) {
+        throw new Error('This reason implies a decrease; choose Decrease or a different reason');
     }
 
     const { data, error } = await supabase
@@ -399,7 +411,7 @@ export async function writeOffInventoryV2(
 ): Promise<InventoryMovement> {
     const { role } = await getUserRoleAndStatus(userId);
 
-    if (role === 'accountant') {
+    if (role !== 'admin' && role !== 'manager') {
         throw new Error('Accountants cannot write off inventory');
     }
 
@@ -455,7 +467,7 @@ export async function processRepairV2(
 ): Promise<InventoryMovement> {
     const { role } = await getUserRoleAndStatus(userId);
 
-    if (role === 'accountant') {
+    if (role !== 'admin' && role !== 'manager') {
         throw new Error('Accountants cannot process repairs');
     }
 
@@ -535,7 +547,7 @@ export async function discontinueItem(
 ): Promise<{ success: boolean; message: string }> {
     const { role } = await getUserRoleAndStatus(userId);
 
-    if (role === 'accountant') {
+    if (role !== 'admin' && role !== 'manager') {
         throw new Error('Accountants cannot discontinue inventory items');
     }
 
@@ -580,7 +592,7 @@ export async function reactivateItem(
 ): Promise<{ success: boolean; message: string }> {
     const { role } = await getUserRoleAndStatus(userId);
 
-    if (role === 'accountant') {
+    if (role !== 'admin' && role !== 'manager') {
         throw new Error('Accountants cannot reactivate inventory items');
     }
 
@@ -637,13 +649,13 @@ export async function canDeleteItem(
     }
 
     // Check for customer allocation history
-    const { count, error: countError } = await supabase
+    const { count, error: countError, status: countStatus } = await supabase
         .from('inventory_movements')
         .select('id', { count: 'exact', head: true })
         .eq('inventory_item_id', itemId)
         .in('reference_type', ['subscription', 'event']);
 
-    if (countError) throw new Error(countError.message);
+    if (countError) throw new Error(countErrorMessage(countError, countStatus, 'customer allocations'));
 
     if (count && count > 0) {
         return {

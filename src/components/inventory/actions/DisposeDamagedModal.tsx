@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
+import { FactWell, ModalActions } from '../ModalParts';
 import { writeOffInventoryV2 } from '@/services/inventoryMovementServiceV2';
 
 // ================================================================
@@ -51,6 +52,7 @@ export default function DisposeDamagedModal({
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (loading) return;
         setError(null);
 
         const qty = parseInt(quantity);
@@ -91,54 +93,57 @@ export default function DisposeDamagedModal({
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Dispose Damaged Items">
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Dispose damaged pieces"
+            description="Disposed pieces leave the books for good."
+            dismissable={!loading}
+        >
             <form onSubmit={handleSubmit} className="space-y-4">
                 {error && <Alert variant="error">{error}</Alert>}
 
-                {/* Item Info */}
-                <div className="bg-muted p-4 rounded">
-                    <p className="text-sm text-muted-foreground">Item</p>
-                    <p className="font-semibold">{itemName}</p>
-                    <p className="text-sm text-muted-foreground mt-2">Damaged Stock</p>
-                    <p className="text-lg font-bold text-orange-600">{damagedQuantity}</p>
-                </div>
+                <FactWell
+                    eyebrow="Item"
+                    title={itemName}
+                    facts={[{ label: 'Damaged', value: damagedQuantity, tone: 'partial' }]}
+                />
 
                 <Alert variant="warning">
-                    Disposed items will be permanently removed from inventory. This reduces both
-                    damaged quantity and total quantity.
+                    Disposing reduces both damaged and total stock. This cannot be undone.
                 </Alert>
 
-                {/* Quantity */}
                 <Input
                     type="number"
-                    label="Quantity to Dispose"
+                    inputMode="numeric"
+                    label="Pieces to dispose"
                     value={quantity}
                     onChange={(e) => setQuantity(e.target.value)}
                     min="1"
                     max={damagedQuantity}
                     required
-                    placeholder={`Max: ${damagedQuantity}`}
+                    placeholder={`Up to ${damagedQuantity}`}
+                    className="tabular"
                 />
 
-                {/* Notes (REQUIRED) */}
                 <Textarea
-                    label="Notes (required)"
+                    label="Reason"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Reason for disposal (e.g., beyond repair, end of life)..."
+                    placeholder="e.g. Beyond repair, end of life"
+                    helperText="Required"
                     required
                     rows={3}
                 />
 
-                {/* Buttons */}
-                <div className="flex justify-end gap-2 pt-4">
+                <ModalActions>
                     <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
                         Cancel
                     </Button>
-                    <Button type="submit" disabled={loading} variant="destructive">
-                        {loading ? 'Disposing...' : 'Dispose'}
+                    <Button type="submit" isLoading={loading} variant="danger">
+                        {loading ? 'Disposing…' : 'Dispose pieces'}
                     </Button>
-                </div>
+                </ModalActions>
             </form>
         </Modal>
     );

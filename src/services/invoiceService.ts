@@ -1,16 +1,18 @@
 import { supabase } from '@/lib/supabase';
 import type {
   Invoice,
+  InvoiceItem,
   InvoiceFilters,
   InvoiceStatus,
   CreateInvoiceInput,
   UpdateInvoiceInput,
-  CreateInvoiceItemInput,
+  UserRole,
 } from '@/types';
 import { ALLOWED_GST_RATES } from '@/types';
 import { getClientById } from './clientService';
 import { getEventById } from './eventService';
-import { roundCurrency, SETTLEMENT_TOLERANCE } from '@/utils/format';
+import { roundCurrency, toPaise, calcInvoiceTotals } from '@/utils/format';
+import { todayISO, parseLocalISODate, toLocalISODate } from '@/utils/date';
 
 // ================================================================
 // INVOICE SERVICE
@@ -42,6 +44,12 @@ const ALLOWED_TRANSITIONS: Record<InvoiceStatus, InvoiceStatus[]> = {
   cancelled: [],
 };
 
+/** Earliest valid invoice date: GST came into force on 1 July 2017. */
+export const MIN_INVOICE_DATE = '2017-07-01';
+
+/** Default page size for the invoice list. */
+export const INVOICE_PAGE_SIZE = 50;
+
 /**
  * Validate that a status transition is allowed
  * @throws Error if the transition is not allowed
@@ -58,66 +66,92 @@ function validateStatusTransition(oldStatus: InvoiceStatus, newStatus: InvoiceSt
 }
 
 // ================================================================
-// CALCULATION HELPERS
+// ACCESS HELPERS
 // ================================================================
 
-/**
- * Calculate line item totals with currency-safe rounding
- */
-function calculateLineItem(item: CreateInvoiceItemInput) {
-  const line_total = roundCurrency(item.quantity * item.unit_price);
-  const tax_amount = roundCurrency(line_total * (item.tax_rate / 100));
+async function getUserRole(userId: string): Promise<UserRole> {
+  const { data: profile, error } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userId)
+    .maybeSingle();
 
-  return {
-    ...item,
-    line_total,
-    tax_amount,
-  };
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (!profile) {
+    throw new Error('User profile not found');
+  }
+  return profile.role as UserRole;
 }
 
-/**
- * Calculate invoice totals from items with currency-safe rounding
- */
-function calculateInvoiceTotals(items: CreateInvoiceItemInput[]) {
-  const calculated = items.map(calculateLineItem);
+function canWriteInvoices(role: UserRole): boolean {
+  return role === 'admin' || role === 'manager';
+}
 
-  // Sum each item's values, then round the totals
-  const subtotal = roundCurrency(
-    calculated.reduce((sum, item) => sum + item.line_total, 0)
-  );
-  const tax_total = roundCurrency(
-    calculated.reduce((sum, item) => sum + item.tax_amount, 0)
-  );
-  const grand_total = roundCurrency(subtotal + tax_total);
+async function getManagerOutletIds(userId: string): Promise<string[]> {
+  const { data: assignments, error } = await supabase
+    .from('user_outlet_assignments')
+    .select('outlet_id')
+    .eq('user_id', userId);
 
-  return {
-    subtotal,
-    tax_total,
-    grand_total,
-    items: calculated,
-  };
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (assignments || []).map(a => a.outlet_id as string);
+}
+
+function assertAllowedGstRates(items: { tax_rate: number }[]): void {
+  const invalid = items.filter(
+    item => !ALLOWED_GST_RATES.includes(item.tax_rate as 0 | 5 | 12 | 18)
+  );
+  if (invalid.length > 0) {
+    throw new Error(
+      `Invalid GST rate. Allowed rates are: ${ALLOWED_GST_RATES.join('%, ')}%`
+    );
+  }
 }
 
 // ================================================================
 // READ OPERATIONS
 // ================================================================
 
+/** A list row: the invoice plus its payment position from invoices_with_payment_status. */
+export type InvoiceListRow = Invoice & {
+  /** Sum of active payments (null when the balance lookup returned nothing for this row). */
+  amount_paid: number | null;
+  /** grand_total minus active payments, 0 within the settlement tolerance. */
+  balance_due: number | null;
+};
+
+export interface InvoicePage {
+  invoices: InvoiceListRow[];
+  /** Total rows matching the filters, across all pages. */
+  total: number;
+  /**
+   * Balance still due on every matching finalized / part-paid invoice, across
+   * all pages. null when it could not be totalled (the list itself still loads).
+   */
+  outstanding: number | null;
+}
+
+// Statuses that can still owe money
+const OUTSTANDING_STATUSES: InvoiceStatus[] = ['finalized', 'partially_paid'];
+const BALANCE_PAGE = 1000;
+
 /**
- * Get all invoices with filters (role-based)
+ * Get one page of invoices with filters (role-based).
+ * Paged with .range() so lists never get silently cut at PostgREST max_rows.
  */
 export async function getInvoices(
   userId: string,
-  filters: InvoiceFilters = {}
-): Promise<Invoice[]> {
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
+  filters: InvoiceFilters = {},
+  paging: { page?: number; pageSize?: number } = {}
+): Promise<InvoicePage> {
+  const role = await getUserRole(userId);
+  const pageSize = paging.pageSize ?? INVOICE_PAGE_SIZE;
+  const page = Math.max(0, paging.page ?? 0);
+  const from = page * pageSize;
 
   let query = supabase
     .from('invoices')
@@ -126,26 +160,23 @@ export async function getInvoices(
       clients (id, name, client_type, phone),
       outlets (id, name, code, city),
       events (id, event_name, event_date)
-    `)
-    .order('created_at', { ascending: false });
+    `, { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .range(from, from + pageSize - 1);
 
-  // Role-based outlet filtering
-  if (profile.role === 'manager') {
-    const { data: assignments } = await supabase
-      .from('user_outlet_assignments')
-      .select('outlet_id')
-      .eq('user_id', userId);
-
-    if (assignments && assignments.length > 0) {
-      const outletIds = assignments.map(a => a.outlet_id);
-      query = query.in('outlet_id', outletIds);
-    } else {
-      return [];
+  // Role-based outlet filtering (RLS enforces this too)
+  let managerOutletIds: string[] | null = null;
+  if (role === 'manager') {
+    managerOutletIds = await getManagerOutletIds(userId);
+    if (managerOutletIds.length === 0) {
+      return { invoices: [], total: 0, outstanding: 0 };
     }
+    query = query.in('outlet_id', managerOutletIds);
   }
 
   // Filters
-  if (filters.outlet_id && ['admin', 'accountant'].includes(profile.role)) {
+  if (filters.outlet_id && (role === 'admin' || role === 'accountant')) {
     query = query.eq('outlet_id', filters.outlet_id);
   }
   if (filters.invoice_type) {
@@ -158,17 +189,100 @@ export async function getInvoices(
     query = query.eq('client_id', filters.client_id);
   }
 
-  const { data, error } = await query;
+  const [{ data, error, count }, outstanding] = await Promise.all([
+    query,
+    getOutstandingTotal(role, managerOutletIds, filters).catch((err: unknown) => {
+      console.error('Failed to total the outstanding balance:', err);
+      return null;
+    }),
+  ]);
 
   if (error) {
     throw new Error(error.message);
   }
 
-  return data || [];
+  const rows = (data || []) as Invoice[];
+
+  // Balances come from invoices_with_payment_status. That view is `i.*`
+  // frozen at migration 016, so newer invoice columns (027+) are missing
+  // from it: the rows themselves stay on `invoices` and only the payment
+  // figures are merged in by id.
+  const balances = new Map<string, { amount_paid: number; balance_due: number }>();
+  if (rows.length > 0) {
+    const { data: balanceRows, error: balanceError } = await supabase
+      .from('invoices_with_payment_status')
+      .select('id, amount_paid, balance_due')
+      .in('id', rows.map((r) => r.id));
+
+    // A failed lookup only hides the balances (null); the list still shows.
+    if (balanceError) {
+      console.error('Failed to load invoice balances:', balanceError.message);
+    }
+    (balanceRows || []).forEach((b) => {
+      balances.set(b.id as string, {
+        amount_paid: Number(b.amount_paid) || 0,
+        balance_due: Number(b.balance_due) || 0,
+      });
+    });
+  }
+
+  return {
+    invoices: rows.map((r) => ({
+      ...r,
+      amount_paid: balances.get(r.id)?.amount_paid ?? null,
+      balance_due: balances.get(r.id)?.balance_due ?? null,
+    })),
+    total: count ?? rows.length,
+    outstanding,
+  };
 }
 
 /**
- * Get invoice by ID with items
+ * Sum of balance_due over every invoice matching the list filters that can
+ * still owe money (finalized / part paid). Reads only columns that exist in
+ * invoices_with_payment_status since migration 016.
+ */
+async function getOutstandingTotal(
+  role: UserRole,
+  managerOutletIds: string[] | null,
+  filters: InvoiceFilters
+): Promise<number> {
+  if (filters.status && !OUTSTANDING_STATUSES.includes(filters.status)) {
+    return 0;
+  }
+
+  let total = 0;
+  for (let from = 0; ; from += BALANCE_PAGE) {
+    let query = supabase
+      .from('invoices_with_payment_status')
+      .select('id, balance_due')
+      .in('status', filters.status ? [filters.status] : OUTSTANDING_STATUSES)
+      .gt('balance_due', 0)
+      .order('id')
+      .range(from, from + BALANCE_PAGE - 1);
+
+    if (managerOutletIds) query = query.in('outlet_id', managerOutletIds);
+    if (filters.outlet_id && (role === 'admin' || role === 'accountant')) {
+      query = query.eq('outlet_id', filters.outlet_id);
+    }
+    if (filters.invoice_type) query = query.eq('invoice_type', filters.invoice_type);
+    if (filters.client_id) query = query.eq('client_id', filters.client_id);
+
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(`Failed to total the outstanding balance: ${error.message}`);
+    }
+    const chunk = data || [];
+    chunk.forEach((row) => {
+      total += Number(row.balance_due) || 0;
+    });
+    if (chunk.length < BALANCE_PAGE) return roundCurrency(total);
+  }
+}
+
+/**
+ * Get invoice by ID with items.
+ * Returns null when the invoice does not exist or RLS hides it.
  */
 export async function getInvoiceById(invoiceId: string): Promise<Invoice | null> {
   const { data, error } = await supabase
@@ -183,10 +297,10 @@ export async function getInvoiceById(invoiceId: string): Promise<Invoice | null>
     .maybeSingle();
 
   if (error) {
-    if (error.code === 'PGRST116') {
-      return null;
-    }
     throw new Error(error.message);
+  }
+  if (!data) {
+    return null;
   }
 
   // Fetch invoice items
@@ -194,7 +308,8 @@ export async function getInvoiceById(invoiceId: string): Promise<Invoice | null>
     .from('invoice_items')
     .select('*')
     .eq('invoice_id', invoiceId)
-    .order('created_at', { ascending: true });
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true });
 
   if (itemsError) {
     throw new Error(itemsError.message);
@@ -206,19 +321,29 @@ export async function getInvoiceById(invoiceId: string): Promise<Invoice | null>
   };
 }
 
+/**
+ * Ids of the outlet's events that already have a non-cancelled invoice.
+ */
+export async function getInvoicedEventIds(outletId: string): Promise<Set<string>> {
+  if (!outletId) return new Set();
+
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('event_id')
+    .eq('outlet_id', outletId)
+    .not('event_id', 'is', null)
+    .neq('status', 'cancelled');
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  return new Set((data || []).map(r => r.event_id as string));
+}
+
 // ================================================================
 // CREATE INVOICE
 // ================================================================
 
-/**
- * Create new invoice
- * 
- * LOCKED RULES:
- * - Event invoices only for completed events
- * - Subscription invoices must not have event_id
- * - Client outlet must match invoice outlet
- * - Status is always 'draft' on creation
- */
 /**
  * Validate a user-supplied invoice date.
  *
@@ -231,42 +356,73 @@ export async function getInvoiceById(invoiceId: string): Promise<Invoice | null>
 function normalizeIssuedAt(value: string | null | undefined): string | null {
   if (!value) return null;
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  // Shape check plus a round-trip so impossible dates (2026-02-31) fail
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || toLocalISODate(parseLocalISODate(value)) !== value) {
     throw new Error('Invoice date must be a valid date');
   }
 
-  // Compare as plain dates so timezone never shifts the boundary
-  const today = new Date();
-  const todayStr = [
-    today.getFullYear(),
-    String(today.getMonth() + 1).padStart(2, '0'),
-    String(today.getDate()).padStart(2, '0'),
-  ].join('-');
-
-  if (value > todayStr) {
+  // Plain YYYY-MM-DD strings compare correctly as text
+  if (value > todayISO()) {
     throw new Error('Invoice date cannot be in the future');
+  }
+
+  if (value < MIN_INVOICE_DATE) {
+    throw new Error('Invoice date is too far in the past');
   }
 
   return value;
 }
 
+/**
+ * Remove a draft whose items failed to save, so no item-less invoice is
+ * left behind. Deleting a draft is allowed from migration 042; until then
+ * (or without a DELETE policy) fall back to cancelling it.
+ * Returns a sentence describing what happened, for the error message.
+ */
+async function discardFailedDraft(invoiceId: string, invoiceNumber: string): Promise<string> {
+  const { data: deleted, error: deleteError } = await supabase
+    .from('invoices')
+    .delete()
+    .eq('id', invoiceId)
+    .eq('status', 'draft')
+    .select('id');
+
+  if (!deleteError && deleted && deleted.length > 0) {
+    return 'The incomplete draft was discarded.';
+  }
+
+  const { data: cancelled, error: cancelError } = await supabase
+    .from('invoices')
+    .update({ status: 'cancelled' })
+    .eq('id', invoiceId)
+    .eq('status', 'draft')
+    .select('id');
+
+  if (!cancelError && cancelled && cancelled.length > 0) {
+    return `The incomplete draft ${invoiceNumber} was cancelled.`;
+  }
+
+  console.error('[invoiceService] could not discard failed draft', invoiceId, deleteError, cancelError);
+  return `The incomplete draft ${invoiceNumber} could not be removed. Cancel it from the invoice list.`;
+}
+
+/**
+ * Create new invoice
+ *
+ * LOCKED RULES:
+ * - Event invoices only for completed events, one active invoice per event
+ * - Subscription invoices must not have event_id
+ * - Client outlet must match invoice outlet; client type must match invoice type
+ * - Status is always 'draft' on creation
+ */
 export async function createInvoice(
   userId: string,
   input: CreateInvoiceInput
 ): Promise<Invoice> {
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  const role = await getUserRole(userId);
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot create invoices
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to create invoices');
+  if (!canWriteInvoices(role)) {
+    throw new Error('You do not have permission to create invoices');
   }
 
   // Validate required fields
@@ -283,14 +439,9 @@ export async function createInvoice(
   }
 
   // Validate GST rates - must be one of allowed values (0, 5, 12, 18)
-  const invalidRateItems = input.items.filter(
-    item => !ALLOWED_GST_RATES.includes(item.tax_rate as 0 | 5 | 12 | 18)
-  );
-  if (invalidRateItems.length > 0) {
-    throw new Error(
-      `Invalid GST rate. Allowed rates are: ${ALLOWED_GST_RATES.join('%, ')}%`
-    );
-  }
+  assertAllowedGstRates(input.items);
+
+  const issuedAt = normalizeIssuedAt(input.issued_at);
 
   // Validate client
   const client = await getClientById(input.client_id);
@@ -300,6 +451,11 @@ export async function createInvoice(
 
   if (client.outlet_id !== input.outlet_id) {
     throw new Error('Client does not belong to the selected outlet');
+  }
+
+  const expectedClientType = input.invoice_type === 'subscription' ? 'corporate' : 'event';
+  if (client.client_type !== expectedClientType) {
+    throw new Error('Client type does not match invoice type');
   }
 
   // Validate event for event invoices
@@ -324,6 +480,22 @@ export async function createInvoice(
     if (event.client_id !== input.client_id) {
       throw new Error('Event does not belong to the selected client');
     }
+
+    const { data: existing, error: existingError } = await supabase
+      .from('invoices')
+      .select('invoice_number')
+      .eq('event_id', input.event_id)
+      .neq('status', 'cancelled')
+      .limit(1);
+
+    if (existingError) {
+      throw new Error(existingError.message);
+    }
+    if (existing && existing.length > 0) {
+      throw new Error(
+        `This event is already invoiced (${existing[0].invoice_number}). Cancel that invoice first to bill it again.`
+      );
+    }
   }
 
   // Validate subscription invoices
@@ -331,23 +503,20 @@ export async function createInvoice(
     if (input.event_id) {
       throw new Error('Subscription invoices cannot have an event');
     }
+  } else if (input.subscription_id) {
+    throw new Error('Only subscription invoices can be linked to a subscription');
   }
 
   // Manager outlet check
-  if (profile.role === 'manager') {
-    const { data: assignments } = await supabase
-      .from('user_outlet_assignments')
-      .select('outlet_id')
-      .eq('user_id', userId);
-
-    const allowedOutlets = assignments?.map(a => a.outlet_id) || [];
+  if (role === 'manager') {
+    const allowedOutlets = await getManagerOutletIds(userId);
     if (!allowedOutlets.includes(input.outlet_id)) {
       throw new Error('You can only create invoices for your assigned outlets');
     }
   }
 
-  // Calculate totals
-  const totals = calculateInvoiceTotals(input.items);
+  // Calculate totals (exact paise maths, matches the DB CHECKs)
+  const totals = calcInvoiceTotals(input.items);
 
   // Create invoice
   const { data: invoice, error: invoiceError } = await supabase
@@ -357,19 +526,25 @@ export async function createInvoice(
       client_id: input.client_id,
       outlet_id: input.outlet_id,
       event_id: input.event_id || null,
+      // The DB checks the subscription belongs to this client and outlet (042)
+      subscription_id: input.invoice_type === 'subscription' ? input.subscription_id || null : null,
       status: 'draft',
       subtotal: totals.subtotal,
       tax_total: totals.tax_total,
       grand_total: totals.grand_total,
-      terms_and_conditions: input.terms_and_conditions || null,
+      // Keep '' when the user cleared the terms; only a missing value is NULL
+      terms_and_conditions: input.terms_and_conditions ?? null,
       invoice_number_format: input.invoice_number_format || null,
-      issued_at: normalizeIssuedAt(input.issued_at),
+      issued_at: issuedAt,
     })
     .select()
     .maybeSingle();
 
   if (invoiceError) {
     throw new Error(invoiceError.message);
+  }
+  if (!invoice) {
+    throw new Error('Failed to create invoice');
   }
 
   // Create invoice items
@@ -388,9 +563,8 @@ export async function createInvoice(
     .insert(itemsToInsert);
 
   if (itemsError) {
-    // Rollback: delete invoice
-    await supabase.from('invoices').delete().eq('id', invoice.id);
-    throw new Error(itemsError.message);
+    const outcome = await discardFailedDraft(invoice.id, invoice.invoice_number);
+    throw new Error(`Could not save the invoice items: ${itemsError.message}. ${outcome}`);
   }
 
   // Fetch complete invoice
@@ -407,31 +581,50 @@ export async function createInvoice(
 // ================================================================
 
 /**
- * Update a draft invoice's items and terms
- * 
+ * Thrown when some writes of a draft edit landed and a later one failed.
+ * The caller should reload the invoice before letting the user retry,
+ * otherwise new rows would be inserted twice.
+ */
+export class InvoicePartialSaveError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvoicePartialSaveError';
+  }
+}
+
+function itemNeedsUpdate(
+  stored: InvoiceItem,
+  next: { description: string; quantity: number; unit_price: number; tax_rate: number; line_total: number; tax_amount: number }
+): boolean {
+  return (
+    stored.description !== next.description ||
+    toPaise(stored.quantity) !== toPaise(next.quantity) ||
+    toPaise(stored.unit_price) !== toPaise(next.unit_price) ||
+    toPaise(stored.tax_rate) !== toPaise(next.tax_rate) ||
+    toPaise(stored.line_total) !== toPaise(next.line_total) ||
+    toPaise(stored.tax_amount) !== toPaise(next.tax_amount)
+  );
+}
+
+/**
+ * Update a draft invoice's items, terms and date
+ *
  * LOCKED RULES:
  * - Only draft invoices can be edited
  * - client_id, outlet_id, invoice_type, invoice_number cannot be changed
- * - Items are replaced entirely (old items deleted, new items inserted)
+ * - Items are diffed against the stored rows: changed rows are updated in
+ *   place, new rows inserted, removed rows deleted (the DB allows item
+ *   deletes only while the invoice is a draft, migration 042)
  */
 export async function updateInvoice(
   userId: string,
   invoiceId: string,
   updates: UpdateInvoiceInput
 ): Promise<Invoice> {
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  const role = await getUserRole(userId);
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot update invoices
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to update invoices');
+  if (!canWriteInvoices(role)) {
+    throw new Error('You do not have permission to update invoices');
   }
 
   // Fetch current invoice
@@ -446,106 +639,117 @@ export async function updateInvoice(
   }
 
   // Manager outlet check
-  if (profile.role === 'manager') {
-    const { data: assignments } = await supabase
-      .from('user_outlet_assignments')
-      .select('outlet_id')
-      .eq('user_id', userId);
-
-    const allowedOutlets = assignments?.map(a => a.outlet_id) || [];
+  if (role === 'manager') {
+    const allowedOutlets = await getManagerOutletIds(userId);
     if (!allowedOutlets.includes(invoice.outlet_id)) {
       throw new Error('You can only edit invoices for your assigned outlets');
     }
   }
 
-  // Update items if provided
-  if (updates.items && updates.items.length > 0) {
-    // Validate GST rates
-    const invalidRateItems = updates.items.filter(
-      item => !ALLOWED_GST_RATES.includes(item.tax_rate as 0 | 5 | 12 | 18)
+  const invoiceUpdate: Partial<Pick<Invoice, 'subtotal' | 'tax_total' | 'grand_total' | 'terms_and_conditions' | 'issued_at'>> = {};
+
+  if (updates.terms_and_conditions !== undefined) {
+    invoiceUpdate.terms_and_conditions = updates.terms_and_conditions;
+  }
+
+  if (updates.issued_at !== undefined) {
+    invoiceUpdate.issued_at = normalizeIssuedAt(updates.issued_at);
+  }
+
+  let wroteItems = false;
+
+  if (updates.items !== undefined) {
+    if (updates.items.length === 0) {
+      throw new Error('At least one invoice item is required');
+    }
+    assertAllowedGstRates(updates.items);
+
+    const totals = calcInvoiceTotals(updates.items);
+    const stored = invoice.invoice_items || [];
+    const storedById = new Map(stored.map(item => [item.id, item]));
+
+    const keptIds = new Set(
+      totals.items.filter(item => item.id && storedById.has(item.id)).map(item => item.id as string)
     );
-    if (invalidRateItems.length > 0) {
-      throw new Error(
-        `Invalid GST rate. Allowed rates are: ${ALLOWED_GST_RATES.join('%, ')}%`
-      );
-    }
+    const toDelete = stored.filter(item => !keptIds.has(item.id)).map(item => item.id);
+    const toUpdate = totals.items.filter(item => {
+      const prev = item.id ? storedById.get(item.id) : undefined;
+      return prev !== undefined && itemNeedsUpdate(prev, item);
+    });
+    const toInsert = totals.items.filter(item => !item.id || !storedById.has(item.id));
 
-    // Recalculate totals
-    const totals = calculateInvoiceTotals(updates.items);
-
-    // Delete old items
-    const { error: deleteError } = await supabase
-      .from('invoice_items')
-      .delete()
-      .eq('invoice_id', invoiceId);
-
-    if (deleteError) {
-      throw new Error(deleteError.message);
-    }
-
-    // Insert new items
-    const itemsToInsert = totals.items.map(item => ({
-      invoice_id: invoiceId,
-      description: item.description,
-      quantity: item.quantity,
-      unit_price: item.unit_price,
-      line_total: item.line_total,
-      tax_rate: item.tax_rate,
-      tax_amount: item.tax_amount,
-    }));
-
-    const { error: insertError } = await supabase
-      .from('invoice_items')
-      .insert(itemsToInsert);
-
-    if (insertError) {
-      throw new Error(insertError.message);
-    }
-
-    // Update invoice totals
-    const invoiceUpdate: Record<string, any> = {
-      subtotal: totals.subtotal,
-      tax_total: totals.tax_total,
-      grand_total: totals.grand_total,
+    const fail = (step: string, message: string): never => {
+      if (wroteItems) {
+        throw new InvoicePartialSaveError(
+          `Some changes were saved, but ${step} failed: ${message}. The invoice has been reloaded; check it before saving again.`
+        );
+      }
+      throw new Error(message);
     };
 
-    if (updates.terms_and_conditions !== undefined) {
-      invoiceUpdate.terms_and_conditions = updates.terms_and_conditions;
+    // Deletes first: if the DB refuses them, nothing else has been written.
+    if (toDelete.length > 0) {
+      const { error: deleteError } = await supabase
+        .from('invoice_items')
+        .delete()
+        .in('id', toDelete)
+        .eq('invoice_id', invoiceId);
+      if (deleteError) fail('removing items', deleteError.message);
+      wroteItems = true;
     }
 
-    if (updates.issued_at !== undefined) {
-      invoiceUpdate.issued_at = normalizeIssuedAt(updates.issued_at);
+    for (const item of toUpdate) {
+      const { error: updateItemError } = await supabase
+        .from('invoice_items')
+        .update({
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          tax_rate: item.tax_rate,
+          line_total: item.line_total,
+          tax_amount: item.tax_amount,
+        })
+        .eq('id', item.id as string)
+        .eq('invoice_id', invoiceId);
+      if (updateItemError) fail('updating an item', updateItemError.message);
+      wroteItems = true;
     }
 
+    if (toInsert.length > 0) {
+      const { error: insertError } = await supabase
+        .from('invoice_items')
+        .insert(
+          toInsert.map(item => ({
+            invoice_id: invoiceId,
+            description: item.description,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            line_total: item.line_total,
+            tax_rate: item.tax_rate,
+            tax_amount: item.tax_amount,
+          }))
+        );
+      if (insertError) fail('adding items', insertError.message);
+      wroteItems = true;
+    }
+
+    invoiceUpdate.subtotal = totals.subtotal;
+    invoiceUpdate.tax_total = totals.tax_total;
+    invoiceUpdate.grand_total = totals.grand_total;
+  }
+
+  if (Object.keys(invoiceUpdate).length > 0) {
     const { error: updateError } = await supabase
       .from('invoices')
       .update(invoiceUpdate)
       .eq('id', invoiceId);
 
     if (updateError) {
-      throw new Error(updateError.message);
-    }
-  } else if (
-    updates.terms_and_conditions !== undefined ||
-    updates.issued_at !== undefined
-  ) {
-    // Only updating terms and/or invoice date (no item changes)
-    const invoiceUpdate: Record<string, any> = {};
-
-    if (updates.terms_and_conditions !== undefined) {
-      invoiceUpdate.terms_and_conditions = updates.terms_and_conditions;
-    }
-
-    if (updates.issued_at !== undefined) {
-      invoiceUpdate.issued_at = normalizeIssuedAt(updates.issued_at);
-    }
-
-    const { error: updateError } = await supabase
-      .from('invoices')
-      .update(invoiceUpdate)
-      .eq('id', invoiceId);
-
-    if (updateError) {
+      if (wroteItems) {
+        throw new InvoicePartialSaveError(
+          `The items were saved, but updating the invoice totals failed: ${updateError.message}. The invoice has been reloaded; save again to fix the totals.`
+        );
+      }
       throw new Error(updateError.message);
     }
   }
@@ -565,7 +769,7 @@ export async function updateInvoice(
 
 /**
  * Update invoice status with transition validation
- * 
+ *
  * LOCKED RULES:
  * - Only allowed transitions are permitted
  * - Finalized/paid invoices cannot be edited
@@ -576,19 +780,10 @@ export async function updateInvoiceStatus(
   invoiceId: string,
   newStatus: InvoiceStatus
 ): Promise<Invoice> {
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  const role = await getUserRole(userId);
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot update invoices
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to update invoices');
+  if (!canWriteInvoices(role)) {
+    throw new Error('You do not have permission to update invoices');
   }
 
   // Fetch current invoice
@@ -599,6 +794,10 @@ export async function updateInvoiceStatus(
 
   // Validate status transition
   validateStatusTransition(invoice.status, newStatus);
+
+  if (newStatus === 'finalized' && invoice.status === 'draft' && (invoice.invoice_items || []).length === 0) {
+    throw new Error('Add at least one line item before finalizing this invoice');
+  }
 
   // Update invoice status
   const { error } = await supabase
@@ -620,7 +819,7 @@ export async function updateInvoiceStatus(
 
 /**
  * Finalize invoice (change status from draft to finalized)
- * 
+ *
  * After finalization:
  * - Invoice is locked from editing
  * - issued_at timestamp is set (by DB trigger)
@@ -632,7 +831,7 @@ export async function finalizeInvoice(userId: string, invoiceId: string): Promis
 
 /**
  * Cancel invoice (change status to cancelled)
- * 
+ *
  * Allowed from: draft, finalized
  * Not allowed from: partially_paid, paid, cancelled
  */
@@ -640,86 +839,11 @@ export async function cancelInvoice(userId: string, invoiceId: string): Promise<
   await updateInvoiceStatus(userId, invoiceId, 'cancelled');
 }
 
-/**
- * Update invoice payment status based on payment summary
- * 
- * Called after every payment record/delete to sync invoice status.
- * Uses service-layer logic (not DB trigger) for debuggability.
- *
- * Rules:
- *   amount_paid >= grand_total → 'paid'
- *   amount_paid > 0 → 'partially_paid'
- *   amount_paid === 0 → revert to 'finalized'
- */
-export async function syncInvoicePaymentStatus(
-  _userId: string,
-  invoiceId: string
-): Promise<void> {
-  const invoice = await getInvoiceById(invoiceId);
-  if (!invoice) return;
-
-  // Only sync for finalized/partially_paid/paid invoices
-  if (!['finalized', 'partially_paid', 'paid'].includes(invoice.status)) {
-    return;
-  }
-
-  // Read the totals here rather than accepting them as arguments.
-  // Callers used to fetch the summary themselves and pass it in, which
-  // left a window where the numbers could go stale between their read
-  // and this write, and made it possible to sync against figures that
-  // never matched the database.
-  const { data: summary, error: summaryError } = await supabase
-    .from('invoices_with_payment_status')
-    .select('amount_paid, grand_total')
-    .eq('id', invoiceId)
-    .maybeSingle();
-
-  if (summaryError) {
-    throw new Error(summaryError.message);
-  }
-  if (!summary) return;
-
-  const amountPaid = Number(summary.amount_paid) || 0;
-  const grandTotal = Number(summary.grand_total) || 0;
-
-  // Settlement tolerance: balances within ₹0.05 count as fully paid,
-  // matching invoices_with_payment_status and the payment forms.
-  const balance = roundCurrency(grandTotal - amountPaid);
-
-  let targetStatus: InvoiceStatus;
-  if (amountPaid > 0 && balance <= SETTLEMENT_TOLERANCE) {
-    targetStatus = 'paid';
-  } else if (amountPaid > 0) {
-    targetStatus = 'partially_paid';
-  } else {
-    targetStatus = 'finalized';
-  }
-
-  // Only update if status actually changes
-  if (invoice.status !== targetStatus) {
-    validateStatusTransition(invoice.status, targetStatus);
-
-    const { error } = await supabase
-      .from('invoices')
-      .update({ status: targetStatus })
-      .eq('id', invoiceId);
-
-    if (error) {
-      // The payment row is already saved at this point; surface the
-      // failure instead of leaving the invoice silently stuck.
-      throw new Error(
-        `Payment was saved, but updating the invoice status to "${targetStatus}" failed: ${error.message}`
-      );
-    }
-  }
-}
-
 // ================================================================
 // DELETE INVOICE - NOT ALLOWED
 // ================================================================
 // Invoices are GST legal documents and CANNOT be deleted.
-// Use cancelInvoice() for cancellation.
+// Use cancelInvoice() for cancellation. The only delete is the
+// internal rollback of a draft whose items failed to save.
 // Future scope: voidInvoice(), creditNote()
-//
-// The database has a BEFORE DELETE trigger that blocks all deletes.
 // ================================================================

@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
+import { ModalActions } from './ModalParts';
 import { createInventoryItem, updateInventoryItem } from '@/services/inventoryService';
 import type { InventoryItem, Outlet } from '@/types';
 
@@ -13,7 +14,8 @@ import type { InventoryItem, Outlet } from '@/types';
 // CRITICAL RULES:
 // - Initial stock ONLY on create (triggers stock_in movement)
 // - Edit does NOT allow stock editing (metadata only)
-// - Outlet: Admin = selectable, Manager = auto-filled
+// - Outlet: Admin = selectable; Manager = selectable among assigned
+//   outlets when they have more than one, otherwise auto-filled
 // ================================================================
 
 interface AddEditInventoryItemModalProps {
@@ -39,6 +41,8 @@ export default function AddEditInventoryItemModal({
 }: AddEditInventoryItemModalProps) {
   const isEdit = !!editItem;
   const isManager = userRole === 'manager';
+  // Managers with one outlet get it fixed; with several they pick (outlets = their assignments).
+  const showOutletSelect = !isManager || (!isEdit && outlets.length > 1);
 
   // Form state
   const [outletId, setOutletId] = useState('');
@@ -77,6 +81,7 @@ export default function AddEditInventoryItemModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setError(null);
 
     // Validation
@@ -111,7 +116,7 @@ export default function AddEditInventoryItemModal({
         await updateInventoryItem(userId, editItem.id, {
           name: name.trim(),
           category: category.trim(),
-          material: material.trim() || undefined,
+          material: material.trim() || null, // null clears a previously set material
           unit: unit || 'pcs',
         });
       } else {
@@ -140,21 +145,28 @@ export default function AddEditInventoryItemModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isEdit ? 'Edit Inventory Item' : 'Add Inventory Item'}
+      title={isEdit ? 'Edit dishware item' : 'Add dishware item'}
+      description={
+        isEdit
+          ? 'Change the name and details. Stock is changed through movements, not here.'
+          : 'Opening stock is recorded as an “Added” movement.'
+      }
+      dismissable={!loading}
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <Alert variant="error">{error}</Alert>}
 
         {/* Outlet (admin = selectable, manager = auto-filled/hidden) */}
-        {!isManager ? (
+        {showOutletSelect ? (
           <Select
             label="Outlet"
             value={outletId}
             onChange={(e) => setOutletId(e.target.value)}
             required
             disabled={isEdit} // Cannot change outlet when editing
+            helperText={isEdit ? 'An item stays with the outlet it was created in.' : undefined}
           >
-            <option value="">Select Outlet</option>
+            <option value="">Select outlet</option>
             {outlets.map((outlet) => (
               <option key={outlet.id} value={outlet.id}>
                 {outlet.name}
@@ -164,68 +176,67 @@ export default function AddEditInventoryItemModal({
         ) : (
           <Input
             label="Outlet"
-            value={outlets.find(o => o.id === outletId)?.name || 'Your Outlet'}
+            value={outlets.find(o => o.id === outletId)?.name || 'Your outlet'}
             disabled
           />
         )}
 
-        {/* Item Details */}
         <Input
-          label="Item Name"
+          label="Item name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g., Plate 10-inch"
+          placeholder="e.g. Plate 10-inch"
           required
         />
 
-        <Input
-          label="Category"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          placeholder="e.g., Plate, Glass, Bowl"
-          required
-        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Input
+            label="Category"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            placeholder="e.g. Plate, Glass, Bowl"
+            required
+          />
+          <Input
+            label="Material"
+            value={material}
+            onChange={(e) => setMaterial(e.target.value)}
+            placeholder="e.g. Steel, Ceramic"
+            helperText="Optional"
+          />
+        </div>
 
-        <Input
-          label="Material"
-          value={material}
-          onChange={(e) => setMaterial(e.target.value)}
-          placeholder="e.g., Steel, Ceramic, Melamine (optional)"
-        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Input
+            label="Unit"
+            value={unit}
+            onChange={(e) => setUnit(e.target.value)}
+            placeholder="e.g. pcs, dozen"
+          />
 
-        <Input
-          label="Unit"
-          value={unit}
-          onChange={(e) => setUnit(e.target.value)}
-          placeholder="e.g., pcs, dozen"
-        />
-
-        {/* Initial Stock (ONLY on create) */}
-        {!isEdit && (
-          <>
+          {/* Initial stock (ONLY on create) */}
+          {!isEdit && (
             <Input
               type="number"
-              label="Initial Stock"
+              inputMode="numeric"
+              label="Opening stock"
               value={initialStock}
               onChange={(e) => setInitialStock(e.target.value)}
               min="0"
               required
+              className="tabular text-right"
             />
-            <p className="text-sm text-muted-foreground">
-              Initial stock will create a stock_in movement.
-            </p>
-          </>
-        )}
+          )}
+        </div>
 
-        {/* Buttons */}
-        <div className="flex justify-end gap-2 pt-4">
+        <ModalActions>
           <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
             Cancel
           </Button>
-          <Button type="submit" disabled={loading}>
-            {loading ? 'Saving...' : isEdit ? 'Update Item' : 'Add Item'}
+          <Button type="submit" isLoading={loading}>
+            {loading ? 'Saving…' : isEdit ? 'Save changes' : 'Add item'}
           </Button>
-        </div>
+        </ModalActions>
       </form>
     </Modal>
   );

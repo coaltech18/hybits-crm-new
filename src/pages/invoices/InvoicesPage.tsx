@@ -1,22 +1,27 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
-import { FileText, MoreVertical, Eye, Pencil, Download, XCircle, Copy } from 'lucide-react';
+import { ArrowRight, Download, FilePlus2, FileText, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { getInvoices, finalizeInvoice, cancelInvoice } from '@/services/invoiceService';
+import { getInvoices, finalizeInvoice, INVOICE_PAGE_SIZE, type InvoiceListRow } from '@/services/invoiceService';
 import { downloadInvoicePDF } from '@/utils/invoicePdfGenerator';
-import type { Invoice, InvoiceType, InvoiceStatus } from '@/types';
+import type { InvoiceType, InvoiceStatus, InvoiceFilters } from '@/types';
 import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { Spinner } from '@/components/ui/Spinner';
+import { Button, LinkButton } from '@/components/ui/Button';
+import { TableSkeleton } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
 import { Select } from '@/components/ui/Select';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { StatusBadge } from '@/components/ui/StatusStamp';
+import { AgingBar } from '@/components/ui/AgingBar';
 import { formatCurrency } from '@/utils/format';
+import { formatDate } from '@/utils/billingDate';
+import { daysSince, toLocalISODate } from '@/utils/date';
+import { cn } from '@/utils/cn';
+import { INVOICE_TYPE_LABEL } from './invoiceDisplay';
 
 export default function InvoicesPage() {
   useDocumentTitle('Invoices');
@@ -24,426 +29,421 @@ export default function InvoicesPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { showToast } = useToast();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceListRow[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [outstanding, setOutstanding] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestSeq = useRef(0);
+
+  const canEdit = user?.role === 'admin' || user?.role === 'manager';
 
   // Filters
   const [selectedType, setSelectedType] = useState<InvoiceType | ''>('');
   const [selectedStatus, setSelectedStatus] = useState<InvoiceStatus | ''>('');
 
-  // Action states
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{
-    type: 'finalize' | 'cancel';
+  // Action states. Cancelling lives on the invoice page; the list only finalizes drafts.
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [finalizing, setFinalizing] = useState(false);
+  const [confirmFinalize, setConfirmFinalize] = useState<{
     invoiceId: string;
     invoiceNumber: string;
   } | null>(null);
 
-  // Dropdown state
-  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
-  const triggerRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    loadData();
-  }, [user?.id, selectedType, selectedStatus]);
-
-  // Open dropdown positioned relative to viewport via trigger button rect
-  const handleDropdownToggle = useCallback((invoiceId: string) => {
-    if (openDropdown === invoiceId) {
-      setOpenDropdown(null);
-      setDropdownPos(null);
-      return;
-    }
-    const btn = triggerRefs.current.get(invoiceId);
-    if (btn) {
-      const rect = btn.getBoundingClientRect();
-      setDropdownPos({
-        top: rect.bottom + 4,
-        left: rect.right - 192, // 192px = w-48 dropdown width, right-aligned
-      });
-    }
-    setOpenDropdown(invoiceId);
-  }, [openDropdown]);
-
-  // Close dropdown when clicking outside or scrolling
-  useEffect(() => {
-    if (!openDropdown) return;
-
-    function handleClickOutside(event: MouseEvent) {
-      const target = event.target as Node;
-      // Ignore clicks on the trigger button itself
-      const triggerBtn = triggerRefs.current.get(openDropdown!);
-      if (triggerBtn?.contains(target)) return;
-      if (dropdownRef.current && !dropdownRef.current.contains(target)) {
-        setOpenDropdown(null);
-        setDropdownPos(null);
-      }
-    }
-    function handleScroll() {
-      setOpenDropdown(null);
-      setDropdownPos(null);
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    window.addEventListener('scroll', handleScroll, true);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      window.removeEventListener('scroll', handleScroll, true);
-    };
-  }, [openDropdown]);
-
-  async function loadData() {
+  // `silent` refreshes the rows in place after an action (no skeleton).
+  const loadData = useCallback(async (silent = false) => {
     if (!user?.id) return;
+    // Only the latest request may write state, so a slow earlier
+    // response can't overwrite the current filter's results.
+    const seq = ++requestSeq.current;
 
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
 
-      const filters: Record<string, string> = {};
+      const filters: InvoiceFilters = {};
       if (selectedType) filters.invoice_type = selectedType;
       if (selectedStatus) filters.status = selectedStatus;
 
-      const data = await getInvoices(user.id, filters);
-      setInvoices(data);
+      const result = await getInvoices(user.id, filters, { page, pageSize: INVOICE_PAGE_SIZE });
+      if (seq !== requestSeq.current) return;
+      if (result.invoices.length === 0 && page > 0 && result.total > 0) {
+        // The current page emptied (e.g. after a status change); step back
+        setPage(Math.ceil(result.total / INVOICE_PAGE_SIZE) - 1);
+        return;
+      }
+      setInvoices(result.invoices);
+      setTotalCount(result.total);
+      setOutstanding(result.outstanding);
     } catch (err) {
+      if (seq !== requestSeq.current) return;
+      if (!silent) {
+        setInvoices([]);
+        setTotalCount(0);
+        setOutstanding(null);
+      }
       setError(err instanceof Error ? err.message : 'Failed to load invoices');
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
+    }
+  }, [user?.id, selectedType, selectedStatus, page]);
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
+
+  const pageCount = Math.max(1, Math.ceil(totalCount / INVOICE_PAGE_SIZE));
+
+  async function handleDownload(invoice: InvoiceListRow) {
+    if (downloadingId) return;
+    try {
+      setDownloadingId(invoice.id);
+      await downloadInvoicePDF(invoice);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to download the PDF', 'error');
+    } finally {
+      setDownloadingId(null);
     }
   }
 
-  async function handleAction(action: 'finalize' | 'cancel', invoiceId: string) {
-    if (!user?.id) return;
+  async function handleFinalize(invoiceId: string) {
+    if (!user?.id || finalizing) return;
 
     try {
-      setActionLoading(invoiceId);
-
-      if (action === 'finalize') {
-        await finalizeInvoice(user.id, invoiceId);
-        showToast('Invoice finalized successfully', 'success');
-      } else if (action === 'cancel') {
-        await cancelInvoice(user.id, invoiceId);
-        showToast('Invoice cancelled', 'success');
-      }
-
-      setConfirmAction(null);
-      await loadData();
+      setFinalizing(true);
+      await finalizeInvoice(user.id, invoiceId);
+      showToast('Invoice finalized successfully', 'success');
+      setConfirmFinalize(null);
+      await loadData(true);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : `Failed to ${action} invoice`;
+      const errorMessage = err instanceof Error ? err.message : 'Failed to finalize invoice';
       showToast(errorMessage, 'error');
     } finally {
-      setActionLoading(null);
+      setFinalizing(false);
     }
   }
 
-  function getStatusBadge(status: InvoiceStatus) {
-    const variants: Record<InvoiceStatus, 'default' | 'success' | 'secondary' | 'destructive'> = {
-      draft: 'default',
-      finalized: 'success',
-      partially_paid: 'default',
-      paid: 'success',
-      cancelled: 'secondary',
-    };
-    const label = status.replace('_', ' ').toUpperCase();
-    return <Badge variant={variants[status] || 'default'}>{label}</Badge>;
-  }
+  const filtered = Boolean(selectedType || selectedStatus);
+  // A failed load has no count to report and no proof the list is empty.
+  const loadFailed = !loading && error !== null;
+  const showingFrom = page * INVOICE_PAGE_SIZE + 1;
+  const showingTo = Math.min((page + 1) * INVOICE_PAGE_SIZE, totalCount);
 
-  function getTypeBadge(type: InvoiceType) {
-    const colors = {
-      subscription: 'bg-brand-primary/20 text-brand-primary',
-      event: 'bg-purple-100 text-purple-800',
-    };
-    return (
-      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${colors[type]}`}>
-        {type.toUpperCase()}
-      </span>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Spinner size="lg" />
-      </div>
-    );
+  function clearFilters() {
+    setSelectedType('');
+    setSelectedStatus('');
+    setPage(0);
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Invoices</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage subscription and event invoices
-          </p>
-        </div>
-        {user?.role !== 'accountant' && (
-          <Link to="/invoices/create">
-            <Button>+ Create Invoice</Button>
-          </Link>
-        )}
-      </div>
+    <div>
+      <PageHeader
+        title="Invoices"
+        description="GST tax invoices for subscriptions and events, newest first."
+        actions={
+          canEdit && (
+            <LinkButton to="/invoices/create">
+              <FilePlus2 className="h-4 w-4" aria-hidden="true" />
+              New invoice
+            </LinkButton>
+          )
+        }
+      />
 
-      {/* Filters */}
-      <Card>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Select
-            label="Invoice Type"
-            value={selectedType}
-            onChange={(e) => setSelectedType(e.target.value as InvoiceType | '')}
-          >
-            <option value="">All Types</option>
-            <option value="subscription">Subscription</option>
-            <option value="event">Event</option>
-          </Select>
-
-          <Select
-            label="Status"
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value as InvoiceStatus | '')}
-          >
-            <option value="">All Statuses</option>
-            <option value="draft">Draft</option>
-            <option value="finalized">Finalized</option>
-            <option value="partially_paid">Partially Paid</option>
-            <option value="paid">Paid</option>
-            <option value="cancelled">Cancelled</option>
-          </Select>
-
-          {(selectedType || selectedStatus) && (
-            <div className="flex items-end">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSelectedType('');
-                  setSelectedStatus('');
-                }}
-              >
-                Clear Filters
-              </Button>
-            </div>
+      {/* Filters stay mounted while results load */}
+      <Card padding="sm" className="mb-6">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-full sm:w-52">
+            <Select
+              label="Type"
+              value={selectedType}
+              onChange={(e) => { setSelectedType(e.target.value as InvoiceType | ''); setPage(0); }}
+            >
+              <option value="">All types</option>
+              <option value="subscription">Subscription</option>
+              <option value="event">Event</option>
+            </Select>
+          </div>
+          <div className="w-full sm:w-52">
+            <Select
+              label="Status"
+              value={selectedStatus}
+              onChange={(e) => { setSelectedStatus(e.target.value as InvoiceStatus | ''); setPage(0); }}
+            >
+              <option value="">All statuses</option>
+              <option value="draft">Draft</option>
+              <option value="finalized">Finalized</option>
+              <option value="partially_paid">Part paid</option>
+              <option value="paid">Paid</option>
+              <option value="cancelled">Cancelled</option>
+            </Select>
+          </div>
+          {filtered && (
+            <Button variant="ghost" onClick={clearFilters}>
+              <X className="h-4 w-4" aria-hidden="true" />
+              Clear filters
+            </Button>
           )}
         </div>
       </Card>
 
-      {/* Error */}
-      {error && <Alert variant="error">{error}</Alert>}
-
-      {/* Empty State */}
-      {invoices.length === 0 ? (
-        <Card>
-          <EmptyState
-            icon={FileText}
-            title="No invoices found"
-            description={user?.role !== 'accountant' ? "Create your first invoice to start billing." : "No invoices match your current filters."}
-            action={user?.role !== 'accountant' ? { label: 'Create Invoice', onClick: () => navigate('/invoices/create') } : undefined}
-          />
-        </Card>
-      ) : (
-        /* Invoices Table */
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b">
-                <tr>
-                  <th className="text-left py-3 px-4">Invoice #</th>
-                  <th className="text-left py-3 px-4">Type</th>
-                  <th className="text-left py-3 px-4">Client</th>
-                  <th className="text-left py-3 px-4">Event</th>
-                  <th className="text-right py-3 px-4">Subtotal</th>
-                  <th className="text-right py-3 px-4">Tax</th>
-                  <th className="text-right py-3 px-4">Total</th>
-                  <th className="text-left py-3 px-4">Status</th>
-                  <th className="text-center py-3 px-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.map((invoice) => (
-                  <tr key={invoice.id} className="border-b hover:bg-muted/50">
-                    <td className="py-3 px-4">
-                      <Link
-                        to={`/invoices/${invoice.id}`}
-                        className="text-brand-primary hover:underline font-medium"
-                      >
-                        {invoice.invoice_number}
-                      </Link>
-                    </td>
-                    <td className="py-3 px-4">{getTypeBadge(invoice.invoice_type)}</td>
-                    <td className="py-3 px-4 text-sm">
-                      {invoice.clients?.name || 'Unknown Client'}
-                    </td>
-                    <td className="py-3 px-4 text-sm">
-                      {invoice.events?.event_name || '-'}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {formatCurrency(invoice.subtotal)}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {formatCurrency(invoice.tax_total)}
-                    </td>
-                    <td className="py-3 px-4 text-right font-semibold">
-                      {formatCurrency(invoice.grand_total)}
-                    </td>
-                    <td className="py-3 px-4">{getStatusBadge(invoice.status)}</td>
-                    <td className="py-3 px-4">
-                      {/* Dropdown Trigger */}
-                      <div className="flex justify-center">
-                        <button
-                          ref={(el) => { if (el) triggerRefs.current.set(invoice.id, el); }}
-                          type="button"
-                          className="inline-flex items-center justify-center h-8 w-8 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-gray-400"
-                          onClick={() => handleDropdownToggle(invoice.id)}
-                          disabled={actionLoading === invoice.id}
-                          aria-haspopup="true"
-                          aria-expanded={openDropdown === invoice.id}
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {error && (
+        <Alert variant="error" className="mb-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{error}</span>
+            <Button variant="outline" size="sm" onClick={() => void loadData()} disabled={loading}>
+              Try again
+            </Button>
           </div>
-        </Card>
+        </Alert>
       )}
 
-      {/* Portal-rendered Dropdown Menu — renders outside table to escape overflow clipping */}
-      {openDropdown && dropdownPos && (() => {
-        const activeInvoice = invoices.find(inv => inv.id === openDropdown);
-        if (!activeInvoice) return null;
-
-        const menuItemClass = 'flex w-full items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 cursor-pointer transition-colors duration-100';
-
-        return createPortal(
-          <div
-            ref={dropdownRef}
-            className="fixed z-[9999] w-48 rounded-lg border border-gray-200 bg-white shadow-xl ring-1 ring-black/5"
-            style={{
-              top: dropdownPos.top,
-              left: dropdownPos.left,
-            }}
-          >
-            <div className="py-1">
-              {/* View */}
-              <button
-                className={menuItemClass}
-                onClick={() => {
-                  setOpenDropdown(null);
-                  navigate(`/invoices/${activeInvoice.id}`);
-                }}
-              >
-                <Eye className="h-4 w-4 text-gray-400" />
-                View
-              </button>
-
-              {/* Edit — draft only */}
-              {user?.role !== 'accountant' && activeInvoice.status === 'draft' && (
-                <button
-                  className={menuItemClass}
-                  onClick={() => {
-                    setOpenDropdown(null);
-                    navigate(`/invoices/${activeInvoice.id}/edit`);
-                  }}
-                >
-                  <Pencil className="h-4 w-4 text-gray-400" />
-                  Edit
-                </button>
+      {/* Count line */}
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <p className="text-sm text-ink-muted" aria-live="polite">
+          {loading ? (
+            'Loading invoices…'
+          ) : loadFailed ? null : (
+            <>
+              <span className="tabular font-semibold text-ink">{new Intl.NumberFormat('en-IN').format(totalCount)}</span>{' '}
+              invoice{totalCount === 1 ? '' : 's'}
+              {filtered ? ' match these filters' : ''}
+              {totalCount > INVOICE_PAGE_SIZE && ` · showing ${showingFrom}–${showingTo}`}
+              {outstanding !== null && outstanding > 0 && (
+                <>
+                  {' · '}
+                  <span className="amount font-semibold text-ink">{formatCurrency(outstanding)}</span> outstanding
+                </>
               )}
+            </>
+          )}
+        </p>
+        <Link to="/reports" className="inline-flex items-center gap-1 text-sm font-semibold text-brand-primary hover:underline">
+          Outstanding and aging <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </div>
 
-              {/* Download */}
-              <button
-                className={menuItemClass}
-                onClick={async () => {
-                  setOpenDropdown(null);
-                  await downloadInvoicePDF(activeInvoice);
-                }}
-              >
-                <Download className="h-4 w-4 text-gray-400" />
-                {activeInvoice.status === 'draft' ? 'Download Draft' : 'Download Invoice'}
-              </button>
-
-              {/* Finalize — draft only */}
-              {user?.role !== 'accountant' && activeInvoice.status === 'draft' && (
-                <button
-                  className={menuItemClass}
-                  onClick={() => {
-                    setOpenDropdown(null);
-                    setConfirmAction({
-                      type: 'finalize',
-                      invoiceId: activeInvoice.id,
-                      invoiceNumber: activeInvoice.invoice_number,
-                    });
-                  }}
-                >
-                  <FileText className="h-4 w-4 text-gray-400" />
-                  Finalize & Issue
-                </button>
-              )}
-
-              {/* Cancel — draft only */}
-              {user?.role !== 'accountant' && activeInvoice.status === 'draft' && (
-                <button
-                  className={`${menuItemClass} !text-red-600 hover:!text-red-700 hover:!bg-red-50`}
-                  onClick={() => {
-                    setOpenDropdown(null);
-                    setConfirmAction({
-                      type: 'cancel',
-                      invoiceId: activeInvoice.id,
-                      invoiceNumber: activeInvoice.invoice_number,
-                    });
-                  }}
-                >
-                  <XCircle className="h-4 w-4" />
-                  Cancel Invoice
-                </button>
-              )}
-
-              {/* Separator + Duplicate */}
-              <div className="border-t border-gray-100 my-1" />
-              <button
-                className={menuItemClass}
-                onClick={() => {
-                  setOpenDropdown(null);
-                  navigate(`/invoices/create?duplicate=${activeInvoice.id}`);
-                }}
-              >
-                <Copy className="h-4 w-4 text-gray-400" />
-                Duplicate
-              </button>
+      <Card padding="none" className="overflow-hidden">
+        {loading ? (
+          <TableSkeleton rows={8} cols={7} />
+        ) : invoices.length === 0 ? (
+          loadFailed ? (
+            <p className="px-5 py-12 text-center text-sm text-ink-muted">
+              Invoices could not be loaded. Check the message above and try again.
+            </p>
+          ) : filtered ? (
+            <EmptyState
+              icon={FileText}
+              title="No invoices match these filters"
+              description="Try another type or status, or clear the filters to see every invoice."
+              action={{ label: 'Clear filters', onClick: clearFilters }}
+            />
+          ) : (
+            <EmptyState
+              icon={FileText}
+              title="No invoices yet"
+              description={
+                canEdit
+                  ? 'Create the first invoice to start billing. It is saved as a draft until you finalize it.'
+                  : 'Invoices raised by the outlets will appear here.'
+              }
+              action={canEdit ? { label: 'New invoice', onClick: () => navigate('/invoices/create') } : undefined}
+            />
+          )
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="ledger">
+                <thead>
+                  <tr>
+                    <th scope="col">Invoice</th>
+                    <th scope="col">Client</th>
+                    <th scope="col">Date · type</th>
+                    <th scope="col" className="text-right">Total</th>
+                    <th scope="col" className="text-right">Balance due</th>
+                    <th scope="col">Status</th>
+                    <th scope="col" data-nolabel className="w-px"><span className="sr-only">Action</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map((invoice) => {
+                    const busy = downloadingId === invoice.id;
+                    const rowState =
+                      invoice.status === 'draft'
+                        ? 'row-draft'
+                        : invoice.status === 'cancelled'
+                          ? 'row-void'
+                          : isOverdue(invoice)
+                            ? 'row-overdue'
+                            : undefined;
+                    return (
+                      <tr key={invoice.id} className={rowState}>
+                        <td className="whitespace-nowrap">
+                          <Link
+                            to={`/invoices/${invoice.id}`}
+                            className="serial font-semibold text-ink hover:text-brand-primary"
+                          >
+                            {invoice.invoice_number || 'Draft'}
+                          </Link>
+                          {/* Phones hide the date column; keep the date on every card. */}
+                          {invoice.issued_at && (
+                            <span className="block text-sm font-normal text-ink-muted sm:hidden">
+                              {formatDate(invoice.issued_at, 'short')}
+                            </span>
+                          )}
+                        </td>
+                        <td className="max-w-[15rem]">
+                          <div className="min-w-0">
+                            <span className="block truncate text-ink">{invoice.clients?.name || 'Unknown client'}</span>
+                            {invoice.events?.event_name && (
+                              <span className="block truncate text-sm text-ink-muted">{invoice.events.event_name}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="cell-hide-sm whitespace-nowrap">
+                          <span className="block text-ink">{invoice.issued_at ? formatDate(invoice.issued_at, 'short') : '—'}</span>
+                          <span className="block text-sm text-ink-muted">{INVOICE_TYPE_LABEL[invoice.invoice_type] ?? invoice.invoice_type}</span>
+                        </td>
+                        <td className="amount cell-hide-sm text-right font-semibold text-ink">{formatCurrency(invoice.grand_total)}</td>
+                        <td className="amount cell-emph text-right">
+                          <BalanceCell invoice={invoice} />
+                        </td>
+                        <td><StatusBadge kind="invoice" status={invoice.status} /></td>
+                        <td className="text-right">
+                          {canEdit && invoice.status === 'draft' ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={finalizing}
+                              onClick={() =>
+                                setConfirmFinalize({
+                                  invoiceId: invoice.id,
+                                  invoiceNumber: invoice.invoice_number,
+                                })
+                              }
+                            >
+                              Finalize
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              isLoading={busy}
+                              onClick={() => void handleDownload(invoice)}
+                              aria-label={`Download ${invoice.invoice_number || 'invoice'} as PDF`}
+                            >
+                              {!busy && <Download className="h-4 w-4" aria-hidden="true" />}
+                              PDF
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </div>,
-          document.body
-        );
-      })()}
+
+            {totalCount > INVOICE_PAGE_SIZE && (
+              <div className="flex flex-wrap items-center justify-end gap-3 border-t border-rule px-4 py-3">
+                <nav className="flex items-center gap-3" aria-label="Pages">
+                  <span className="tabular text-sm text-ink-muted">
+                    {showingFrom}–{showingTo} of {totalCount}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))}
+                    disabled={page >= pageCount - 1}
+                  >
+                    Next
+                  </Button>
+                </nav>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
 
       {/* Confirmation Dialog - Finalize */}
       <ConfirmDialog
-        isOpen={confirmAction?.type === 'finalize'}
-        title="Finalize & Issue Invoice?"
-        message={`Are you sure you want to finalize invoice ${confirmAction?.invoiceNumber}? After finalization, this invoice cannot be edited.`}
-        confirmLabel="Yes, Finalize"
+        isOpen={!!confirmFinalize}
+        title="Finalize this invoice?"
+        message={`After finalizing, invoice ${confirmFinalize?.invoiceNumber} can no longer be edited.`}
+        confirmLabel="Finalize invoice"
         variant="info"
-        isLoading={!!actionLoading}
-        onConfirm={() => confirmAction && handleAction('finalize', confirmAction.invoiceId)}
-        onCancel={() => setConfirmAction(null)}
+        isLoading={finalizing}
+        onConfirm={() => confirmFinalize && handleFinalize(confirmFinalize.invoiceId)}
+        onCancel={() => setConfirmFinalize(null)}
       />
 
-      {/* Confirmation Dialog - Cancel */}
-      <ConfirmDialog
-        isOpen={confirmAction?.type === 'cancel'}
-        title="Cancel Invoice?"
-        message={`Are you sure you want to cancel invoice ${confirmAction?.invoiceNumber}? This action cannot be undone.`}
-        confirmLabel="Yes, Cancel Invoice"
-        variant="danger"
-        isLoading={!!actionLoading}
-        onConfirm={() => confirmAction && handleAction('cancel', confirmAction.invoiceId)}
-        onCancel={() => setConfirmAction(null)}
-      />
     </div>
   );
+}
+
+/**
+ * Balance due from invoices_with_payment_status (merged into each row by
+ * getInvoices). Drafts and cancelled invoices owe nothing. If the balance
+ * lookup failed, a finalized invoice (no payments yet) falls back to its
+ * total and a part-paid one points to the invoice.
+ */
+function BalanceCell({ invoice }: { invoice: InvoiceListRow }) {
+  if (invoice.status === 'paid') return <span className="text-stamp">{formatCurrency(0)}</span>;
+  if (invoice.status === 'finalized' || invoice.status === 'partially_paid') {
+    const due = invoice.balance_due ?? (invoice.status === 'finalized' ? invoice.grand_total : null);
+    if (due === null) {
+      return (
+        <span className="text-ink-muted">
+          —<span className="sr-only">balance shown on the invoice</span>
+        </span>
+      );
+    }
+    const days = issuedDays(invoice);
+    const late = days !== null && days > 30;
+    return (
+      <div className="inline-flex flex-col items-end gap-1">
+        <span className={cn('font-semibold', due > 0 && late ? 'text-overdue' : 'text-ink')}>
+          {formatCurrency(due)}
+        </span>
+        {due > 0 && days !== null && <AgingBar days={days} />}
+      </div>
+    );
+  }
+  if (invoice.status === 'draft') {
+    // Desktop already shows the total in its own column. Phones hide that
+    // column, so the card shows the draft's total here, captioned so it
+    // isn't read as money owed.
+    return (
+      <span>
+        <span className="hidden text-ink-faint sm:inline">—</span>
+        <span className="inline-flex flex-col items-end sm:hidden">
+          <span className="text-ink">{formatCurrency(invoice.grand_total)}</span>
+          <span className="text-xs font-normal text-ink-muted">draft total</span>
+        </span>
+      </span>
+    );
+  }
+  return <span className="text-ink-faint">—</span>;
+}
+
+/** Whole days since the invoice date (issued_at), local calendar; null for undated rows. */
+function issuedDays(invoice: InvoiceListRow): number | null {
+  return invoice.issued_at ? daysSince(toLocalISODate(new Date(invoice.issued_at))) : null;
+}
+
+/** Issued, still owing, and dated more than 30 days ago (the aging report's 31+ bucket). */
+function isOverdue(invoice: InvoiceListRow): boolean {
+  if (invoice.status !== 'finalized' && invoice.status !== 'partially_paid') return false;
+  if (invoice.balance_due !== null && invoice.balance_due !== undefined && invoice.balance_due <= 0) return false;
+  const days = issuedDays(invoice);
+  return days !== null && days > 30;
 }

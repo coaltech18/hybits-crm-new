@@ -13,7 +13,9 @@ export const COMPANY_PROFILE = {
     /** Company GSTIN */
     gstin: '29AAHCH6039E1ZH',
 
-    /** Registered office address */
+    /** Registered office address. TODO(owner): replace with the full address
+     *  (street, area, city, PIN, state) exactly as on the GST certificate;
+     *  it is printed as the supplier address on every tax invoice. */
     address: 'Bengaluru, Karnataka',
 
     /** Contact phone */
@@ -51,7 +53,8 @@ export const DEFAULT_TERMS_AND_CONDITIONS = `Terms & Conditions
 • Additional charges may apply for extended rental periods or special requests.
 • In the event of damage or loss of the rented dishes, the customer will be charged to cover the cost of replacement or repair.
 • The company reserves the right to change the pricing of its services. Customers will be notified of any price changes before they take effect.
-• Price includes GST and sterilised ready to use dishes.
+• Prices are exclusive of GST; GST is charged as shown on this invoice.
+• Dishes are supplied sterilised and ready to use.
 • Transportation charges may apply in certain cases.
 • Strictly No Manual washing: Under no circumstances are the rented sterilized dishes to be washed manually by the customer or event staff.
 `;
@@ -60,7 +63,8 @@ export const DEFAULT_TERMS_AND_CONDITIONS = `Terms & Conditions
 // INVOICE NUMBER FORMAT OPTIONS
 // ================================================================
 // Managers can select one of these formats during invoice creation.
-// The system controls the sequential number (NNNN).
+// The system controls the sequential number (NNNN). Numbering starts
+// at 0031 (seq_floor = 30 in generate_invoice_number, migration 038).
 // Once an invoice number is generated, it is locked and immutable.
 // ================================================================
 
@@ -77,25 +81,25 @@ export const INVOICE_NUMBER_FORMATS: InvoiceNumberFormatOption[] = [
     {
         value: 'default',
         label: 'Standard',
-        example: 'INV-20260210-0001',
+        example: 'INV-20260210-0031',
         description: 'INV-YYYYMMDD-NNNN',
     },
     {
         value: 'outlet_fy',
         label: 'Outlet + Financial Year',
-        example: 'INV/HYB_001/2025-26/0001',
+        example: 'INV/HYB_001/2025-26/0031',
         description: 'INV/OUTLET/FY/NNNN',
     },
     {
         value: 'outlet_short',
         label: 'Outlet Short',
-        example: 'INV-HYB_001-0001',
+        example: 'INV-HYB_001-0031',
         description: 'INV-OUTLET-NNNN',
     },
     {
         value: 'fy_only',
         label: 'Financial Year',
-        example: 'INV/2025-26/0001',
+        example: 'INV/2025-26/0031',
         description: 'INV/FY/NNNN',
     },
 ];

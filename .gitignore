@@ -34,8 +34,13 @@ index-[a-f0-9]*.js*.bundle.js
 index-*.js
 
 # Playwright
+/build-e2e/
 /test-results/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Impeccable transient review output (screenshots, decision pages)
+.impeccable/review/
+.impeccable/questions/

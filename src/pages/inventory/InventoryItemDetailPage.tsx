@@ -1,26 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getInventoryItemByIdV2, type InventoryItemV2 } from '@/services/inventoryServiceV2';
 import { getInventoryMovements } from '@/services/inventoryMovementService';
 import type { InventoryMovement } from '@/types';
-import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { Spinner } from '@/components/ui/Spinner';
+import { Skeleton } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
-import { LifecycleBadge, StockBreakdown } from '@/components/inventory/InventoryV2Components';
-import {
-    ArrowLeft,
-    Plus,
-    Send,
-    RotateCcw,
-    AlertTriangle,
-    Search,
-    Trash2,
-    SlidersHorizontal,
-    History,
-} from 'lucide-react';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { LifecycleBadge } from '@/components/inventory/InventoryV2Components';
+import { ArrowRight, Plus, Send, RotateCcw, AlertTriangle, SearchX, Trash2, SlidersHorizontal } from 'lucide-react';
+import { StockStrip, MovementBadge, SignedQty, ReferenceCell } from './StockParts';
+import { istWhen, pcs } from './stockDisplay';
 
 // Action Modals
 import AddStockModal from '@/components/inventory/actions/AddStockModal';
@@ -34,32 +26,12 @@ import AdjustStockModal from '@/components/inventory/actions/AdjustStockModal';
 // ================================================================
 // INVENTORY ITEM DETAIL PAGE
 // ================================================================
-// Phase 1 of UI simplification:
-// - Shows item info, stock breakdown, and 7 action buttons
-// - All actions via clean modals (no raw movement forms)
-// - Movement history with friendly labels
-// - Role-based button visibility
+// Item name + lifecycle → stock strip → write-off / correction
+// actions → movement history ledger. Every action opens a modal;
+// buttons are shown only to roles and states that can use them.
 // ================================================================
 
-// Movement category friendly labels
-const MOVEMENT_LABELS: Record<string, { label: string; color: string }> = {
-    inflow: { label: 'Added', color: 'bg-green-100 text-green-800' },
-    outflow: { label: 'Sent Out', color: 'bg-blue-100 text-blue-800' },
-    return: { label: 'Returned', color: 'bg-purple-100 text-purple-800' },
-    writeoff: { label: 'Written Off', color: 'bg-red-100 text-red-800' },
-    adjustment: { label: 'Adjusted', color: 'bg-yellow-100 text-yellow-800' },
-    repair: { label: 'Repair', color: 'bg-orange-100 text-orange-800' },
-};
-
-// Fallback for old movement_type labels
-const MOVEMENT_TYPE_LABELS: Record<string, { label: string; color: string }> = {
-    stock_in: { label: 'Added', color: 'bg-green-100 text-green-800' },
-    allocation: { label: 'Sent Out', color: 'bg-blue-100 text-blue-800' },
-    return: { label: 'Returned', color: 'bg-purple-100 text-purple-800' },
-    damage: { label: 'Damaged', color: 'bg-orange-100 text-orange-800' },
-    loss: { label: 'Lost', color: 'bg-red-100 text-red-800' },
-    adjustment: { label: 'Adjusted', color: 'bg-yellow-100 text-yellow-800' },
-};
+const BACK = { to: '/inventory/items', label: 'Dishware items' };
 
 export default function InventoryItemDetailPage() {
     const { id } = useParams<{ id: string }>();
@@ -70,6 +42,7 @@ export default function InventoryItemDetailPage() {
     const [loading, setLoading] = useState(true);
     const [movementsLoading, setMovementsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [movementsError, setMovementsError] = useState<string | null>(null);
 
     // Modal states
     const [showAddStock, setShowAddStock] = useState(false);
@@ -82,301 +55,270 @@ export default function InventoryItemDetailPage() {
 
     const userRole = user?.role || '';
     const isAdmin = userRole === 'admin';
-    const isAccountant = userRole === 'accountant';
-    const canAct = !isAccountant;
+    const canAct = userRole === 'admin' || userRole === 'manager';
 
-    useEffect(() => {
-        if (user?.id && id) {
-            loadItem();
-            loadMovements();
-        }
-    }, [user?.id, id]);
+    useDocumentTitle(item?.name ?? 'Dishware item');
 
-    async function loadItem() {
+    // Only the latest request of each kind may write state (the :id can change mid-flight).
+    const itemRequest = useRef(0);
+    const movementsRequest = useRef(0);
+
+    const loadItem = useCallback(async () => {
         if (!user?.id || !id) return;
+        const req = ++itemRequest.current;
 
         try {
             setLoading(true);
             setError(null);
             const data = await getInventoryItemByIdV2(user.id, id);
-            setItem(data);
+            if (req === itemRequest.current) setItem(data);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to load item');
+            if (req === itemRequest.current) {
+                setError(err instanceof Error ? err.message : 'Failed to load item');
+            }
         } finally {
-            setLoading(false);
+            if (req === itemRequest.current) setLoading(false);
         }
-    }
+    }, [user?.id, id]);
 
-    async function loadMovements() {
+    const loadMovements = useCallback(async () => {
         if (!user?.id || !id) return;
+        const req = ++movementsRequest.current;
 
         try {
             setMovementsLoading(true);
             const data = await getInventoryMovements(user.id, {
                 inventory_item_id: id,
             });
+            if (req !== movementsRequest.current) return;
             setMovements(data);
+            setMovementsError(null);
         } catch (err) {
-            console.error('Failed to load movements:', err);
+            if (req === movementsRequest.current) {
+                setMovementsError(err instanceof Error ? err.message : 'Failed to load movement history');
+            }
         } finally {
-            setMovementsLoading(false);
+            if (req === movementsRequest.current) setMovementsLoading(false);
         }
-    }
+    }, [user?.id, id]);
+
+    // New :id: never show the previous item's movement history under it.
+    useEffect(() => {
+        setMovements([]);
+        setMovementsError(null);
+    }, [id]);
+
+    useEffect(() => {
+        if (user?.id && id) {
+            void loadItem();
+            void loadMovements();
+        }
+    }, [user?.id, id, loadItem, loadMovements]);
 
     function handleActionSuccess() {
         loadItem();
         loadMovements();
     }
 
-    function getMovementLabel(movement: InventoryMovement) {
-        // Try movement_category first (V2 field), fallback to movement_type
-        const category = (movement as any).movement_category;
-        if (category && MOVEMENT_LABELS[category]) {
-            return MOVEMENT_LABELS[category];
-        }
-        return MOVEMENT_TYPE_LABELS[movement.movement_type] || { label: movement.movement_type, color: 'bg-gray-100 text-gray-800' };
-    }
-
-    if (loading) {
+    // First load (or a different item): skeleton in place of the page.
+    // A refetch after an action keeps the page on screen.
+    if (loading && (!item || item.id !== id)) {
         return (
-            <div className="flex items-center justify-center min-h-[400px]">
-                <Spinner size="lg" />
+            <div aria-busy="true">
+                {/* Spans, not Skeleton divs: PageHeader puts these inside <h1> and <p> */}
+                <PageHeader
+                    back={BACK}
+                    title={<span className="skeleton inline-block h-8 w-56 rounded-md align-middle" aria-hidden="true" />}
+                    description={<span className="skeleton inline-block h-4 w-72 rounded-md align-middle" aria-hidden="true" />}
+                />
+                <StockStrip figures={null} loading label="Item stock" />
+                <div className="sheet space-y-3 p-5">
+                    {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-5" />)}
+                </div>
             </div>
         );
     }
 
     if (error || !item) {
         return (
-            <div className="space-y-4">
-                <Link to="/inventory/items">
-                    <Button variant="outline">
-                        <ArrowLeft className="w-4 h-4 mr-2" />
-                        Back to Items
-                    </Button>
-                </Link>
-                <Alert variant="error">{error || 'Item not found'}</Alert>
+            <div>
+                <PageHeader back={BACK} title="Item not available" />
+                <Alert variant="error">{error || 'This item could not be found. It may belong to an outlet you can’t see.'}</Alert>
             </div>
         );
     }
 
+    const life = item.lifecycle_status;
+    const writable = canAct && life !== 'archived';
+    const canAddStock = writable && (life === 'draft' || life === 'active');
+    const canAllocate = writable && life === 'active' && item.available_quantity > 0;
+    const canReceive = writable && item.allocated_quantity > 0;
+    const canMarkDamaged = writable && item.available_quantity > 0;
+    const canMarkLost = writable && (item.available_quantity > 0 || item.allocated_quantity > 0);
+    const canDispose = writable && item.damaged_quantity > 0;
+    // The DB accepts only returns and write-offs on discontinued items (042)
+    const canAdjust = writable && isAdmin && life !== 'discontinued';
+    const hasCorrections = canMarkDamaged || canMarkLost || canDispose || canAdjust;
+
     return (
-        <div className="space-y-6">
-            {/* Back + Header */}
-            <div>
-                <Link to="/inventory/items" className="inline-block mb-4">
-                    <Button variant="outline" size="sm">
-                        <ArrowLeft className="w-4 h-4 mr-2" />
-                        Back to Items
-                    </Button>
-                </Link>
+        <div>
+            <PageHeader
+                back={BACK}
+                title={item.name}
+                meta={<LifecycleBadge status={life} />}
+                description={[item.category, item.material, item.unit && `Unit: ${item.unit}`, item.outlet_name]
+                    .filter(Boolean)
+                    .join(' · ')}
+                actions={
+                    writable && (canAddStock || canAllocate || canReceive) ? (
+                        <>
+                            {canAddStock && (
+                                <Button type="button" onClick={() => setShowAddStock(true)}>
+                                    <Plus className="h-4 w-4" aria-hidden="true" />
+                                    Add stock
+                                </Button>
+                            )}
+                            {canAllocate && (
+                                <Button type="button" variant="outline" onClick={() => setShowAllocate(true)}>
+                                    <Send className="h-4 w-4" aria-hidden="true" />
+                                    Send out
+                                </Button>
+                            )}
+                            {canReceive && (
+                                <Button type="button" variant="outline" onClick={() => setShowReceiveBack(true)}>
+                                    <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                                    Record return
+                                </Button>
+                            )}
+                        </>
+                    ) : undefined
+                }
+            />
 
-                <div className="flex items-start justify-between">
-                    <div>
-                        <div className="flex items-center gap-3">
-                            <h1 className="text-3xl font-bold">{item.name}</h1>
-                            <LifecycleBadge status={item.lifecycle_status} />
-                        </div>
-                        <div className="flex items-center gap-4 mt-2 text-muted-foreground">
-                            <span>
-                                <Badge variant="default">{item.category}</Badge>
-                            </span>
-                            {item.material && <span>Material: {item.material}</span>}
-                            <span>Unit: {item.unit}</span>
-                            {item.outlet_name && <span>Outlet: {item.outlet_name}</span>}
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Stock Summary */}
-            <Card>
-                <h3 className="font-semibold mb-4">Stock Summary</h3>
-                <StockBreakdown
-                    total={item.total_quantity}
-                    available={item.available_quantity}
-                    allocated={item.allocated_quantity}
-                    damaged={item.damaged_quantity}
-                    inRepair={item.in_repair_quantity}
-                    lost={item.lost_quantity}
-                />
-            </Card>
-
-            {/* Action Buttons */}
-            {canAct && item.lifecycle_status !== 'archived' && (
-                <Card>
-                    <h3 className="font-semibold mb-4">Actions</h3>
-                    <div className="flex flex-wrap gap-3">
-                        {/* Add Stock */}
-                        <Button
-                            onClick={() => setShowAddStock(true)}
-                            className="flex items-center gap-2"
-                        >
-                            <Plus className="w-4 h-4" />
-                            Add Stock
-                        </Button>
-
-                        {/* Allocate - only for active items with available stock */}
-                        {item.lifecycle_status === 'active' && item.available_quantity > 0 && (
-                            <Button
-                                onClick={() => setShowAllocate(true)}
-                                variant="outline"
-                                className="flex items-center gap-2"
-                            >
-                                <Send className="w-4 h-4" />
-                                Allocate
-                            </Button>
-                        )}
-
-                        {/* Receive Back */}
-                        {item.allocated_quantity > 0 && (
-                            <Button
-                                onClick={() => setShowReceiveBack(true)}
-                                variant="outline"
-                                className="flex items-center gap-2"
-                            >
-                                <RotateCcw className="w-4 h-4" />
-                                Record Return
-                            </Button>
-                        )}
-
-                        {/* Mark Damaged (Warehouse) */}
-                        {item.available_quantity > 0 && (
-                            <Button
-                                onClick={() => setShowMarkDamaged(true)}
-                                variant="outline"
-                                className="flex items-center gap-2 text-orange-600 border-orange-300 hover:bg-orange-50"
-                            >
-                                <AlertTriangle className="w-4 h-4" />
-                                Mark Damaged
-                            </Button>
-                        )}
-
-                        {/* Mark Lost */}
-                        {(item.available_quantity > 0 || item.allocated_quantity > 0) && (
-                            <Button
-                                onClick={() => setShowMarkLost(true)}
-                                variant="outline"
-                                className="flex items-center gap-2 text-red-600 border-red-300 hover:bg-red-50"
-                            >
-                                <Search className="w-4 h-4" />
-                                Mark Lost
-                            </Button>
-                        )}
-
-                        {/* Dispose Damaged */}
-                        {item.damaged_quantity > 0 && (
-                            <Button
-                                onClick={() => setShowDisposeDamaged(true)}
-                                variant="outline"
-                                className="flex items-center gap-2 text-red-600 border-red-300 hover:bg-red-50"
-                            >
-                                <Trash2 className="w-4 h-4" />
-                                Dispose Damaged
-                            </Button>
-                        )}
-
-                        {/* Adjust Stock (Admin Only) */}
-                        {isAdmin && (
-                            <Button
-                                onClick={() => setShowAdjustStock(true)}
-                                variant="outline"
-                                className="flex items-center gap-2"
-                            >
-                                <SlidersHorizontal className="w-4 h-4" />
-                                Adjust Stock
-                            </Button>
-                        )}
-                    </div>
-                </Card>
-            )}
-
-            {/* Archived / Accountant Notice */}
-            {item.lifecycle_status === 'archived' && (
-                <Alert variant="warning">
+            {life === 'archived' && (
+                <Alert variant="warning" className="mb-6">
                     This item is archived. No stock operations are permitted.
                 </Alert>
             )}
 
-            {isAccountant && (
-                <Alert variant="info">
-                    You have read-only access to inventory items.
-                </Alert>
-            )}
+            <StockStrip
+                label="Item stock"
+                loading={false}
+                figures={{
+                    total: item.total_quantity,
+                    available: item.available_quantity,
+                    allocated: item.allocated_quantity,
+                    damaged: item.damaged_quantity,
+                    inRepair: item.in_repair_quantity,
+                    lost: item.lost_quantity,
+                }}
+                footer={
+                    hasCorrections ? (
+                        <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center">
+                            <span className="text-sm font-semibold text-ink-muted">Write off or correct</span>
+                            <div className="flex flex-wrap gap-2">
+                                {canMarkDamaged && (
+                                    <Button type="button" variant="outline" size="sm" onClick={() => setShowMarkDamaged(true)}>
+                                        <AlertTriangle className="h-4 w-4 text-overdue" aria-hidden="true" />
+                                        Mark damaged
+                                    </Button>
+                                )}
+                                {canMarkLost && (
+                                    <Button type="button" variant="outline" size="sm" onClick={() => setShowMarkLost(true)}>
+                                        <SearchX className="h-4 w-4 text-void" aria-hidden="true" />
+                                        Mark lost
+                                    </Button>
+                                )}
+                                {canDispose && (
+                                    <Button type="button" variant="outline" size="sm" onClick={() => setShowDisposeDamaged(true)}>
+                                        <Trash2 className="h-4 w-4 text-danger" aria-hidden="true" />
+                                        Dispose damaged
+                                    </Button>
+                                )}
+                                {canAdjust && (
+                                    <Button type="button" variant="outline" size="sm" onClick={() => setShowAdjustStock(true)}>
+                                        <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                                        Adjust stock
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+                    ) : null
+                }
+            />
 
-            {/* Movement History */}
-            <Card>
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold flex items-center gap-2">
-                        <History className="w-5 h-5" />
-                        Movement History
-                    </h3>
-                    <p className="text-sm text-muted-foreground">{movements.length} movements</p>
+            {/* Movement history */}
+            <section className="sheet overflow-hidden" aria-labelledby="history-h" aria-busy={movementsLoading || undefined}>
+                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-rule px-5 py-4">
+                    <div className="min-w-0">
+                        <h2 id="history-h" className="text-lg font-semibold text-ink">
+                            Movement history
+                            {!movementsLoading && movements.length > 0 && (
+                                <span className="tabular ml-2 text-sm font-normal text-ink-muted">{pcs(movements.length)}</span>
+                            )}
+                        </h2>
+                        <p className="text-sm text-ink-muted">
+                            Newest first. + and − show the change to available stock; unsigned rows moved pieces between other buckets.
+                        </p>
+                    </div>
+                    <Link
+                        to={`/inventory/movements?item=${item.id}`}
+                        className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-brand-primary hover:underline"
+                    >
+                        Open in movements <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                    </Link>
                 </div>
 
-                {movementsLoading ? (
-                    <div className="flex items-center justify-center py-12">
-                        <Spinner size="lg" />
+                {movementsError && (
+                    <div className="px-5 pt-4">
+                        <Alert variant="error">{movementsError}</Alert>
+                    </div>
+                )}
+
+                {movementsLoading && movements.length === 0 ? (
+                    <div className="space-y-3 p-5">
+                        {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-5" />)}
                     </div>
                 ) : movements.length === 0 ? (
-                    <div className="text-center py-12">
-                        <History className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                        <p className="text-muted-foreground">No movements recorded yet</p>
-                    </div>
+                    !movementsError && (
+                        <div className="px-5 py-12 text-center">
+                            <p className="text-base font-semibold text-ink">No movements recorded yet.</p>
+                            <p className="mt-1 text-sm text-ink-muted">
+                                {canAddStock ? 'Add stock to record this item’s opening count.' : 'Stock added, sent out, returned or written off will appear here.'}
+                            </p>
+                        </div>
+                    )
                 ) : (
                     <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead className="border-b">
+                        <table className="ledger">
+                            <thead>
                                 <tr>
-                                    <th className="text-left py-3 px-4">Date/Time</th>
-                                    <th className="text-left py-3 px-4">Action</th>
-                                    <th className="text-right py-3 px-4">Quantity</th>
-                                    <th className="text-left py-3 px-4">Reference</th>
-                                    <th className="text-left py-3 px-4">Notes</th>
-                                    <th className="text-left py-3 px-4">By</th>
+                                    <th scope="col">When · by</th>
+                                    <th scope="col">Movement</th>
+                                    <th scope="col" className="text-right">Qty</th>
+                                    <th scope="col">Reference</th>
+                                    <th scope="col">Notes</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {movements.map((movement) => {
-                                    const label = getMovementLabel(movement);
-
+                                    const when = istWhen(movement.created_at);
                                     return (
-                                        <tr key={movement.id} className="border-b hover:bg-muted/50">
-                                            <td className="py-3 px-4 text-sm">
-                                                <div>
-                                                    <p>{new Date(movement.created_at).toLocaleDateString()}</p>
-                                                    <p className="text-muted-foreground text-xs">
-                                                        {new Date(movement.created_at).toLocaleTimeString()}
-                                                    </p>
+                                        <tr key={movement.id}>
+                                            <td className="whitespace-nowrap">
+                                                <div className="inline-block max-w-full align-top">
+                                                    <div className="text-ink">
+                                                        {when.date} <span className="tabular text-ink-muted">{when.time}</span>
+                                                    </div>
+                                                    <div className="text-xs text-ink-muted">{movement.created_by_name || '—'}</div>
                                                 </div>
                                             </td>
-                                            <td className="py-3 px-4">
-                                                <span
-                                                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${label.color}`}
-                                                >
-                                                    {label.label}
-                                                </span>
-                                            </td>
-                                            <td className="text-right py-3 px-4 font-semibold">{movement.quantity}</td>
-                                            <td className="py-3 px-4 text-sm">
-                                                {movement.reference_type !== 'manual' ? (
-                                                    <div>
-                                                        <Badge variant="default" className="capitalize">
-                                                            {movement.reference_type}
-                                                        </Badge>
-                                                        {movement.reference_name && (
-                                                            <p className="text-xs text-muted-foreground mt-1">
-                                                                {movement.reference_name}
-                                                            </p>
-                                                        )}
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-muted-foreground">—</span>
-                                                )}
-                                            </td>
-                                            <td className="py-3 px-4 text-sm max-w-[200px] truncate">
+                                            <td><MovementBadge type={movement.movement_type} /></td>
+                                            <td className="cell-emph text-right"><SignedQty movement={movement} /></td>
+                                            <td className="min-w-[10rem]"><ReferenceCell movement={movement} /></td>
+                                            <td className="max-w-[16rem] truncate text-ink-muted" title={movement.notes || undefined}>
                                                 {movement.notes || '—'}
                                             </td>
-                                            <td className="py-3 px-4 text-sm">{movement.created_by_name || '—'}</td>
                                         </tr>
                                     );
                                 })}
@@ -384,7 +326,7 @@ export default function InventoryItemDetailPage() {
                         </table>
                     </div>
                 )}
-            </Card>
+            </section>
 
             {/* ================================================================
           ACTION MODALS

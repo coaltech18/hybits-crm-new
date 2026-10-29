@@ -1,3 +1,5 @@
+> **Historical (2026-02) — superseded; see [docs/SOFTWARE_OVERVIEW.md](../SOFTWARE_OVERVIEW.md).**
+
 # INVENTORY MODULE — UI SIMPLIFICATION ANALYSIS (Phase 1)
 
 > Generated: 2026-02-24

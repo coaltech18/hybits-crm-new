@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { getInventoryItems } from '@/services/inventoryService';
 import {
@@ -11,14 +12,33 @@ import {
   getMovementHistoryReport,
   exportMovementHistoryCSV,
 } from '@/services/inventoryReportService';
-import type { InventoryItem, Outlet } from '@/types';
+import type {
+  StockSummaryFilters,
+  StockSummaryRow,
+  AllocationReportFilters,
+  AllocationReportRow,
+  DamageLossReportFilters,
+  DamageLossRow,
+  MovementHistoryReportFilters,
+} from '@/services/inventoryReportService';
+import { istDateTimeParts } from '@/services/inventoryMovementService';
+import type { InventoryItem, InventoryMovement, MovementType, Outlet } from '@/types';
+import { TableSkeleton } from '@/components/ui/Spinner';
+import { downloadCsv } from '@/utils/csv';
+import { parseLocalISODate, todayISO } from '@/utils/date';
+import { cn } from '@/utils/cn';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { MOVEMENT_TYPE_COLORS, MOVEMENT_TYPE_OPTIONS, movementTypeLabel } from '@/components/inventory/movementLabels';
+import { TabList, TabPanel } from '@/components/inventory/Tabs';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Alert } from '@/components/ui/Alert';
 import { Input } from '@/components/ui/Input';
+import { DateInput } from '@/components/ui/DateInput';
 import { Select } from '@/components/ui/Select';
-import { BarChart3, Download } from 'lucide-react';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Download } from 'lucide-react';
 
 // ================================================================
 // INVENTORY REPORTS PAGE
@@ -31,10 +51,23 @@ import { BarChart3, Download } from 'lucide-react';
 // ================================================================
 
 type ReportTab = 'stock' | 'allocation' | 'damage' | 'movements';
+const REPORT_TABS: ReportTab[] = ['stock', 'allocation', 'damage', 'movements'];
 
 export default function InventoryReportsPage() {
+  useDocumentTitle('Inventory reports');
   const { user, outlets } = useAuth();
-  const [activeTab, setActiveTab] = useState<ReportTab>('stock');
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab') as ReportTab | null;
+  // ?tab= deep link (e.g. "Pending returns" on the Overview opens the Allocation tab)
+  const [activeTab, setActiveTab] = useState<ReportTab>(
+    tabParam && REPORT_TABS.includes(tabParam) ? tabParam : 'stock'
+  );
+  // A later ?tab= change (link clicked while already on this page) switches the tab too.
+  const [seenTabParam, setSeenTabParam] = useState(tabParam);
+  if (tabParam !== seenTabParam) {
+    setSeenTabParam(tabParam);
+    if (tabParam && REPORT_TABS.includes(tabParam)) setActiveTab(tabParam);
+  }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,46 +76,32 @@ export default function InventoryReportsPage() {
   const availableOutlets: Outlet[] = outlets || [];
 
   const tabs = [
-    { id: 'stock' as const, label: 'Stock Summary' },
-    { id: 'allocation' as const, label: 'Allocation' },
-    { id: 'damage' as const, label: 'Damage & Loss' },
+    { id: 'stock' as const, label: 'Stock summary' },
+    { id: 'allocation' as const, label: 'Dishes out' },
+    { id: 'damage' as const, label: 'Damage and loss' },
     { id: 'movements' as const, label: 'Movements' },
   ];
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold flex items-center gap-2">
-          <BarChart3 className="w-8 h-8" />
-          Inventory Reports
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Production-grade inventory reporting with CSV exports
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        title="Inventory reports"
+        description="Read-only views of stock, dishes out, damage and every movement. Each one exports to CSV."
+      />
 
-      {error && <Alert variant="error">{error}</Alert>}
+      <TabList<ReportTab>
+        idPrefix="report"
+        label="Report"
+        tabs={tabs}
+        active={activeTab}
+        onChange={setActiveTab}
+        className="mb-6"
+      />
 
-      {/* Tabs */}
-      <Card>
-        <div className="flex flex-wrap gap-2 border-b pb-4">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2 rounded-md font-medium transition-colors ${activeTab === tab.id
-                ? 'bg-[#2A5A3B] text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </Card>
+      {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
-      {/* Report Content */}
+      <TabPanel idPrefix="report" id={activeTab} className="space-y-4">
+      {/* Report Content */}      {/* Report Content */}
       {activeTab === 'stock' && (
         <StockSummaryReport
           userId={user?.id || ''}
@@ -130,6 +149,7 @@ export default function InventoryReportsPage() {
           setError={setError}
         />
       )}
+      </TabPanel>
     </div>
   );
 }
@@ -142,67 +162,215 @@ interface ReportTabProps {
   userId: string;
   userRole: string;
   showOutletFilter: boolean;
-  outlets: any[];
+  outlets: Outlet[];
   loading: boolean;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+}
+
+/** Items for the filter dropdowns (all lifecycle states, so discontinued items can be reported on). */
+function useReportItems(userId: string, setError: (error: string | null) => void): InventoryItem[] {
+  const [items, setItems] = useState<InventoryItem[]>([]);
+  useEffect(() => {
+    if (!userId) return;
+    let stale = false;
+    getInventoryItems(userId, { is_active: 'all' })
+      .then((data) => {
+        if (!stale) setItems(data);
+      })
+      .catch((err: unknown) => {
+        if (!stale) setError(err instanceof Error ? `Failed to load items: ${err.message}` : 'Failed to load items');
+      });
+    return () => {
+      stale = true;
+    };
+  }, [userId, setError]);
+  return items;
+}
+
+/**
+ * Load report rows whenever the filters change. Only the latest response is applied;
+ * a short debounce keeps free-text filters from firing a query per keystroke.
+ */
+function useReportData<T, F>(
+  userId: string,
+  filters: F,
+  load: (userId: string, filters: F) => Promise<T[]>,
+  setLoading: (loading: boolean) => void,
+  setError: (error: string | null) => void
+): T[] {
+  const [data, setData] = useState<T[]>([]);
+  useEffect(() => {
+    if (!userId) return;
+    let stale = false;
+    const timer = setTimeout(async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const rows = await load(userId, filters);
+        if (!stale) setData(rows);
+      } catch (err) {
+        if (stale) return;
+        // Never leave the previous filters' rows under a failed load
+        setData([]);
+        setError(err instanceof Error ? err.message : 'Failed to load report');
+      } finally {
+        if (!stale) setLoading(false);
+      }
+    }, 250);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [userId, filters, load, setLoading, setError]);
+  return data;
+}
+
+async function runExport(
+  build: () => Promise<string>,
+  filename: string,
+  setError: (error: string | null) => void
+) {
+  try {
+    downloadCsv(`${filename}-${todayISO()}.csv`, await build());
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Failed to export CSV');
+  }
+}
+
+const num = (n: number | null | undefined) => new Intl.NumberFormat('en-IN').format(Number(n) || 0);
+const fmtDay = (iso: string | null | undefined) =>
+  iso ? parseLocalISODate(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+
+/** Hairline-ruled strip of report totals. */
+function Totals({ children, cols }: { children: React.ReactNode; cols: string }) {
+  return (
+    <section aria-label="Report totals" className={cn('sheet grid gap-px overflow-hidden bg-rule', cols)}>
+      {children}
+    </section>
+  );
+}
+
+function Total({ label, value, tone = 'text-ink', hint }: { label: string; value: number; tone?: string; hint?: string }) {
+  return (
+    <div className="min-w-0 bg-white px-5 py-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{label}</div>
+      <div className={cn('tabular mt-1 text-2xl font-bold tracking-tight', value === 0 ? 'text-ink-faint' : tone)}>{num(value)}</div>
+      {hint && <div className="mt-0.5 truncate text-sm text-ink-muted">{hint}</div>}
+    </div>
+  );
+}
+
+/** Filter bar: fields wrap, export sits at the end of the row. */
+function FilterBar({ children, onExport, canExport }: { children: React.ReactNode; onExport: () => void; canExport: boolean }) {
+  return (
+    <Card padding="sm">
+      <div className="flex flex-wrap items-end gap-3">
+        {children}
+        <Button variant="outline" onClick={onExport} disabled={!canExport} className="sm:ml-auto">
+          <Download className="h-4 w-4" aria-hidden="true" />
+          Export CSV
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function Field({ children, width = 'sm:w-52' }: { children: React.ReactNode; width?: string }) {
+  return <div className={cn('w-full', width)}>{children}</div>;
+}
+
+function OutletSelect({ outlets, value, onChange }: { outlets: Outlet[]; value: string; onChange: (v: string) => void }) {
+  return (
+    <Field width="sm:w-56">
+      <Select label="Outlet" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">All outlets</option>
+        {outlets.map((outlet) => (
+          <option key={outlet.id} value={outlet.id}>
+            {outlet.name}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+/** Ledger sheet: title + count line, skeleton on first load, dimmed while refetching. */
+function Ledger({
+  title,
+  countLine,
+  loading,
+  empty,
+  rows,
+  cols,
+  children,
+}: {
+  title: string;
+  countLine: string;
+  loading: boolean;
+  empty: string;
+  rows: number;
+  cols: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card padding="none" className="overflow-hidden">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule px-5 py-4">
+        <h2 className="text-lg font-semibold text-ink">{title}</h2>
+        {rows > 0 && <p className="text-sm text-ink-muted">{countLine}</p>}
+      </div>
+      {loading && rows === 0 ? (
+        <TableSkeleton rows={6} cols={cols} />
+      ) : rows === 0 ? (
+        <p className="px-5 py-12 text-center text-sm text-ink-muted">{empty}</p>
+      ) : (
+        <div className={cn('max-h-[70vh] overflow-auto', loading && 'opacity-60 transition-opacity')} aria-busy={loading || undefined}>
+          {children}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function RefCell({ type, name }: { type: string; name?: string | null }) {
+  return (
+    <>
+      <span className="block text-ink">{name || (type === 'manual' ? 'At the outlet' : '—')}</span>
+      <span className="block text-xs capitalize text-ink-muted">{type}</span>
+    </>
+  );
 }
 
 function StockSummaryReport({
   userId,
   showOutletFilter,
   outlets,
+  loading,
   setLoading,
   setError,
 }: ReportTabProps) {
-  const [data, setData] = useState<any[]>([]);
   const [outletId, setOutletId] = useState('');
   const [category, setCategory] = useState('');
   const [isActive, setIsActive] = useState('true');
 
-  useEffect(() => {
-    loadData();
-  }, [userId, outletId, category, isActive]);
+  const filters = useMemo<StockSummaryFilters>(() => {
+    const f: StockSummaryFilters = {};
+    if (outletId) f.outlet_id = outletId;
+    if (category.trim()) f.category = category.trim();
+    if (isActive !== '') f.is_active = isActive === 'true';
+    return f;
+  }, [outletId, category, isActive]);
 
-  async function loadData() {
-    try {
-      setLoading(true);
-      setError(null);
+  const data = useReportData<StockSummaryRow, StockSummaryFilters>(
+    userId,
+    filters,
+    getStockSummaryReport,
+    setLoading,
+    setError
+  );
 
-      const filters: any = {};
-      if (outletId) filters.outlet_id = outletId;
-      if (category) filters.category = category;
-      if (isActive !== '') filters.is_active = isActive === 'true';
-
-      const reportData = await getStockSummaryReport(userId, filters);
-      setData(reportData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load report');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleExport() {
-    try {
-      const filters: any = {};
-      if (outletId) filters.outlet_id = outletId;
-      if (category) filters.category = category;
-      if (isActive !== '') filters.is_active = isActive === 'true';
-
-      const csv = await exportStockSummaryCSV(userId, filters);
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `stock-summary-${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to export CSV');
-    }
+  function handleExport() {
+    return runExport(() => exportStockSummaryCSV(userId, filters), 'stock-summary', setError);
   }
 
   const totalItems = data.length;
@@ -210,118 +378,83 @@ function StockSummaryReport({
   const totalAllocated = data.reduce((sum, row) => sum + (row.allocated_quantity || 0), 0);
   const totalDamaged = data.reduce((sum, row) => sum + (row.damaged_quantity || 0), 0);
   const totalLost = data.reduce((sum, row) => sum + (row.lost_quantity || 0), 0);
+  const totalInRepair = data.reduce((sum, row) => sum + (row.in_repair_quantity || 0), 0);
 
   return (
     <>
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <p className="text-sm text-muted-foreground">Total Items</p>
-          <p className="text-2xl font-bold">{totalItems}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground">Available</p>
-          <p className="text-2xl font-bold text-green-600">{totalAvailable}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground">Allocated</p>
-          <p className="text-2xl font-bold text-brand-primary">{totalAllocated}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground">Damaged</p>
-          <p className="text-2xl font-bold text-orange-600">{totalDamaged}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground">Lost</p>
-          <p className="text-2xl font-bold text-red-600">{totalLost}</p>
-        </Card>
-      </div>
+      <Totals cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+        <Total label="Items" value={totalItems} />
+        <Total label="Available" value={totalAvailable} tone="text-final" />
+        <Total label="Allocated" value={totalAllocated} tone="text-info" />
+        <Total label="Damaged" value={totalDamaged} tone="text-partial" />
+        <Total label="In repair" value={totalInRepair} tone="text-void" />
+        <Total label="Lost (lifetime)" value={totalLost} tone="text-overdue" />
+      </Totals>
 
-      {/* Filters */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">Filters</h3>
-          <Button onClick={handleExport} disabled={data.length === 0}>
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </Button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {showOutletFilter && (
-            <Select
-              label="Outlet"
-              value={outletId}
-              onChange={(e) => setOutletId(e.target.value)}
-            >
-              <option value="">All Outlets</option>
-              {outlets.map((outlet) => (
-                <option key={outlet.id} value={outlet.id}>
-                  {outlet.name}
-                </option>
-              ))}
-            </Select>
-          )}
-
+      <FilterBar onExport={handleExport} canExport={data.length > 0}>
+        {showOutletFilter && <OutletSelect outlets={outlets} value={outletId} onChange={setOutletId} />}
+        <Field>
           <Input
             label="Category"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            placeholder="Filter by category"
+            placeholder="Any category"
           />
-
-          <Select
-            label="Status"
-            value={isActive}
-            onChange={(e) => setIsActive(e.target.value)}
-          >
+        </Field>
+        <Field width="sm:w-40">
+          <Select label="Status" value={isActive} onChange={(e) => setIsActive(e.target.value)}>
             <option value="true">Active</option>
             <option value="false">Inactive</option>
             <option value="">All</option>
           </Select>
-        </div>
-      </Card>
+        </Field>
+      </FilterBar>
 
-      {/* Table */}
-      <Card>
-        <h3 className="font-semibold mb-4">Stock Summary</h3>
-        {data.length === 0 ? (
-          <p className="text-center text-muted-foreground py-8">No data found</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b">
-                <tr>
-                  <th className="text-left py-2 px-2">Item</th>
-                  <th className="text-left py-2 px-2">Category</th>
-                  {showOutletFilter && <th className="text-left py-2 px-2">Outlet</th>}
-                  <th className="text-right py-2 px-2">Total</th>
-                  <th className="text-right py-2 px-2">Available</th>
-                  <th className="text-right py-2 px-2">Allocated</th>
-                  <th className="text-right py-2 px-2">Damaged</th>
-                  <th className="text-right py-2 px-2">Lost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((row, idx) => (
-                  <tr key={idx} className="border-b">
-                    <td className="py-2 px-2 font-medium">{row.item_name}</td>
-                    <td className="py-2 px-2">
-                      <Badge variant="default">{row.category}</Badge>
-                    </td>
-                    {showOutletFilter && <td className="py-2 px-2 text-sm">{row.outlet_name}</td>}
-                    <td className="text-right py-2 px-2">{row.total_quantity}</td>
-                    <td className="text-right py-2 px-2 text-green-600 font-semibold">{row.available_quantity}</td>
-                    <td className="text-right py-2 px-2 text-brand-primary">{row.allocated_quantity}</td>
-                    <td className="text-right py-2 px-2 text-orange-600">{row.damaged_quantity}</td>
-                    <td className="text-right py-2 px-2 text-red-600">{row.lost_quantity}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <Ledger
+        title="Stock summary"
+        countLine={`${num(data.length)} item${data.length === 1 ? '' : 's'}`}
+        loading={loading}
+        empty="No items match these filters."
+        rows={data.length}
+        cols={showOutletFilter ? 9 : 8}
+      >
+        <table className="ledger">
+          <thead>
+            <tr>
+              <th scope="col">Item</th>
+              {showOutletFilter && <th scope="col">Outlet</th>}
+              <th scope="col" className="text-right">Total</th>
+              <th scope="col" className="text-right">Available</th>
+              <th scope="col" className="text-right">Allocated</th>
+              <th scope="col" className="text-right">Damaged</th>
+              <th scope="col" className="text-right">In repair</th>
+              <th scope="col" className="text-right">Lost (lifetime)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row) => (
+              <tr key={row.item_id}>
+                <td>
+                  <span className="block font-semibold text-ink">{row.item_name}</span>
+                  <span className="block text-xs text-ink-muted">{row.category}</span>
+                </td>
+                {showOutletFilter && (
+                  <td className="whitespace-nowrap">
+                    {row.outlet_name}
+                    {row.outlet_code && <span className="serial ml-1.5 text-xs text-ink-muted">{row.outlet_code}</span>}
+                  </td>
+                )}
+                <td className="tabular text-right font-semibold">{num(row.total_quantity)}</td>
+                <td className="tabular text-right font-semibold text-final">{num(row.available_quantity)}</td>
+                <td className={cn('tabular text-right', row.allocated_quantity ? 'text-info' : 'text-ink-faint')}>{num(row.allocated_quantity)}</td>
+                <td className={cn('tabular text-right', row.damaged_quantity ? 'text-partial' : 'text-ink-faint')}>{num(row.damaged_quantity)}</td>
+                <td className={cn('tabular text-right', row.in_repair_quantity ? 'text-void' : 'text-ink-faint')}>{num(row.in_repair_quantity ?? 0)}</td>
+                <td className={cn('tabular text-right', row.lost_quantity ? 'text-overdue' : 'text-ink-faint')}>{num(row.lost_quantity)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Ledger>
     </>
   );
 }
@@ -330,69 +463,30 @@ function StockSummaryReport({
 // ALLOCATION REPORT TAB
 // ================================================================
 
-function AllocationReportTab({ userId, showOutletFilter, outlets, setLoading, setError }: ReportTabProps) {
-  const [data, setData] = useState<any[]>([]);
-  const [items, setItems] = useState<InventoryItem[]>([]);
+function AllocationReportTab({ userId, showOutletFilter, outlets, loading, setLoading, setError }: ReportTabProps) {
+  const items = useReportItems(userId, setError);
   const [outletId, setOutletId] = useState('');
-  const [referenceType, setReferenceType] = useState('');
+  const [referenceType, setReferenceType] = useState<'' | 'subscription' | 'event'>('');
   const [itemId, setItemId] = useState('');
 
-  useEffect(() => {
-    loadItems();
-  }, [userId]);
+  const filters = useMemo<AllocationReportFilters>(() => {
+    const f: AllocationReportFilters = {};
+    if (outletId) f.outlet_id = outletId;
+    if (referenceType) f.reference_type = referenceType;
+    if (itemId) f.inventory_item_id = itemId;
+    return f;
+  }, [outletId, referenceType, itemId]);
 
-  useEffect(() => {
-    loadData();
-  }, [userId, outletId, referenceType, itemId]);
+  const data = useReportData<AllocationReportRow, AllocationReportFilters>(
+    userId,
+    filters,
+    getAllocationReport,
+    setLoading,
+    setError
+  );
 
-  async function loadItems() {
-    try {
-      const itemData = await getInventoryItems(userId, { is_active: true });
-      setItems(itemData);
-    } catch (err) {
-      console.error('Failed to load items:', err);
-    }
-  }
-
-  async function loadData() {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const filters: any = {};
-      if (outletId) filters.outlet_id = outletId;
-      if (referenceType) filters.reference_type = referenceType;
-      if (itemId) filters.inventory_item_id = itemId;
-
-      const reportData = await getAllocationReport(userId, filters);
-      setData(reportData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load report');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleExport() {
-    try {
-      const filters: any = {};
-      if (outletId) filters.outlet_id = outletId;
-      if (referenceType) filters.reference_type = referenceType;
-      if (itemId) filters.inventory_item_id = itemId;
-
-      const csv = await exportAllocationReportCSV(userId, filters);
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `allocation-report-${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to export CSV');
-    }
+  function handleExport() {
+    return runExport(() => exportAllocationReportCSV(userId, filters), 'allocation-report', setError);
   }
 
   const totalAllocated = data.reduce((sum, row) => sum + (row.allocated_quantity || 0), 0);
@@ -400,122 +494,79 @@ function AllocationReportTab({ userId, showOutletFilter, outlets, setLoading, se
 
   return (
     <>
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <p className="text-sm text-muted-foreground">Active Allocations</p>
-          <p className="text-2xl font-bold">{data.length}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground">Total Allocated</p>
-          <p className="text-2xl font-bold text-brand-primary">{totalAllocated}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground">Total Outstanding</p>
-          <p className="text-2xl font-bold text-orange-600">{totalOutstanding}</p>
-        </Card>
-      </div>
+      <Totals cols="grid-cols-3">
+        <Total label="Active allocations" value={data.length} />
+        <Total label="Sent" value={totalAllocated} tone="text-info" />
+        <Total label="Still out" value={totalOutstanding} tone="text-partial" />
+      </Totals>
 
-      {/* Filters */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">Filters</h3>
-          <Button onClick={handleExport} disabled={data.length === 0}>
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </Button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {showOutletFilter && (
-            <Select
-              label="Outlet"
-              value={outletId}
-              onChange={(e) => setOutletId(e.target.value)}
-            >
-              <option value="">All Outlets</option>
-              {outlets.map((outlet) => (
-                <option key={outlet.id} value={outlet.id}>
-                  {outlet.name}
-                </option>
-              ))}
-            </Select>
-          )}
-
+      <FilterBar onExport={handleExport} canExport={data.length > 0}>
+        {showOutletFilter && <OutletSelect outlets={outlets} value={outletId} onChange={setOutletId} />}
+        <Field width="sm:w-44">
           <Select
-            label="Reference Type"
+            label="Booking type"
             value={referenceType}
-            onChange={(e) => setReferenceType(e.target.value)}
+            onChange={(e) => setReferenceType(e.target.value as '' | 'subscription' | 'event')}
           >
-            <option value="">All Types</option>
+            <option value="">All types</option>
             <option value="subscription">Subscription</option>
             <option value="event">Event</option>
           </Select>
-
-          <Select
-            label="Item"
-            value={itemId}
-            onChange={(e) => setItemId(e.target.value)}
-          >
-            <option value="">All Items</option>
+        </Field>
+        <Field width="sm:w-64">
+          <Select label="Item" value={itemId} onChange={(e) => setItemId(e.target.value)}>
+            <option value="">All items</option>
             {items.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name} ({item.category})
               </option>
             ))}
           </Select>
-        </div>
-      </Card>
+        </Field>
+      </FilterBar>
 
-      {/* Table */}
-      <Card>
-        <h3 className="font-semibold mb-4">Current Allocations</h3>
-        {data.length === 0 ? (
-          <p className="text-center text-muted-foreground py-8">No allocations found</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b">
-                <tr>
-                  <th className="text-left py-2 px-2">Item</th>
-                  <th className="text-left py-2 px-2">Category</th>
-                  {showOutletFilter && <th className="text-left py-2 px-2">Outlet</th>}
-                  <th className="text-left py-2 px-2">Reference</th>
-                  <th className="text-right py-2 px-2">Allocated</th>
-                  <th className="text-right py-2 px-2">Outstanding</th>
-                  <th className="text-center py-2 px-2">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((row, idx) => (
-                  <tr key={idx} className="border-b">
-                    <td className="py-2 px-2 font-medium">{row.item_name}</td>
-                    <td className="py-2 px-2">
-                      <Badge variant="default">{row.item_category}</Badge>
-                    </td>
-                    {showOutletFilter && <td className="py-2 px-2 text-sm">{row.outlet_name}</td>}
-                    <td className="py-2 px-2 text-sm">
-                      <div>
-                        <Badge variant="default">{row.reference_type}</Badge>
-                        <p className="text-xs text-muted-foreground mt-1">{row.reference_name}</p>
-                      </div>
-                    </td>
-                    <td className="text-right py-2 px-2 font-semibold">{row.allocated_quantity}</td>
-                    <td className="text-right py-2 px-2 text-orange-600 font-semibold">{row.outstanding_quantity}</td>
-                    <td className="text-center py-2 px-2">
-                      {row.is_active ? (
-                        <Badge variant="success">Active</Badge>
-                      ) : (
-                        <Badge variant="secondary">Closed</Badge>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <Ledger
+        title="Dishes out"
+        countLine={`${num(data.length)} allocation${data.length === 1 ? '' : 's'} · ${num(totalOutstanding)} pcs still out`}
+        loading={loading}
+        empty="No dishware is out for these filters."
+        rows={data.length}
+        cols={showOutletFilter ? 6 : 5}
+      >
+        <table className="ledger">
+          <thead>
+            <tr>
+              <th scope="col">Item</th>
+              {showOutletFilter && <th scope="col">Outlet</th>}
+              <th scope="col">Booking</th>
+              <th scope="col" className="text-right">Sent</th>
+              <th scope="col" className="text-right">Still out</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row) => (
+              <tr key={row.allocation_id}>
+                <td>
+                  <span className="block font-semibold text-ink">{row.item_name}</span>
+                  <span className="block text-xs text-ink-muted">{row.item_category}</span>
+                </td>
+                {showOutletFilter && <td className="whitespace-nowrap">{row.outlet_name}</td>}
+                <td>
+                  <RefCell type={row.reference_type} name={row.reference_name} />
+                </td>
+                <td className="tabular text-right">{num(row.allocated_quantity)}</td>
+                <td className={cn('tabular text-right font-semibold', row.outstanding_quantity ? 'text-partial' : 'text-final')}>
+                  {num(row.outstanding_quantity)}
+                </td>
+                <td>
+                  {row.is_active ? <Badge variant="final">Active</Badge> : <Badge variant="void">Closed</Badge>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Ledger>
     </>
   );
 }
@@ -524,211 +575,121 @@ function AllocationReportTab({ userId, showOutletFilter, outlets, setLoading, se
 // DAMAGE & LOSS REPORT TAB
 // ================================================================
 
-function DamageLossReportTab({ userId, showOutletFilter, outlets, setLoading, setError }: ReportTabProps) {
-  const [data, setData] = useState<any[]>([]);
-  const [items, setItems] = useState<InventoryItem[]>([]);
+function DamageLossReportTab({ userId, showOutletFilter, outlets, loading, setLoading, setError }: ReportTabProps) {
+  const items = useReportItems(userId, setError);
   const [outletId, setOutletId] = useState('');
-  const [movementType, setMovementType] = useState('');
+  const [movementType, setMovementType] = useState<'' | 'damage' | 'loss'>('');
   const [itemId, setItemId] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  useEffect(() => {
-    loadItems();
-  }, [userId]);
+  const filters = useMemo<DamageLossReportFilters>(() => {
+    const f: DamageLossReportFilters = {};
+    if (outletId) f.outlet_id = outletId;
+    if (movementType) f.movement_type = movementType;
+    if (itemId) f.inventory_item_id = itemId;
+    if (dateFrom) f.date_from = dateFrom;
+    if (dateTo) f.date_to = dateTo;
+    return f;
+  }, [outletId, movementType, itemId, dateFrom, dateTo]);
 
-  useEffect(() => {
-    loadData();
-  }, [userId, outletId, movementType, itemId, dateFrom, dateTo]);
+  const data = useReportData<DamageLossRow, DamageLossReportFilters>(
+    userId,
+    filters,
+    getDamageLossReport,
+    setLoading,
+    setError
+  );
 
-  async function loadItems() {
-    try {
-      const itemData = await getInventoryItems(userId, { is_active: true });
-      setItems(itemData);
-    } catch (err) {
-      console.error('Failed to load items:', err);
-    }
+  function handleExport() {
+    return runExport(() => exportDamageLossCSV(userId, filters), 'damage-loss-report', setError);
   }
 
-  async function loadData() {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const filters: any = {};
-      if (outletId) filters.outlet_id = outletId;
-      if (movementType) filters.movement_type = movementType;
-      if (itemId) filters.inventory_item_id = itemId;
-      if (dateFrom) filters.date_from = dateFrom;
-      if (dateTo) filters.date_to = dateTo;
-
-      const reportData = await getDamageLossReport(userId, filters);
-      setData(reportData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load report');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleExport() {
-    try {
-      const filters: any = {};
-      if (outletId) filters.outlet_id = outletId;
-      if (movementType) filters.movement_type = movementType;
-      if (itemId) filters.inventory_item_id = itemId;
-      if (dateFrom) filters.date_from = dateFrom;
-      if (dateTo) filters.date_to = dateTo;
-
-      const csv = await exportDamageLossCSV(userId, filters);
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `damage-loss-report-${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to export CSV');
-    }
-  }
-
-  const totalIncidents = data.reduce((sum, row) => sum + (row.incident_count || 0), 0);
-  const totalQuantity = data.reduce((sum, row) => sum + (row.total_quantity || 0), 0);
+  const totalIncidents = data.reduce((sum, row) => sum + (Number(row.incident_count) || 0), 0);
+  const totalQuantity = data.reduce((sum, row) => sum + (Number(row.total_quantity) || 0), 0);
 
   return (
     <>
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
-          <p className="text-sm text-muted-foreground">Total Incidents</p>
-          <p className="text-2xl font-bold">{totalIncidents}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground">Total Quantity Affected</p>
-          <p className="text-2xl font-bold text-red-600">{totalQuantity}</p>
-        </Card>
-      </div>
+      <Totals cols="grid-cols-2">
+        <Total label="Incidents" value={totalIncidents} />
+        <Total label="Pieces affected" value={totalQuantity} tone="text-overdue" />
+      </Totals>
 
-      {/* Filters */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">Filters</h3>
-          <Button onClick={handleExport} disabled={data.length === 0}>
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </Button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {showOutletFilter && (
-            <Select
-              label="Outlet"
-              value={outletId}
-              onChange={(e) => setOutletId(e.target.value)}
-            >
-              <option value="">All Outlets</option>
-              {outlets.map((outlet) => (
-                <option key={outlet.id} value={outlet.id}>
-                  {outlet.name}
-                </option>
-              ))}
-            </Select>
-          )}
-
+      <FilterBar onExport={handleExport} canExport={data.length > 0}>
+        {showOutletFilter && <OutletSelect outlets={outlets} value={outletId} onChange={setOutletId} />}
+        <Field width="sm:w-36">
           <Select
             label="Type"
             value={movementType}
-            onChange={(e) => setMovementType(e.target.value)}
+            onChange={(e) => setMovementType(e.target.value as '' | 'damage' | 'loss')}
           >
-            <option value="">All Types</option>
+            <option value="">All types</option>
             <option value="damage">Damage</option>
             <option value="loss">Loss</option>
           </Select>
-
-          <Select
-            label="Item"
-            value={itemId}
-            onChange={(e) => setItemId(e.target.value)}
-          >
-            <option value="">All Items</option>
+        </Field>
+        <Field width="sm:w-64">
+          <Select label="Item" value={itemId} onChange={(e) => setItemId(e.target.value)}>
+            <option value="">All items</option>
             {items.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name} ({item.category})
               </option>
             ))}
           </Select>
+        </Field>
+        <Field width="sm:w-44">
+          <DateInput label="From" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        </Field>
+        <Field width="sm:w-44">
+          <DateInput label="To" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        </Field>
+      </FilterBar>
 
-          <Input
-            type="date"
-            label="From Date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-          />
-
-          <Input
-            type="date"
-            label="To Date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-          />
-        </div>
-      </Card>
-
-      {/* Table */}
-      <Card>
-        <h3 className="font-semibold mb-4">Damage & Loss History</h3>
-        {data.length === 0 ? (
-          <p className="text-center text-muted-foreground py-8">No incidents found</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b">
-                <tr>
-                  <th className="text-left py-2 px-2">Date</th>
-                  <th className="text-left py-2 px-2">Item</th>
-                  {showOutletFilter && <th className="text-left py-2 px-2">Outlet</th>}
-                  <th className="text-left py-2 px-2">Type</th>
-                  <th className="text-right py-2 px-2">Incidents</th>
-                  <th className="text-right py-2 px-2">Quantity</th>
-                  <th className="text-left py-2 px-2">Reference</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((row, idx) => (
-                  <tr key={idx} className="border-b">
-                    <td className="py-2 px-2 text-sm">{row.report_date}</td>
-                    <td className="py-2 px-2">
-                      <div>
-                        <p className="font-medium">{row.item_name}</p>
-                        <p className="text-xs text-muted-foreground">{row.item_category}</p>
-                      </div>
-                    </td>
-                    {showOutletFilter && <td className="py-2 px-2 text-sm">{row.outlet_name}</td>}
-                    <td className="py-2 px-2">
-                      <Badge variant={row.movement_type === 'loss' ? 'destructive' : 'warning'}>
-                        {row.movement_type.toUpperCase()}
-                      </Badge>
-                    </td>
-                    <td className="text-right py-2 px-2">{row.incident_count}</td>
-                    <td className="text-right py-2 px-2 font-semibold text-red-600">{row.total_quantity}</td>
-                    <td className="py-2 px-2 text-sm">
-                      <div>
-                        <Badge variant="default">{row.reference_type}</Badge>
-                        {row.reference_name && (
-                          <p className="text-xs text-muted-foreground mt-1">{row.reference_name}</p>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <Ledger
+        title="Damage and loss"
+        countLine={`${num(data.length)} row${data.length === 1 ? '' : 's'} · ${num(totalQuantity)} pcs`}
+        loading={loading}
+        empty="No damage or loss recorded for these filters."
+        rows={data.length}
+        cols={showOutletFilter ? 7 : 6}
+      >
+        <table className="ledger">
+          <thead>
+            <tr>
+              <th scope="col">Date</th>
+              <th scope="col">Item</th>
+              {showOutletFilter && <th scope="col">Outlet</th>}
+              <th scope="col">Type</th>
+              <th scope="col" className="text-right">Incidents</th>
+              <th scope="col" className="text-right">Pieces</th>
+              <th scope="col">Booking</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row) => (
+              <tr key={`${row.report_date}-${row.inventory_item_id}-${row.movement_type}-${row.reference_type}-${row.reference_id ?? ''}`}>
+                <td className="whitespace-nowrap text-ink-muted">{fmtDay(row.report_date)}</td>
+                <td>
+                  <span className="block font-semibold text-ink">{row.item_name}</span>
+                  <span className="block text-xs text-ink-muted">{row.item_category}</span>
+                </td>
+                {showOutletFilter && <td className="whitespace-nowrap">{row.outlet_name}</td>}
+                <td>
+                  <Badge variant={row.movement_type === 'loss' ? 'overdue' : 'partial'}>
+                    {row.movement_type === 'loss' ? 'Loss' : 'Damage'}
+                  </Badge>
+                </td>
+                <td className="tabular text-right">{num(row.incident_count)}</td>
+                <td className="tabular text-right font-semibold text-overdue">{num(row.total_quantity)}</td>
+                <td>
+                  <RefCell type={row.reference_type} name={row.reference_name} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Ledger>
     </>
   );
 }
@@ -737,213 +698,131 @@ function DamageLossReportTab({ userId, showOutletFilter, outlets, setLoading, se
 // MOVEMENT HISTORY REPORT TAB
 // ================================================================
 
-function MovementHistoryReportTab({ userId, showOutletFilter, outlets, setLoading, setError }: ReportTabProps) {
-  const [data, setData] = useState<any[]>([]);
-  const [items, setItems] = useState<InventoryItem[]>([]);
+function MovementHistoryReportTab({ userId, showOutletFilter, outlets, loading, setLoading, setError }: ReportTabProps) {
+  const items = useReportItems(userId, setError);
   const [outletId, setOutletId] = useState('');
-  const [movementType, setMovementType] = useState('');
+  const [movementType, setMovementType] = useState<MovementType | ''>('');
   const [itemId, setItemId] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  useEffect(() => {
-    loadItems();
-  }, [userId]);
+  const filters = useMemo<MovementHistoryReportFilters>(() => {
+    const f: MovementHistoryReportFilters = {};
+    if (outletId) f.outlet_id = outletId;
+    if (movementType) f.movement_type = movementType;
+    if (itemId) f.inventory_item_id = itemId;
+    if (dateFrom) f.date_from = dateFrom;
+    if (dateTo) f.date_to = dateTo;
+    return f;
+  }, [outletId, movementType, itemId, dateFrom, dateTo]);
 
-  useEffect(() => {
-    loadData();
-  }, [userId, outletId, movementType, itemId, dateFrom, dateTo]);
+  const data = useReportData<InventoryMovement, MovementHistoryReportFilters>(
+    userId,
+    filters,
+    getMovementHistoryReport,
+    setLoading,
+    setError
+  );
 
-  async function loadItems() {
-    try {
-      const itemData = await getInventoryItems(userId, { is_active: true });
-      setItems(itemData);
-    } catch (err) {
-      console.error('Failed to load items:', err);
-    }
-  }
-
-  async function loadData() {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const filters: any = {};
-      if (outletId) filters.outlet_id = outletId;
-      if (movementType) filters.movement_type = movementType;
-      if (itemId) filters.inventory_item_id = itemId;
-      if (dateFrom) filters.date_from = dateFrom;
-      if (dateTo) filters.date_to = dateTo;
-
-      const reportData = await getMovementHistoryReport(userId, filters);
-      setData(reportData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load report');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleExport() {
-    try {
-      const filters: any = {};
-      if (outletId) filters.outlet_id = outletId;
-      if (movementType) filters.movement_type = movementType;
-      if (itemId) filters.inventory_item_id = itemId;
-      if (dateFrom) filters.date_from = dateFrom;
-      if (dateTo) filters.date_to = dateTo;
-
-      const csv = await exportMovementHistoryCSV(userId, filters);
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `movement-history-${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to export CSV');
-    }
+  function handleExport() {
+    return runExport(() => exportMovementHistoryCSV(userId, filters), 'movement-history', setError);
   }
 
   return (
     <>
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
-        <Card>
-          <p className="text-sm text-muted-foreground">Total Movements</p>
-          <p className="text-2xl font-bold">{data.length}</p>
-        </Card>
-      </div>
-
-      {/* Filters */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">Filters</h3>
-          <Button onClick={handleExport} disabled={data.length === 0}>
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </Button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {showOutletFilter && (
-            <Select
-              label="Outlet"
-              value={outletId}
-              onChange={(e) => setOutletId(e.target.value)}
-            >
-              <option value="">All Outlets</option>
-              {outlets.map((outlet) => (
-                <option key={outlet.id} value={outlet.id}>
-                  {outlet.name}
-                </option>
-              ))}
-            </Select>
-          )}
-
+      <FilterBar onExport={handleExport} canExport={data.length > 0}>
+        {showOutletFilter && <OutletSelect outlets={outlets} value={outletId} onChange={setOutletId} />}
+        <Field width="sm:w-48">
           <Select
-            label="Movement Type"
+            label="Movement type"
             value={movementType}
-            onChange={(e) => setMovementType(e.target.value)}
+            onChange={(e) => setMovementType(e.target.value as MovementType | '')}
           >
-            <option value="">All Types</option>
-            <option value="stock_in">Stock In</option>
-            <option value="allocation">Allocation</option>
-            <option value="return">Return</option>
-            <option value="damage">Damage</option>
-            <option value="loss">Loss</option>
-            <option value="adjustment">Adjustment</option>
+            <option value="">All types</option>
+            {MOVEMENT_TYPE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </Select>
-
-          <Select
-            label="Item"
-            value={itemId}
-            onChange={(e) => setItemId(e.target.value)}
-          >
-            <option value="">All Items</option>
+        </Field>
+        <Field width="sm:w-64">
+          <Select label="Item" value={itemId} onChange={(e) => setItemId(e.target.value)}>
+            <option value="">All items</option>
             {items.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name} ({item.category})
               </option>
             ))}
           </Select>
+        </Field>
+        <Field width="sm:w-44">
+          <DateInput label="From" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        </Field>
+        <Field width="sm:w-44">
+          <DateInput label="To" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        </Field>
+      </FilterBar>
 
-          <Input
-            type="date"
-            label="From Date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-          />
-
-          <Input
-            type="date"
-            label="To Date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-          />
-        </div>
-      </Card>
-
-      {/* Table */}
-      <Card>
-        <h3 className="font-semibold mb-4">Complete Movement History (Immutable Audit Trail)</h3>
-        {data.length === 0 ? (
-          <p className="text-center text-muted-foreground py-8">No movements found</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b">
-                <tr>
-                  <th className="text-left py-2 px-2">Date/Time</th>
-                  <th className="text-left py-2 px-2">Item</th>
-                  {showOutletFilter && <th className="text-left py-2 px-2">Outlet</th>}
-                  <th className="text-left py-2 px-2">Type</th>
-                  <th className="text-right py-2 px-2">Qty</th>
-                  <th className="text-left py-2 px-2">Reference</th>
-                  <th className="text-left py-2 px-2">Notes</th>
-                  <th className="text-left py-2 px-2">User</th>
+      <Ledger
+        title="Movement history"
+        countLine={`${num(data.length)} movement${data.length === 1 ? '' : 's'} · the ledger is append-only`}
+        loading={loading}
+        empty="No movements for these filters."
+        rows={data.length}
+        cols={showOutletFilter ? 8 : 7}
+      >
+        <table className="ledger">
+          <thead>
+            <tr>
+              <th scope="col">Date (IST)</th>
+              <th scope="col">Item</th>
+              {showOutletFilter && <th scope="col">Outlet</th>}
+              <th scope="col">Type</th>
+              <th scope="col" className="text-right">Pieces</th>
+              <th scope="col">Booking</th>
+              <th scope="col">Notes</th>
+              <th scope="col">By</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row) => {
+              const when = istDateTimeParts(row.created_at);
+              return (
+                <tr key={row.id}>
+                  <td className="whitespace-nowrap">
+                    <span className="block text-ink">{fmtDay(when.date)}</span>
+                    <span className="tabular block text-xs text-ink-muted">{when.time}</span>
+                  </td>
+                  <td>
+                    <span className="block font-semibold text-ink">{row.item_name}</span>
+                    <span className="block text-xs text-ink-muted">{row.item_category}</span>
+                  </td>
+                  {showOutletFilter && <td className="whitespace-nowrap">{row.outlet_name}</td>}
+                  <td>
+                    <span
+                      className={cn(
+                        'inline-flex whitespace-nowrap rounded-md border px-2 py-0.5 text-xs font-semibold',
+                        MOVEMENT_TYPE_COLORS[row.movement_type as MovementType] ?? 'border-rule bg-paper-sunk text-ink-muted'
+                      )}
+                    >
+                      {movementTypeLabel(row.movement_type)}
+                    </span>
+                  </td>
+                  <td className="tabular text-right font-semibold">{num(row.quantity)}</td>
+                  <td>
+                    <RefCell type={row.reference_type} name={row.reference_name} />
+                  </td>
+                  <td className="max-w-xs truncate text-ink-muted" title={row.notes || undefined}>
+                    {row.notes || '—'}
+                  </td>
+                  <td className="whitespace-nowrap text-ink-muted">{row.created_by_name}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {data.map((row, idx) => (
-                  <tr key={idx} className="border-b">
-                    <td className="py-2 px-2">
-                      <div>
-                        <p>{new Date(row.created_at).toLocaleDateString()}</p>
-                        <p className="text-xs text-muted-foreground">{new Date(row.created_at).toLocaleTimeString()}</p>
-                      </div>
-                    </td>
-                    <td className="py-2 px-2">
-                      <div>
-                        <p className="font-medium">{row.item_name}</p>
-                        <p className="text-xs text-muted-foreground">{row.item_category}</p>
-                      </div>
-                    </td>
-                    {showOutletFilter && <td className="py-2 px-2">{row.outlet_name}</td>}
-                    <td className="py-2 px-2">
-                      <Badge variant="default">{row.movement_type.replace('_', ' ').toUpperCase()}</Badge>
-                    </td>
-                    <td className="text-right py-2 px-2 font-semibold">{row.quantity}</td>
-                    <td className="py-2 px-2">
-                      <div>
-                        <Badge variant="secondary">{row.reference_type}</Badge>
-                        {row.reference_name && (
-                          <p className="text-xs text-muted-foreground mt-1">{row.reference_name}</p>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-2 px-2 max-w-xs truncate">{row.notes || '-'}</td>
-                    <td className="py-2 px-2">{row.created_by_name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+              );
+            })}
+          </tbody>
+        </table>
+      </Ledger>
     </>
   );
 }

@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
-import { Spinner } from '@/components/ui/Spinner';
+import { Skeleton } from '@/components/ui/Spinner';
+import { FactWell, ModalActions } from './ModalParts';
 import { getItemsForAllocation } from '@/services/inventoryServiceV2';
 import { allocateInventoryV2 } from '@/services/inventoryMovementServiceV2';
 import type { InventoryItem, ReferenceType } from '@/types';
@@ -56,17 +57,7 @@ export default function AllocateInventoryModal({
   const selectedItem = items.find(i => i.id === selectedItemId);
   const availableQuantity = selectedItem?.available_quantity || 0;
 
-  useEffect(() => {
-    if (isOpen) {
-      loadItems();
-      setSelectedItemId('');
-      setQuantity('');
-      setNotes('');
-      setError(null);
-    }
-  }, [isOpen]);
-
-  async function loadItems() {
+  const loadItems = useCallback(async () => {
     try {
       setLoadingItems(true);
       // Fetch ACTIVE items for this outlet (only active items can be allocated)
@@ -79,10 +70,21 @@ export default function AllocateInventoryModal({
     } finally {
       setLoadingItems(false);
     }
-  }
+  }, [userId, outletId]);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadItems();
+      setSelectedItemId('');
+      setQuantity('');
+      setNotes('');
+      setError(null);
+    }
+  }, [isOpen, loadItems]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setError(null);
 
     // Validation
@@ -134,83 +136,76 @@ export default function AllocateInventoryModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Allocate Inventory"
+      title="Send dishes"
+      description="Pieces move from available stock to this booking."
+      dismissable={!loading}
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <Alert variant="error">{error}</Alert>}
 
-        {/* Reference Info */}
-        <div className="bg-muted p-4 rounded">
-          <p className="text-sm text-muted-foreground">Allocating To</p>
-          <p className="font-semibold capitalize">{referenceType}</p>
-          <p className="text-sm">{referenceName}</p>
-        </div>
+        <FactWell
+          eyebrow={referenceType === 'event' ? 'Sending to event' : 'Sending to subscription'}
+          title={referenceName}
+          facts={selectedItem ? [{ label: 'Available', value: availableQuantity, tone: 'final' }] : []}
+        />
 
         {loadingItems ? (
-          <div className="flex items-center justify-center py-8">
-            <Spinner />
+          <div className="space-y-3 py-2" aria-busy="true">
+            <Skeleton className="h-10" />
+            <Skeleton className="h-10" />
           </div>
         ) : items.length === 0 ? (
           <Alert variant="warning">
-            No inventory items with available stock found for this outlet.
+            No dishware with available stock at this outlet. Add stock to an item first.
           </Alert>
         ) : (
           <>
-            {/* Select Item */}
             <Select
-              label="Inventory Item"
+              label="Item"
               value={selectedItemId}
               onChange={(e) => setSelectedItemId(e.target.value)}
               required
             >
-              <option value="">Select Item</option>
+              <option value="">Select item</option>
               {items.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.name} - {item.category} (Available: {item.available_quantity})
+                  {item.name} · {item.category} ({item.available_quantity} available)
                 </option>
               ))}
             </Select>
 
-            {/* Show available quantity for selected item */}
-            {selectedItem && (
-              <div className="bg-brand-primary/10 p-3 rounded">
-                <p className="text-sm text-muted-foreground">Available Stock</p>
-                <p className="text-lg font-bold text-brand-primary">{availableQuantity}</p>
-              </div>
-            )}
-
-            {/* Quantity */}
             <Input
               type="number"
-              label="Quantity to Allocate"
+              inputMode="numeric"
+              label="Pieces to send"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               min="1"
               max={availableQuantity}
               required
               disabled={!selectedItemId}
-              placeholder={selectedItem ? `Max: ${availableQuantity}` : 'Select an item first'}
+              placeholder={selectedItem ? `Up to ${availableQuantity}` : 'Select an item first'}
+              className="tabular"
             />
 
-            {/* Notes */}
             <Input
-              label="Notes (optional)"
+              label="Notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Optional notes about this allocation"
+              placeholder="e.g. Vehicle number, delivery note"
+              helperText="Optional"
             />
           </>
         )}
 
-        {/* Buttons */}
-        <div className="flex justify-end gap-2 pt-4">
+        <ModalActions>
           <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
             Cancel
           </Button>
-          <Button type="submit" disabled={loading || items.length === 0}>
-            {loading ? 'Allocating...' : 'Allocate'}
+          <Button type="submit" isLoading={loading} disabled={items.length === 0}>
+            {loading ? 'Sending…' : 'Send dishes'}
           </Button>
-        </div>
+        </ModalActions>
       </form>
     </Modal>
   );

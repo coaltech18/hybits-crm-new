@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import { toCsv } from '@/utils/csv';
+import { roundCurrency } from '@/utils/format';
 import type {
   ReportFilters,
   RevenueReportRow,
@@ -21,31 +23,45 @@ import type {
 // CSV exports included for every report
 // ================================================================
 
-/**
- * Get user role and assigned outlets (for managers)
- */
-async function getUserRoleAndOutlets(userId: string): Promise<{
+// ================================================================
+// SHARED ACCESS + PAGING HELPERS (also used by gstReportService)
+// ================================================================
+
+export interface RoleScope {
   role: string;
   outletIds: string[] | null;
-}> {
-  const { data: profile } = await supabase
+}
+
+/**
+ * Get user role and assigned outlets (for managers).
+ * Query errors are thrown, so a failed lookup never looks like "no outlets".
+ */
+export async function getUserRoleAndOutlets(userId: string): Promise<RoleScope> {
+  const { data: profile, error: profileError } = await supabase
     .from('user_profiles')
     .select('role')
     .eq('id', userId)
     .maybeSingle();
 
+  if (profileError) {
+    throw new Error(profileError.message);
+  }
   if (!profile) {
     throw new Error('User profile not found');
   }
 
   // Managers: Get assigned outlets
   if (profile.role === 'manager') {
-    const { data: assignments } = await supabase
+    const { data: assignments, error: assignmentsError } = await supabase
       .from('user_outlet_assignments')
       .select('outlet_id')
       .eq('user_id', userId);
 
-    const outletIds = assignments?.map(a => a.outlet_id) || [];
+    if (assignmentsError) {
+      throw new Error(assignmentsError.message);
+    }
+
+    const outletIds = (assignments ?? []).map((a: { outlet_id: string }) => a.outlet_id);
     return { role: profile.role, outletIds };
   }
 
@@ -53,14 +69,19 @@ async function getUserRoleAndOutlets(userId: string): Promise<{
   return { role: profile.role, outletIds: null };
 }
 
+interface OutletFilterableQuery<Q> {
+  in(column: string, values: readonly string[]): Q;
+  eq(column: string, value: string): Q;
+}
+
 /**
- * Apply outlet filter based on role
+ * Apply outlet filter based on role. Returns null when the user can see no outlet.
  */
-function applyOutletFilter(
-  query: any,
-  roleData: { role: string; outletIds: string[] | null },
-  filters: ReportFilters
-) {
+export function applyOutletFilter<Q extends OutletFilterableQuery<Q>>(
+  query: Q,
+  roleData: RoleScope,
+  filters: { outlet_id?: string }
+): Q | null {
   // Manager: Filter by assigned outlets
   if (roleData.role === 'manager' && roleData.outletIds) {
     if (roleData.outletIds.length > 0) {
@@ -72,12 +93,44 @@ function applyOutletFilter(
   }
 
   // Admin/Accountant with outlet filter
-  if (filters.outlet_id && ['admin', 'accountant'].includes(roleData.role)) {
+  if (filters.outlet_id && (roleData.role === 'admin' || roleData.role === 'accountant')) {
     query = query.eq('outlet_id', filters.outlet_id);
   }
 
   return query;
 }
+
+const PAGE_SIZE = 1000; // PostgREST max_rows (supabase/config.toml)
+
+interface PagedQuery<T> {
+  range(
+    from: number,
+    to: number
+  ): PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
+}
+
+/**
+ * Fetch every row of a query, page by page, so totals are never silently
+ * truncated at PostgREST's row cap. `build` must create a fresh, fully
+ * ordered (unique tiebreaker) query each call, or return null for "no access".
+ */
+export async function fetchAllRows<T>(build: () => PagedQuery<T> | null): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const query = build();
+    if (query === null) return [];
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      throw new Error(error.message);
+    }
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) return rows;
+  }
+}
+
+const sumBy = <T>(rows: T[], pick: (row: T) => number) =>
+  roundCurrency(rows.reduce((sum, row) => sum + (Number(pick(row)) || 0), 0));
 
 // ================================================================
 // REVENUE REPORT
@@ -89,56 +142,54 @@ export async function getRevenueReport(
 ) {
   const roleData = await getUserRoleAndOutlets(userId);
 
-  let query = supabase
-    .from('report_revenue_daily')
-    .select('*')
-    .order('report_date', { ascending: false });
+  return fetchAllRows<RevenueReportRow>(() => {
+    let query = applyOutletFilter(
+      supabase
+        .from('report_revenue_daily')
+        .select('*')
+        .order('report_date', { ascending: false })
+        .order('outlet_id')
+        .order('invoice_type'),
+      roleData,
+      filters
+    );
+    if (query === null) return null;
 
-  // Apply outlet filter
-  query = applyOutletFilter(query, roleData, filters);
-  if (query === null) return [];
+    // Apply date filters
+    if (filters.date_from) {
+      query = query.gte('report_date', filters.date_from);
+    }
+    if (filters.date_to) {
+      query = query.lte('report_date', filters.date_to);
+    }
 
-  // Apply date filters
-  if (filters.date_from) {
-    query = query.gte('report_date', filters.date_from);
-  }
-  if (filters.date_to) {
-    query = query.lte('report_date', filters.date_to);
-  }
+    // Apply invoice type filter
+    if (filters.invoice_type) {
+      query = query.eq('invoice_type', filters.invoice_type);
+    }
 
-  // Apply invoice type filter
-  if (filters.invoice_type) {
-    query = query.eq('invoice_type', filters.invoice_type);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data || []) as RevenueReportRow[];
+    return query;
+  });
 }
 
-export async function getRevenueChartData(userId: string, filters: ReportFilters) {
-  const data = await getRevenueReport(userId, filters);
-
+/** Revenue trend + outlet-wise charts from already-filtered rows. */
+export function buildRevenueCharts(data: RevenueReportRow[]) {
   // Line chart: Revenue trend over time
   const trendMap = new Map<string, { invoiced: number; collected: number }>();
   data.forEach(row => {
     const existing = trendMap.get(row.report_date) || { invoiced: 0, collected: 0 };
     trendMap.set(row.report_date, {
-      invoiced: existing.invoiced + row.total_invoiced,
-      collected: existing.collected + row.total_collected,
+      invoiced: existing.invoiced + Number(row.total_invoiced),
+      collected: existing.collected + Number(row.total_collected),
     });
   });
 
   const trendData: ChartDataPoint[] = Array.from(trendMap.entries())
     .map(([date, values]) => ({
       name: date,
-      invoiced: values.invoiced,
-      collected: values.collected,
-      value: values.invoiced,
+      invoiced: roundCurrency(values.invoiced),
+      collected: roundCurrency(values.collected),
+      value: roundCurrency(values.invoiced),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -147,16 +198,16 @@ export async function getRevenueChartData(userId: string, filters: ReportFilters
   data.forEach(row => {
     const existing = outletMap.get(row.outlet_name) || { invoiced: 0, collected: 0 };
     outletMap.set(row.outlet_name, {
-      invoiced: existing.invoiced + row.total_invoiced,
-      collected: existing.collected + row.total_collected,
+      invoiced: existing.invoiced + Number(row.total_invoiced),
+      collected: existing.collected + Number(row.total_collected),
     });
   });
 
   const outletData: ChartDataPoint[] = Array.from(outletMap.entries()).map(([outlet, values]) => ({
     name: outlet,
-    invoiced: values.invoiced,
-    collected: values.collected,
-    value: values.invoiced,
+    invoiced: roundCurrency(values.invoiced),
+    collected: roundCurrency(values.collected),
+    value: roundCurrency(values.invoiced),
   }));
 
   return { trendData, outletData };
@@ -172,63 +223,68 @@ export async function getPaymentsReport(
 ) {
   const roleData = await getUserRoleAndOutlets(userId);
 
-  let query = supabase
-    .from('report_payments_daily')
-    .select('*')
-    .order('report_date', { ascending: false });
+  return fetchAllRows<PaymentsReportRow>(() => {
+    let query = applyOutletFilter(
+      supabase
+        .from('report_payments_daily')
+        .select('*')
+        // One row per day x outlet x method (042; invoice_id is always NULL),
+        // so this order is unique and paging is deterministic.
+        .order('report_date', { ascending: false })
+        .order('outlet_name')
+        .order('outlet_id')
+        .order('payment_method'),
+      roleData,
+      filters
+    );
+    if (query === null) return null;
 
-  // Apply outlet filter
-  query = applyOutletFilter(query, roleData, filters);
-  if (query === null) return [];
+    // Apply date filters
+    if (filters.date_from) {
+      query = query.gte('report_date', filters.date_from);
+    }
+    if (filters.date_to) {
+      query = query.lte('report_date', filters.date_to);
+    }
 
-  // Apply date filters
-  if (filters.date_from) {
-    query = query.gte('report_date', filters.date_from);
-  }
-  if (filters.date_to) {
-    query = query.lte('report_date', filters.date_to);
-  }
+    // Apply payment method filter
+    if (filters.payment_method) {
+      query = query.eq('payment_method', filters.payment_method);
+    }
 
-  // Apply payment method filter
-  if (filters.payment_method) {
-    query = query.eq('payment_method', filters.payment_method);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data || []) as PaymentsReportRow[];
+    return query;
+  });
 }
 
-export async function getPaymentsChartData(userId: string, filters: ReportFilters) {
-  const data = await getPaymentsReport(userId, filters);
+export function formatPaymentMethodLabel(method: string): string {
+  return method.replace(/_/g, ' ').toUpperCase();
+}
 
+/** Method split + daily collections charts from already-filtered rows. */
+export function buildPaymentsCharts(data: PaymentsReportRow[]) {
   // Pie chart: Payment method split
   const methodMap = new Map<string, number>();
   data.forEach(row => {
     const existing = methodMap.get(row.payment_method) || 0;
-    methodMap.set(row.payment_method, existing + row.total_amount);
+    methodMap.set(row.payment_method, existing + Number(row.total_amount));
   });
 
   const methodData: ChartDataPoint[] = Array.from(methodMap.entries()).map(([method, amount]) => ({
-    name: method.replace('_', ' ').toUpperCase(),
-    value: amount,
+    name: formatPaymentMethodLabel(method),
+    value: roundCurrency(amount),
   }));
 
   // Bar chart: Daily collections
   const dailyMap = new Map<string, number>();
   data.forEach(row => {
     const existing = dailyMap.get(row.report_date) || 0;
-    dailyMap.set(row.report_date, existing + row.total_amount);
+    dailyMap.set(row.report_date, existing + Number(row.total_amount));
   });
 
   const dailyData: ChartDataPoint[] = Array.from(dailyMap.entries())
     .map(([date, amount]) => ({
       name: date,
-      value: amount,
+      value: roundCurrency(amount),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -245,59 +301,51 @@ export async function getOutstandingAgingReport(
 ) {
   const roleData = await getUserRoleAndOutlets(userId);
 
-  let query = supabase
-    .from('report_outstanding_aging')
-    .select('*')
-    .order('days_outstanding', { ascending: false });
+  return fetchAllRows<OutstandingAgingRow>(() => {
+    let query = applyOutletFilter(
+      supabase
+        .from('report_outstanding_aging')
+        .select('*')
+        .order('days_outstanding', { ascending: false })
+        .order('invoice_id'),
+      roleData,
+      filters
+    );
+    if (query === null) return null;
 
-  // Apply outlet filter
-  query = applyOutletFilter(query, roleData, filters);
-  if (query === null) return [];
+    // Apply date filters (invoice_date)
+    if (filters.date_from) {
+      query = query.gte('invoice_date', filters.date_from);
+    }
+    if (filters.date_to) {
+      query = query.lte('invoice_date', filters.date_to);
+    }
 
-  // Apply date filters (invoice_date)
-  if (filters.date_from) {
-    query = query.gte('invoice_date', filters.date_from);
-  }
-  if (filters.date_to) {
-    query = query.lte('invoice_date', filters.date_to);
-  }
+    // Apply aging bucket filter
+    if (filters.aging_bucket) {
+      query = query.eq('aging_bucket', filters.aging_bucket);
+    }
 
-  // Apply aging bucket filter
-  if (filters.aging_bucket) {
-    query = query.eq('aging_bucket', filters.aging_bucket);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data || []) as OutstandingAgingRow[];
+    return query;
+  });
 }
 
-export async function getOutstandingAgingChartData(userId: string, filters: ReportFilters) {
-  const data = await getOutstandingAgingReport(userId, filters);
+export const AGING_BUCKETS: AgingBucket[] = ['0-30', '31-60', '61-90', '90+'];
 
-  // Bar chart: Aging buckets
-  const bucketMap = new Map<AgingBucket, number>([
-    ['0-30', 0],
-    ['31-60', 0],
-    ['61-90', 0],
-    ['90+', 0],
-  ]);
-
-  data.forEach(row => {
-    const existing = bucketMap.get(row.aging_bucket) || 0;
-    bucketMap.set(row.aging_bucket, existing + row.balance_due);
+/** Count and balance per aging bucket. */
+export function summarizeAgingBuckets(data: OutstandingAgingRow[]) {
+  return AGING_BUCKETS.map(bucket => {
+    const rows = data.filter(row => row.aging_bucket === bucket);
+    return { bucket, count: rows.length, amount: sumBy(rows, row => row.balance_due) };
   });
+}
 
-  const bucketData: ChartDataPoint[] = [
-    { name: '0-30 days', value: bucketMap.get('0-30') || 0 },
-    { name: '31-60 days', value: bucketMap.get('31-60') || 0 },
-    { name: '61-90 days', value: bucketMap.get('61-90') || 0 },
-    { name: '90+ days', value: bucketMap.get('90+') || 0 },
-  ];
+/** Aging bucket chart from already-filtered rows. */
+export function buildAgingCharts(data: OutstandingAgingRow[]) {
+  const bucketData: ChartDataPoint[] = summarizeAgingBuckets(data).map(({ bucket, amount }) => ({
+    name: `${bucket} days`,
+    value: amount,
+  }));
 
   return { bucketData };
 }
@@ -306,51 +354,41 @@ export async function getOutstandingAgingChartData(userId: string, filters: Repo
 // SUBSCRIPTION PERFORMANCE REPORT
 // ================================================================
 
+/**
+ * Active subscriptions with MRR. This is a current snapshot, so the date
+ * range is intentionally not applied (it used to filter on next_billing_date,
+ * which made "Active Subscriptions" and MRR silently partial).
+ */
 export async function getSubscriptionPerformanceReport(
   userId: string,
-  filters: ReportFilters
+  filters: Pick<ReportFilters, 'outlet_id'>
 ) {
   const roleData = await getUserRoleAndOutlets(userId);
 
-  let query = supabase
-    .from('report_subscription_mrr')
-    .select('*')
-    .order('mrr', { ascending: false });
-
-  // Apply outlet filter
-  query = applyOutletFilter(query, roleData, filters);
-  if (query === null) return [];
-
-  // Apply date filters (next_billing_date for upcoming billing)
-  if (filters.date_from) {
-    query = query.gte('next_billing_date', filters.date_from);
-  }
-  if (filters.date_to) {
-    query = query.lte('next_billing_date', filters.date_to);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data || []) as SubscriptionMRRRow[];
+  return fetchAllRows<SubscriptionMRRRow>(() =>
+    applyOutletFilter(
+      supabase
+        .from('report_subscription_mrr')
+        .select('*')
+        .order('mrr', { ascending: false })
+        .order('subscription_id'),
+      roleData,
+      filters
+    )
+  );
 }
 
-export async function getSubscriptionPerformanceChartData(userId: string, filters: ReportFilters) {
-  const data = await getSubscriptionPerformanceReport(userId, filters);
-
-  // Bar chart: Outlet-wise MRR
+/** Outlet-wise MRR chart from already-filtered rows. */
+export function buildSubscriptionCharts(data: SubscriptionMRRRow[]) {
   const outletMap = new Map<string, number>();
   data.forEach(row => {
     const existing = outletMap.get(row.outlet_name) || 0;
-    outletMap.set(row.outlet_name, existing + row.mrr);
+    outletMap.set(row.outlet_name, existing + Number(row.mrr));
   });
 
   const outletData: ChartDataPoint[] = Array.from(outletMap.entries()).map(([outlet, mrr]) => ({
     name: outlet,
-    value: mrr,
+    value: roundCurrency(mrr),
   }));
 
   return { outletData };
@@ -361,123 +399,76 @@ export async function getSubscriptionPerformanceChartData(userId: string, filter
 // ================================================================
 
 export async function getEventsRevenueReport(userId: string, filters: ReportFilters) {
-  const roleData = await getUserRoleAndOutlets(userId);
-
-  // Get event invoices from revenue report
-  let query = supabase
-    .from('report_revenue_daily')
-    .select('*')
-    .eq('invoice_type', 'event')
-    .order('report_date', { ascending: false });
-
-  // Apply outlet filter
-  query = applyOutletFilter(query, roleData, filters);
-  if (query === null) return [];
-
-  // Apply date filters
-  if (filters.date_from) {
-    query = query.gte('report_date', filters.date_from);
-  }
-  if (filters.date_to) {
-    query = query.lte('report_date', filters.date_to);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data || []) as RevenueReportRow[];
+  return getRevenueReport(userId, { ...filters, invoice_type: 'event' });
 }
 
-export async function getEventsRevenueChartData(userId: string, filters: ReportFilters) {
-  const data = await getEventsRevenueReport(userId, filters);
-
-  // Bar chart: Event revenue by outlet
+/** Event revenue by outlet chart from already-filtered rows. */
+export function buildEventCharts(data: RevenueReportRow[]) {
   const outletMap = new Map<string, number>();
   data.forEach(row => {
     const existing = outletMap.get(row.outlet_name) || 0;
-    outletMap.set(row.outlet_name, existing + row.total_invoiced);
+    outletMap.set(row.outlet_name, existing + Number(row.total_invoiced));
   });
 
   const outletData: ChartDataPoint[] = Array.from(outletMap.entries()).map(([outlet, revenue]) => ({
     name: outlet,
-    value: revenue,
+    value: roundCurrency(revenue),
   }));
 
   return { outletData };
 }
 
 // ================================================================
-// CLIENT REVENUE REPORT
+// CLIENT REVENUE REPORT (all-time; the view has no date column)
 // ================================================================
 
 export async function getClientRevenueReport(
   userId: string,
-  filters: ReportFilters
+  filters: Pick<ReportFilters, 'outlet_id'>
 ) {
   const roleData = await getUserRoleAndOutlets(userId);
 
-  let query = supabase
-    .from('report_client_revenue')
-    .select('*')
-    .order('total_invoiced', { ascending: false });
-
-  // Apply outlet filter
-  query = applyOutletFilter(query, roleData, filters);
-  if (query === null) return [];
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data || []) as ClientRevenueRow[];
+  return fetchAllRows<ClientRevenueRow>(() =>
+    applyOutletFilter(
+      supabase
+        .from('report_client_revenue')
+        .select('*')
+        .order('total_invoiced', { ascending: false })
+        .order('client_id'),
+      roleData,
+      filters
+    )
+  );
 }
 
 // ================================================================
-// OUTLET PERFORMANCE REPORT
+// OUTLET PERFORMANCE REPORT (all-time; the view has no date column)
 // ================================================================
 
 export async function getOutletPerformanceReport(
   userId: string,
-  filters: ReportFilters
+  filters: Pick<ReportFilters, 'outlet_id'>
 ) {
   const roleData = await getUserRoleAndOutlets(userId);
 
-  let query = supabase
-    .from('report_outlet_performance')
-    .select('*')
-    .order('total_invoiced', { ascending: false });
-
-  // For managers, still show their outlet (for context)
-  if (roleData.role === 'manager' && roleData.outletIds) {
-    if (roleData.outletIds.length > 0) {
-      query = query.in('outlet_id', roleData.outletIds);
-    } else {
-      return [];
-    }
-  }
-
-  // Admin/Accountant with outlet filter
-  if (filters.outlet_id && ['admin', 'accountant'].includes(roleData.role)) {
-    query = query.eq('outlet_id', filters.outlet_id);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return (data || []) as OutletPerformanceRow[];
+  return fetchAllRows<OutletPerformanceRow>(() =>
+    applyOutletFilter(
+      supabase
+        .from('report_outlet_performance')
+        .select('*')
+        .order('total_invoiced', { ascending: false })
+        .order('outlet_id'),
+      roleData,
+      filters
+    )
+  );
 }
 
 // ================================================================
 // CSV EXPORT FUNCTIONS
 // ================================================================
+// All cells go through @/utils/csv (RFC 4180 quoting + formula-injection
+// neutralising). Pass the result to downloadCsv().
 
 export function exportRevenueReportCSV(data: RevenueReportRow[]): string {
   const headers = [
@@ -500,7 +491,7 @@ export function exportRevenueReportCSV(data: RevenueReportRow[]): string {
     row.outstanding,
   ]);
 
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
+  return toCsv(headers, rows);
 }
 
 export function exportPaymentsReportCSV(data: PaymentsReportRow[]): string {
@@ -509,12 +500,12 @@ export function exportPaymentsReportCSV(data: PaymentsReportRow[]): string {
   const rows = data.map(row => [
     row.report_date,
     row.outlet_name,
-    row.payment_method.replace('_', ' ').toUpperCase(),
+    formatPaymentMethodLabel(row.payment_method),
     row.payment_count,
     row.total_amount,
   ]);
 
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
+  return toCsv(headers, rows);
 }
 
 export function exportOutstandingAgingReportCSV(data: OutstandingAgingRow[]): string {
@@ -542,7 +533,7 @@ export function exportOutstandingAgingReportCSV(data: OutstandingAgingRow[]): st
     row.aging_bucket,
   ]);
 
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
+  return toCsv(headers, rows);
 }
 
 export function exportSubscriptionPerformanceReportCSV(data: SubscriptionMRRRow[]): string {
@@ -572,7 +563,7 @@ export function exportSubscriptionPerformanceReportCSV(data: SubscriptionMRRRow[
     row.next_billing_date,
   ]);
 
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
+  return toCsv(headers, rows);
 }
 
 export function exportEventsRevenueReportCSV(data: RevenueReportRow[]): string {
@@ -587,7 +578,7 @@ export function exportEventsRevenueReportCSV(data: RevenueReportRow[]): string {
     row.outstanding,
   ]);
 
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
+  return toCsv(headers, rows);
 }
 
 export function exportClientRevenueReportCSV(data: ClientRevenueRow[]): string {
@@ -619,7 +610,7 @@ export function exportClientRevenueReportCSV(data: ClientRevenueRow[]): string {
     row.completed_events,
   ]);
 
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
+  return toCsv(headers, rows);
 }
 
 export function exportOutletPerformanceReportCSV(data: OutletPerformanceRow[]): string {
@@ -641,7 +632,7 @@ export function exportOutletPerformanceReportCSV(data: OutletPerformanceRow[]): 
   const rows = data.map(row => [
     row.outlet_name,
     row.outlet_code,
-    row.city || '',
+    row.city,
     row.active_clients,
     row.total_invoices,
     row.total_invoiced,
@@ -653,5 +644,5 @@ export function exportOutletPerformanceReportCSV(data: OutletPerformanceRow[]): 
     row.completed_events,
   ]);
 
-  return [headers, ...rows].map(row => row.join(',')).join('\n');
+  return toCsv(headers, rows);
 }

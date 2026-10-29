@@ -1,37 +1,38 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { supabase } from '@/lib/supabase';
-import { hasActiveAudit, getPendingApprovalsCount } from '@/services/inventoryAuditService';
-import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { Spinner } from '@/components/ui/Spinner';
+import { countActiveAudits, getPendingApprovalsCount } from '@/services/inventoryAuditService';
+import { fetchAllRows } from '@/services/inventoryMovementService';
+import { LinkButton } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
+import { Skeleton } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { cn } from '@/utils/cn';
 import {
     Package,
     ArrowRight,
     AlertTriangle,
-    TrendingUp,
-    TrendingDown,
     Wrench,
     AlertCircle,
     ClipboardCheck,
-    FileText,
     BarChart3,
     Clock,
-    Check,
-    XCircle,
+    History,
+    Send,
+    type LucideIcon,
 } from 'lucide-react';
+import { StockStrip, MovementBadge, SignedQty } from './StockParts';
+import { pcs } from './stockDisplay';
+import { formatDateTime } from '@/utils/format';
+import { countErrorMessage } from '@/utils/query';
 
 // ================================================================
-// INVENTORY STOCK OVERVIEW (V2 DASHBOARD)
-// ================================================================
-// New dashboard showing:
-// - Summary cards (total, available, allocated, damaged, in repair)
-// - Attention alerts with deep links
-// - Recent movements feed
-// - Lifecycle breakdown
+// INVENTORY OVERVIEW — dishware stock at a glance.
+// Stock strip (where every piece is) → what needs attention
+// → the latest movements. Every figure comes from the DB.
 // ================================================================
 
 interface StockSummary {
@@ -43,13 +44,15 @@ interface StockSummary {
     lost_quantity: number;
 }
 
+type Tone = 'draft' | 'partial' | 'overdue' | 'info';
+
 interface AttentionItem {
     type: string;
     label: string;
     count: number;
     link: string;
-    icon: React.ReactNode;
-    color: string;
+    icon: LucideIcon;
+    tone: Tone;
 }
 
 interface RecentMovement {
@@ -60,11 +63,19 @@ interface RecentMovement {
     movement_type: string;
     quantity: number;
     reference_type: string;
-    reference_name: string | null;
+    reason_code: string | null;
 }
 
+// One line of guidance per attention row (presentation only).
+const ATTENTION_DETAIL: Record<string, string> = {
+    unlocked_balance: 'The opening count locks on the first dispatch. Check it before stock goes out.',
+    outstanding: 'Allocations with pieces still at a client or event. Opens the allocation report.',
+    damaged: 'Dispose of damaged pieces from each item’s page.',
+    in_repair: 'Pieces out for repair still count in total stock.',
+};
 
 export default function InventoryOverviewPage() {
+    useDocumentTitle('Dishware stock');
     const { user, outlets, isAuthReady } = useAuth();
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -82,298 +93,234 @@ export default function InventoryOverviewPage() {
 
     const userRole = user?.role || '';
     const isAdmin = userRole === 'admin';
+    const canSendReceive = userRole === 'admin' || userRole === 'manager';
     const showOutletFilter = userRole === 'admin' || userRole === 'accountant';
     const availableOutlets = outlets || [];
 
-    useEffect(() => {
-        if (!isAuthReady) return;
-        loadOverviewData();
-    }, [isAuthReady, outletId]);
+    // Only the latest load may write state (fast outlet switching).
+    const requestId = useRef(0);
 
-    async function loadOverviewData() {
+    const loadOverviewData = useCallback(async () => {
         if (!user?.id) return;
+        const req = ++requestId.current;
 
-        try {
-            setLoading(true);
-            setError(null);
+        const emptyTotals = (): StockSummary => ({
+            total_quantity: 0,
+            available_quantity: 0,
+            allocated_quantity: 0,
+            damaged_quantity: 0,
+            in_repair_quantity: 0,
+            lost_quantity: 0,
+        });
 
-            await Promise.all([
-                loadSummary(),
-                loadDiscontinuedSummary(),
-                loadAttentionItems(),
-                loadRecentMovements(),
-                loadLifecycleCounts(),
-                loadAuditStatus(),
+        async function sumStock(lifecycle: string[]): Promise<StockSummary> {
+            const rows = await fetchAllRows<StockSummary>((from, to) => {
+                let query = supabase
+                    .from('inventory_stock_summary')
+                    .select('total_quantity, available_quantity, allocated_quantity, damaged_quantity, in_repair_quantity, lost_quantity')
+                    .in('lifecycle_status', lifecycle)
+                    .order('item_id');
+                if (outletId) query = query.eq('outlet_id', outletId);
+                return query.range(from, to);
+            });
+            return rows.reduce(
+                (acc, item) => ({
+                    total_quantity: acc.total_quantity + (item.total_quantity || 0),
+                    available_quantity: acc.available_quantity + (item.available_quantity || 0),
+                    allocated_quantity: acc.allocated_quantity + (item.allocated_quantity || 0),
+                    damaged_quantity: acc.damaged_quantity + (item.damaged_quantity || 0),
+                    in_repair_quantity: acc.in_repair_quantity + (item.in_repair_quantity || 0),
+                    lost_quantity: acc.lost_quantity + (item.lost_quantity || 0),
+                }),
+                emptyTotals()
+            );
+        }
+
+        async function loadSummary() {
+            return sumStock(['active', 'draft']); // Only count active/draft items
+        }
+
+        async function loadDiscontinuedSummary() {
+            const totals = await sumStock(['discontinued']);
+            return totals.total_quantity > 0 ? totals : null;
+        }
+
+        async function countOf(
+            query: PromiseLike<{ count: number | null; error: { message: string } | null; status: number }>,
+            thing: string
+        ): Promise<number> {
+            const { count, error: countError, status } = await query;
+            if (countError) throw new Error(countErrorMessage(countError, status, thing));
+            return count ?? 0;
+        }
+
+        async function loadAttentionItems() {
+            const itemCount = () => {
+                let q = supabase
+                    .from('inventory_items')
+                    .select('id', { count: 'exact', head: true })
+                    .in('lifecycle_status', ['draft', 'active']); // same scope as the summary tiles
+                if (outletId) q = q.eq('outlet_id', outletId);
+                return q;
+            };
+
+            let outstandingQuery = supabase
+                .from('inventory_allocations_with_details')
+                .select('allocation_id', { count: 'exact', head: true })
+                .gt('outstanding_quantity', 0)
+                .eq('is_active', true);
+            if (outletId) outstandingQuery = outstandingQuery.eq('outlet_id', outletId);
+
+            const [unlockedCount, outstandingCount, damagedCount, repairCount] = await Promise.all([
+                countOf(itemCount().eq('opening_balance_confirmed', false), 'unlocked items'),
+                countOf(outstandingQuery, 'outstanding allocations'),
+                countOf(itemCount().gt('damaged_quantity', 0), 'damaged items'),
+                countOf(itemCount().gt('in_repair_quantity', 0), 'items in repair'),
             ]);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to load overview data');
-        } finally {
-            setLoading(false);
-        }
-    }
 
-    async function loadSummary() {
-        let query = supabase
-            .from('inventory_stock_summary')
-            .select('total_quantity, available_quantity, allocated_quantity, damaged_quantity, in_repair_quantity, lost_quantity')
-            .in('lifecycle_status', ['active', 'draft']); // Only count active/draft items
-
-        if (outletId) {
-            query = query.eq('outlet_id', outletId);
-        }
-
-        const { data, error } = await query;
-        if (error) throw new Error(error.message);
-
-        // Aggregate
-        const totals = (data || []).reduce(
-            (acc, item) => ({
-                total_quantity: acc.total_quantity + (item.total_quantity || 0),
-                available_quantity: acc.available_quantity + (item.available_quantity || 0),
-                allocated_quantity: acc.allocated_quantity + (item.allocated_quantity || 0),
-                damaged_quantity: acc.damaged_quantity + (item.damaged_quantity || 0),
-                in_repair_quantity: acc.in_repair_quantity + (item.in_repair_quantity || 0),
-                lost_quantity: acc.lost_quantity + (item.lost_quantity || 0),
-            }),
-            {
-                total_quantity: 0,
-                available_quantity: 0,
-                allocated_quantity: 0,
-                damaged_quantity: 0,
-                in_repair_quantity: 0,
-                lost_quantity: 0,
+            const items: AttentionItem[] = [];
+            if (unlockedCount > 0) {
+                items.push({
+                    type: 'unlocked_balance',
+                    label: unlockedCount === 1 ? 'item with an unlocked opening balance' : 'items with an unlocked opening balance',
+                    count: unlockedCount,
+                    link: '/inventory/items?opening_unlocked=true',
+                    icon: AlertCircle,
+                    tone: 'draft',
+                });
             }
-        );
-
-        setSummary(totals);
-    }
-
-    async function loadDiscontinuedSummary() {
-        let query = supabase
-            .from('inventory_stock_summary')
-            .select('total_quantity, available_quantity, allocated_quantity, damaged_quantity, in_repair_quantity, lost_quantity')
-            .eq('lifecycle_status', 'discontinued');
-
-        if (outletId) {
-            query = query.eq('outlet_id', outletId);
-        }
-
-        const { data, error } = await query;
-        if (error) throw new Error(error.message);
-
-        // Aggregate
-        const totals = (data || []).reduce(
-            (acc, item) => ({
-                total_quantity: acc.total_quantity + (item.total_quantity || 0),
-                available_quantity: acc.available_quantity + (item.available_quantity || 0),
-                allocated_quantity: acc.allocated_quantity + (item.allocated_quantity || 0),
-                damaged_quantity: acc.damaged_quantity + (item.damaged_quantity || 0),
-                in_repair_quantity: acc.in_repair_quantity + (item.in_repair_quantity || 0),
-                lost_quantity: acc.lost_quantity + (item.lost_quantity || 0),
-            }),
-            {
-                total_quantity: 0,
-                available_quantity: 0,
-                allocated_quantity: 0,
-                damaged_quantity: 0,
-                in_repair_quantity: 0,
-                lost_quantity: 0,
+            if (outstandingCount > 0) {
+                items.push({
+                    type: 'outstanding',
+                    label: outstandingCount === 1 ? 'pending return' : 'pending returns',
+                    count: outstandingCount,
+                    // The Allocation report lists every outstanding allocation and is open to all roles.
+                    link: '/inventory/reports?tab=allocation',
+                    icon: Clock,
+                    tone: 'partial',
+                });
             }
-        );
-
-        setDiscontinuedSummary(totals.total_quantity > 0 ? totals : null);
-    }
-
-    async function loadAttentionItems() {
-        const items: AttentionItem[] = [];
-
-        // Unlocked opening balance
-        let unlockedQuery = supabase
-            .from('inventory_items')
-            .select('id', { count: 'exact', head: true })
-            .eq('opening_balance_confirmed', false)
-            .in('lifecycle_status', ['draft', 'active']);
-
-        if (outletId) {
-            unlockedQuery = unlockedQuery.eq('outlet_id', outletId);
+            if (damagedCount > 0) {
+                items.push({
+                    type: 'damaged',
+                    label: damagedCount === 1 ? 'item with damaged stock' : 'items with damaged stock',
+                    count: damagedCount,
+                    link: '/inventory/items?has_damaged=true',
+                    icon: AlertTriangle,
+                    tone: 'overdue',
+                });
+            }
+            if (repairCount > 0) {
+                items.push({
+                    type: 'in_repair',
+                    label: repairCount === 1 ? 'item in repair' : 'items in repair',
+                    count: repairCount,
+                    link: '/inventory/items?in_repair=true',
+                    icon: Wrench,
+                    tone: 'info',
+                });
+            }
+            return items;
         }
 
-        const { count: unlockedCount } = await unlockedQuery;
-        if (unlockedCount && unlockedCount > 0) {
-            items.push({
-                type: 'unlocked_balance',
-                label: 'Items with unlocked opening balance',
-                count: unlockedCount,
-                link: '/inventory/items?opening_unlocked=true',
-                icon: <AlertCircle className="w-5 h-5" />,
-                color: 'text-yellow-600',
-            });
-        }
-
-        // Outstanding allocations
-        let outstandingQuery = supabase
-            .from('inventory_allocations_with_details')
-            .select('allocation_id', { count: 'exact', head: true })
-            .gt('outstanding_quantity', 0)
-            .eq('is_active', true);
-
-        if (outletId) {
-            outstandingQuery = outstandingQuery.eq('outlet_id', outletId);
-        }
-
-        const { count: outstandingCount } = await outstandingQuery;
-        if (outstandingCount && outstandingCount > 0) {
-            items.push({
-                type: 'outstanding',
-                label: 'Pending returns',
-                count: outstandingCount,
-                link: '/inventory/allocate?outstanding=true',
-                icon: <Clock className="w-5 h-5" />,
-                color: 'text-blue-600',
-            });
-        }
-
-        // Damaged items
-        let damagedQuery = supabase
-            .from('inventory_items')
-            .select('id', { count: 'exact', head: true })
-            .gt('damaged_quantity', 0);
-
-        if (outletId) {
-            damagedQuery = damagedQuery.eq('outlet_id', outletId);
-        }
-
-        const { count: damagedCount } = await damagedQuery;
-        if (damagedCount && damagedCount > 0) {
-            items.push({
-                type: 'damaged',
-                label: 'Items with damaged stock',
-                count: damagedCount,
-                link: '/inventory/items?has_damaged=true',
-                icon: <AlertTriangle className="w-5 h-5" />,
-                color: 'text-orange-600',
-            });
-        }
-
-        // Items in repair
-        let repairQuery = supabase
-            .from('inventory_items')
-            .select('id', { count: 'exact', head: true })
-            .gt('in_repair_quantity', 0);
-
-        if (outletId) {
-            repairQuery = repairQuery.eq('outlet_id', outletId);
-        }
-
-        const { count: repairCount } = await repairQuery;
-        if (repairCount && repairCount > 0) {
-            items.push({
-                type: 'in_repair',
-                label: 'Items in repair',
-                count: repairCount,
-                link: '/inventory/items?in_repair=true',
-                icon: <Wrench className="w-5 h-5" />,
-                color: 'text-purple-600',
-            });
-        }
-
-        setAttention(items);
-    }
-
-    async function loadRecentMovements() {
-        // First get active item IDs
-        let activeItemsQuery = supabase
-            .from('inventory_items')
-            .select('id')
-            .in('lifecycle_status', ['active', 'draft']);
-
-        if (outletId) {
-            activeItemsQuery = activeItemsQuery.eq('outlet_id', outletId);
-        }
-
-        const { data: activeItems } = await activeItemsQuery;
-        const activeItemIds = (activeItems || []).map((item: any) => item.id);
-
-        if (activeItemIds.length === 0) {
-            setRecentMovements([]);
-            return;
-        }
-
-        let query = supabase
-            .from('inventory_movements')
-            .select(`
+        async function loadRecentMovements() {
+            // Inner-join filter on the item's lifecycle instead of a huge .in() id list.
+            let query = supabase
+                .from('inventory_movements')
+                .select(`
         id,
         created_at,
         movement_category,
         movement_type,
         quantity,
         reference_type,
-        inventory_items:inventory_item_id (name)
+        reason_code,
+        inventory_items!inner (name, lifecycle_status)
       `)
-            .in('inventory_item_id', activeItemIds)
-            .order('created_at', { ascending: false })
-            .limit(10);
+                .in('inventory_items.lifecycle_status', ['active', 'draft'])
+                .order('created_at', { ascending: false })
+                .limit(10);
 
-        if (outletId) {
-            query = query.eq('outlet_id', outletId);
+            if (outletId) {
+                query = query.eq('outlet_id', outletId);
+            }
+
+            const { data, error: fetchError } = await query;
+            if (fetchError) throw new Error(fetchError.message);
+
+            type Row = {
+                id: string;
+                created_at: string;
+                movement_category: string;
+                movement_type: string;
+                quantity: number;
+                reference_type: string;
+                reason_code: string | null;
+                inventory_items: { name?: string } | { name?: string }[] | null;
+            };
+            return ((data || []) as Row[]).map((m): RecentMovement => {
+                const item = Array.isArray(m.inventory_items) ? m.inventory_items[0] : m.inventory_items;
+                return {
+                    id: m.id,
+                    created_at: m.created_at,
+                    item_name: item?.name || 'Unknown',
+                    movement_category: m.movement_category,
+                    movement_type: m.movement_type,
+                    quantity: m.quantity,
+                    reference_type: m.reference_type,
+                    reason_code: m.reason_code ?? null,
+                };
+            });
         }
 
-        const { data, error } = await query;
-        if (error) throw new Error(error.message);
-
-        setRecentMovements(
-            (data || []).map((m: any) => ({
-                id: m.id,
-                created_at: m.created_at,
-                item_name: m.inventory_items?.name || 'Unknown',
-                movement_category: m.movement_category,
-                movement_type: m.movement_type,
-                quantity: m.quantity,
-                reference_type: m.reference_type,
-                reference_name: null,
-            }))
-        );
-    }
-
-    // loadLifecycleCounts kept as no-op for Promise.all compatibility
-    async function loadLifecycleCounts() {
-        // Lifecycle chart removed in Phase-3C dashboard simplification
-    }
-
-    async function loadAuditStatus() {
-        if (!user?.id) return;
-
-        // Check if there's an active audit
-        if (outletId) {
-            const active = await hasActiveAudit(outletId);
-            setHasAudit(active);
+        async function loadAuditStatus() {
+            // RLS scopes managers to their outlets, so this also works with no outlet selected.
+            const [activeAudits, approvals] = await Promise.all([
+                countActiveAudits(outletId || undefined),
+                // Pending approvals (admin only), for the same outlet scope as the rest of the page
+                isAdmin ? getPendingApprovalsCount(outletId || undefined) : Promise.resolve(0),
+            ]);
+            return { hasAudit: activeAudits > 0, pendingApprovals: approvals };
         }
 
-        // Get pending approvals count (admin only)
-        if (isAdmin) {
-            const count = await getPendingApprovalsCount(user.id);
-            setPendingApprovals(count);
-        }
-    }
+        try {
+            setLoading(true);
+            setError(null);
 
-    function formatMovementCategory(category: string): { label: string; color: string; icon: React.ReactNode } {
-        switch (category) {
-            case 'inflow':
-                return { label: 'Added', color: 'text-green-600', icon: <TrendingUp className="w-4 h-4" /> };
-            case 'outflow':
-                return { label: 'Sent Out', color: 'text-blue-600', icon: <TrendingDown className="w-4 h-4" /> };
-            case 'return':
-                return { label: 'Returned', color: 'text-cyan-600', icon: <ArrowRight className="w-4 h-4 rotate-180" /> };
-            case 'writeoff':
-                return { label: 'Write-off', color: 'text-red-600', icon: <XCircle className="w-4 h-4" /> };
-            case 'adjustment':
-                return { label: 'Adjustment', color: 'text-purple-600', icon: <Check className="w-4 h-4" /> };
-            case 'repair':
-                return { label: 'Repair', color: 'text-orange-600', icon: <Wrench className="w-4 h-4" /> };
-            default:
-                return { label: category, color: 'text-gray-600', icon: <Package className="w-4 h-4" /> };
+            const [summaryTotals, discontinued, attentionItems, movements, audit] = await Promise.all([
+                loadSummary(),
+                loadDiscontinuedSummary(),
+                loadAttentionItems(),
+                loadRecentMovements(),
+                loadAuditStatus(),
+            ]);
+            if (req !== requestId.current) return;
+
+            setSummary(summaryTotals);
+            setDiscontinuedSummary(discontinued);
+            setAttention(attentionItems);
+            setRecentMovements(movements);
+            setHasAudit(audit.hasAudit);
+            setPendingApprovals(audit.pendingApprovals);
+        } catch (err) {
+            if (req !== requestId.current) return;
+            // Never leave the previous outlet's figures under a failed load
+            setSummary(null);
+            setDiscontinuedSummary(null);
+            setAttention([]);
+            setRecentMovements([]);
+            setHasAudit(false);
+            setPendingApprovals(0);
+            setError(err instanceof Error ? err.message : 'Failed to load overview data');
+        } finally {
+            if (req === requestId.current) setLoading(false);
         }
-    }
+    }, [user?.id, outletId, isAdmin]);
+
+    useEffect(() => {
+        if (!isAuthReady) return;
+        loadOverviewData();
+    }, [isAuthReady, loadOverviewData]);
 
     function formatTimeAgo(dateString: string): string {
         const date = new Date(dateString);
@@ -383,259 +330,214 @@ export default function InventoryOverviewPage() {
         const hours = Math.floor(diff / 3600000);
         const days = Math.floor(diff / 86400000);
 
+        if (minutes < 1) return 'Just now';
         if (minutes < 60) return `${minutes}m ago`;
         if (hours < 24) return `${hours}h ago`;
         if (days === 1) return 'Yesterday';
         return `${days}d ago`;
     }
 
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-[400px]">
-                <Spinner size="lg" />
-            </div>
-        );
-    }
+    const showApprovals = isAdmin && pendingApprovals > 0;
+    const scope = outletId
+        ? availableOutlets.find((o) => o.id === outletId)?.name ?? 'One outlet'
+        : userRole === 'manager'
+            ? availableOutlets.length === 1
+                ? availableOutlets[0].name
+                : `${availableOutlets.length} outlets`
+            : 'All outlets';
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-3xl font-bold flex items-center gap-2">
-                        <Package className="w-8 h-8" />
-                        Inventory Overview
-                    </h1>
-                    <p className="text-muted-foreground mt-1">
-                        Real-time stock summary and alerts
-                    </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                    {/* Outlet Filter */}
-                    {showOutletFilter && availableOutlets.length > 0 && (
-                        <select
-                            value={outletId}
-                            onChange={(e) => setOutletId(e.target.value)}
-                            className="px-3 py-2 border rounded-lg"
-                        >
-                            <option value="">All Outlets</option>
-                            {availableOutlets.map((outlet) => (
-                                <option key={outlet.id} value={outlet.id}>
-                                    {outlet.name}
-                                </option>
-                            ))}
-                        </select>
-                    )}
-
-                    {/* Quick Links */}
-                    <Link to="/inventory/items">
-                        <Button variant="outline">
-                            <Package className="w-4 h-4 mr-2" />
+        <div>
+            <PageHeader
+                title="Dishware stock"
+                description={`Where every piece is right now · ${scope}`}
+                actions={
+                    <>
+                        {canSendReceive && (
+                            <LinkButton to="/inventory/allocate">
+                                <Send className="h-4 w-4" aria-hidden="true" />
+                                Send dishes
+                            </LinkButton>
+                        )}
+                        <LinkButton to="/inventory/items" variant="outline">
+                            <Package className="h-4 w-4" aria-hidden="true" />
                             Items
-                        </Button>
-                    </Link>
-                    <Link to="/inventory/reports">
-                        <Button variant="outline">
-                            <BarChart3 className="w-4 h-4 mr-2" />
-                            Reports
-                        </Button>
-                    </Link>
-                </div>
-            </div>
-
-            {error && <Alert variant="error">{error}</Alert>}
-
-            {/* Audit Warning */}
-            {hasAudit && (
-                <Alert variant="warning" className="flex items-center gap-2">
-                    <ClipboardCheck className="w-5 h-5" />
-                    <span>
-                        <strong>Audit in Progress:</strong> Stock changes may affect the ongoing audit.
-                        <Link to="/inventory/audit" className="ml-2 underline">
-                            View Audit
-                        </Link>
-                    </span>
-                </Alert>
-            )}
-
-            {/* Admin: Pending Approvals */}
-            {isAdmin && pendingApprovals > 0 && (
-                <Alert variant="info" className="flex items-center gap-2">
-                    <AlertCircle className="w-5 h-5" />
-                    <span>
-                        <strong>{pendingApprovals} audit{pendingApprovals > 1 ? 's' : ''}</strong> pending your approval.
-                        <Link to="/inventory/audit?status=pending_approval" className="ml-2 underline font-semibold">
-                            Review Now
-                        </Link>
-                    </span>
-                </Alert>
-            )}
-
-            {/* Summary Cards */}
-            {summary && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <SummaryCard
-                        label="Available"
-                        value={summary.available_quantity}
-                        icon={<Check className="w-6 h-6" />}
-                        color="bg-green-100 text-green-800"
-                    />
-                    <SummaryCard
-                        label="With Clients"
-                        value={summary.allocated_quantity}
-                        icon={<TrendingDown className="w-6 h-6" />}
-                        color="bg-blue-100 text-blue-800"
-                    />
-                    <SummaryCard
-                        label="Damaged"
-                        value={summary.damaged_quantity}
-                        icon={<AlertTriangle className="w-6 h-6" />}
-                        color="bg-orange-100 text-orange-800"
-                    />
-                    <SummaryCard
-                        label="Lost"
-                        value={summary.lost_quantity}
-                        icon={<XCircle className="w-6 h-6" />}
-                        color="bg-red-100 text-red-800"
-                    />
-                </div>
-            )}
-
-            {/* Discontinued Stock Banner */}
-            {discontinuedSummary && (
-                <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
-                    <div className="flex items-center gap-2 text-amber-800">
-                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                        <span className="text-sm font-medium">
-                            Discontinued Stock: {discontinuedSummary.total_quantity} items
-                        </span>
-                        <span className="text-xs text-amber-600 hidden sm:inline">
-                            — These items cannot be allocated but may still be awaiting return.
-                        </span>
-                    </div>
-                    <Link to="/inventory/items?lifecycle_status=discontinued">
-                        <Button variant="outline" size="sm" className="border-amber-300 text-amber-800 hover:bg-amber-100 text-xs px-3 py-1 h-7">
-                            View Discontinued Items
-                        </Button>
-                    </Link>
-                </div>
-            )}
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Attention Items */}
-                <Card className="lg:col-span-1">
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-semibold flex items-center gap-2">
-                            <AlertCircle className="w-5 h-5 text-yellow-600" />
-                            Needs Attention
-                        </h3>
-                        <Badge variant="secondary">{attention.length}</Badge>
-                    </div>
-
-                    {attention.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                            <Check className="w-12 h-12 mx-auto mb-2 text-green-500" />
-                            <p>All clear! No items need attention.</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-3">
-                            {attention.map((item, index) => (
-                                <Link
-                                    key={index}
-                                    to={item.link}
-                                    className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                        </LinkButton>
+                        {showOutletFilter && availableOutlets.length > 0 && (
+                            <div className="w-full sm:w-52">
+                                <Select
+                                    aria-label="Outlet"
+                                    value={outletId}
+                                    onChange={(e) => setOutletId(e.target.value)}
                                 >
-                                    <div className="flex items-center gap-3">
-                                        <span className={item.color}>{item.icon}</span>
-                                        <div>
-                                            <p className="text-sm font-medium">{item.count} {item.label}</p>
-                                        </div>
-                                    </div>
-                                    <ArrowRight className="w-4 h-4 text-muted-foreground" />
-                                </Link>
-                            ))}
-                        </div>
-                    )}
-                </Card>
+                                    <option value="">All outlets</option>
+                                    {availableOutlets.map((outlet) => (
+                                        <option key={outlet.id} value={outlet.id}>
+                                            {outlet.name}
+                                        </option>
+                                    ))}
+                                </Select>
+                            </div>
+                        )}
+                    </>
+                }
+            />
 
-                {/* Recent Movements */}
-                <Card className="lg:col-span-2">
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-semibold flex items-center gap-2">
-                            <Clock className="w-5 h-5" />
-                            Recent Movements
-                        </h3>
-                        <Link to="/inventory/movements" className="text-sm text-brand-primary hover:underline">
-                            View All →
+            {error && <Alert variant="error" className="mb-6">{error}</Alert>}
+
+            {hasAudit && (
+                <Alert variant="warning" className="mb-6">
+                    <strong className="font-semibold">An audit is in progress.</strong> Stock changes now may affect its count.{' '}
+                    <Link to="/inventory/audit" className="font-semibold underline">
+                        View audit
+                    </Link>
+                </Alert>
+            )}
+
+            <StockStrip
+                label="Stock figures"
+                loading={loading}
+                figures={
+                    summary && {
+                        total: summary.total_quantity,
+                        available: summary.available_quantity,
+                        allocated: summary.allocated_quantity,
+                        damaged: summary.damaged_quantity,
+                        inRepair: summary.in_repair_quantity,
+                        lost: summary.lost_quantity,
+                    }
+                }
+                footer={
+                    !loading && discontinuedSummary ? (
+                        <p className="mt-3 border-t border-rule pt-3 text-sm text-ink-muted">
+                            Not counted above:{' '}
+                            <span className="tabular font-semibold text-ink">{pcs(discontinuedSummary.total_quantity)} pieces</span> of
+                            discontinued items. They can’t be sent out but may still be coming back.{' '}
+                            <Link
+                                to="/inventory/items?lifecycle_status=discontinued"
+                                className="whitespace-nowrap font-semibold text-brand-primary hover:underline"
+                            >
+                                View discontinued items
+                            </Link>
+                        </p>
+                    ) : null
+                }
+            />
+
+            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+                {/* Recent movements ledger */}
+                <section className="sheet overflow-hidden" aria-labelledby="recent-h">
+                    <div className="flex items-center justify-between gap-4 border-b border-rule px-5 py-4">
+                        <div>
+                            <h2 id="recent-h" className="text-lg font-semibold text-ink">Recent movements</h2>
+                            <p className="text-sm text-ink-muted">The last 10. + and − show the change to available stock.</p>
+                        </div>
+                        <Link
+                            to="/inventory/movements"
+                            className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-brand-primary hover:underline"
+                        >
+                            All movements <ArrowRight className="h-4 w-4" aria-hidden="true" />
                         </Link>
                     </div>
-
-                    {recentMovements.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                            <FileText className="w-12 h-12 mx-auto mb-2" />
-                            <p>No movements recorded yet.</p>
+                    {loading ? (
+                        <div className="space-y-3 p-5">
+                            {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-5" />)}
+                        </div>
+                    ) : recentMovements.length === 0 ? (
+                        <div className="px-5 py-12 text-center">
+                            <p className="text-base font-semibold text-ink">No movements recorded yet.</p>
+                            <p className="mt-1 text-sm text-ink-muted">
+                                Stock added, sent out, returned or written off will appear here.
+                            </p>
                         </div>
                     ) : (
-                        <div className="space-y-2">
-                            {recentMovements.map((movement) => {
-                                const categoryInfo = formatMovementCategory(movement.movement_category);
-                                return (
-                                    <div
-                                        key={movement.id}
-                                        className="flex items-center justify-between p-3 rounded-lg border"
-                                    >
-                                        <div className="flex items-center gap-3">
-                                            <span className={categoryInfo.color}>{categoryInfo.icon}</span>
-                                            <div>
-                                                <p className="text-sm font-medium">
-                                                    {movement.item_name}{' '}
-                                                    <span className="text-muted-foreground">({movement.quantity})</span>
-                                                </p>
-                                                <p className="text-xs text-muted-foreground">
-                                                    {categoryInfo.label}
-                                                    {movement.reference_name && ` → ${movement.reference_name}`}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <span className="text-xs text-muted-foreground">
-                                            {formatTimeAgo(movement.created_at)}
-                                        </span>
-                                    </div>
-                                );
-                            })}
+                        <div className="overflow-x-auto">
+                            <table className="ledger">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Item</th>
+                                        <th scope="col">Movement</th>
+                                        <th scope="col" className="text-right">Qty</th>
+                                        <th scope="col" className="text-right">When</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {recentMovements.map((movement) => (
+                                        <tr key={movement.id}>
+                                            <td className="max-w-[16rem] truncate font-semibold text-ink">{movement.item_name}</td>
+                                            <td><MovementBadge type={movement.movement_type} /></td>
+                                            <td className="text-right"><SignedQty movement={movement} /></td>
+                                            <td className="whitespace-nowrap text-right text-ink-muted">
+                                                <time dateTime={movement.created_at} title={formatDateTime(movement.created_at)}>
+                                                    {formatTimeAgo(movement.created_at)}
+                                                </time>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                     )}
-                </Card>
-            </div>
+                </section>
 
+                <div className="space-y-6">
+                    {/* Needs attention */}
+                    <section className="sheet" aria-labelledby="attention-h">
+                        <h2 id="attention-h" className="border-b border-rule px-5 py-4 text-lg font-semibold text-ink">
+                            Needs attention
+                        </h2>
+                        {loading ? (
+                            <div className="space-y-3 p-5">
+                                {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-5" />)}
+                            </div>
+                        ) : attention.length === 0 && !showApprovals ? (
+                            <div className="px-5 py-8 text-center">
+                                <p className="text-sm font-semibold text-final">Nothing needs attention.</p>
+                                <p className="mt-1 text-sm text-ink-muted">
+                                    Pending returns, damaged stock and unlocked opening balances show up here.
+                                </p>
+                            </div>
+                        ) : (
+                            <ul className="divide-y divide-rule">
+                                {showApprovals && (
+                                    <NextItem
+                                        to="/inventory/audit?status=pending_approval"
+                                        icon={ClipboardCheck}
+                                        title={`${pcs(pendingApprovals)} audit${pendingApprovals > 1 ? 's' : ''} waiting for your approval`}
+                                        detail="Review the counts, then approve or reject."
+                                        tone="draft"
+                                    />
+                                )}
+                                {attention.map((item) => (
+                                    <NextItem
+                                        key={item.type}
+                                        to={item.link}
+                                        icon={item.icon}
+                                        title={`${pcs(item.count)} ${item.label}`}
+                                        detail={ATTENTION_DETAIL[item.type] ?? ''}
+                                        tone={item.tone}
+                                    />
+                                ))}
+                            </ul>
+                        )}
+                    </section>
 
-            {/* Quick Actions */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <QuickActionCard
-                    title="Manage Items"
-                    description="View and edit inventory items"
-                    icon={<Package className="w-6 h-6" />}
-                    link="/inventory/items"
-                />
-                <QuickActionCard
-                    title="Send / Receive"
-                    description="Send items out and record returns"
-                    icon={<TrendingDown className="w-6 h-6" />}
-                    link="/inventory/allocate"
-                />
-                <QuickActionCard
-                    title="Monthly Audit"
-                    description="Physical count reconciliation"
-                    icon={<ClipboardCheck className="w-6 h-6" />}
-                    link="/inventory/audit"
-                />
-                <QuickActionCard
-                    title="Reports"
-                    description="Stock and movement reports"
-                    icon={<BarChart3 className="w-6 h-6" />}
-                    link="/inventory/reports"
-                />
+                    {/* Stock books */}
+                    <nav className="sheet" aria-labelledby="books-h">
+                        <h2 id="books-h" className="border-b border-rule px-5 py-4 text-lg font-semibold text-ink">
+                            Stock books
+                        </h2>
+                        <ul className="divide-y divide-rule">
+                            <BookLink to="/inventory/items" icon={Package} title="Items" detail="Every dishware item and its stock" />
+                            {canSendReceive && (
+                                <BookLink to="/inventory/allocate" icon={Send} title="Send and receive" detail="Send dishes out and record returns" />
+                            )}
+                            <BookLink to="/inventory/movements" icon={History} title="Movements" detail="The full stock ledger" />
+                            <BookLink to="/inventory/audit" icon={ClipboardCheck} title="Monthly audit" detail="Physical count reconciliation" />
+                            <BookLink to="/inventory/reports" icon={BarChart3} title="Reports" detail="Stock, allocation and loss reports" />
+                        </ul>
+                    </nav>
+                </div>
             </div>
         </div>
     );
@@ -645,54 +547,57 @@ export default function InventoryOverviewPage() {
 // SUB-COMPONENTS
 // ================================================================
 
-function SummaryCard({
-    label,
-    value,
-    icon,
-    color,
+function NextItem({
+    to,
+    icon: Icon,
+    title,
+    detail,
+    tone,
 }: {
-    label: string;
-    value: number;
-    icon: React.ReactNode;
-    color: string;
+    to: string;
+    icon: LucideIcon;
+    title: string;
+    detail: string;
+    tone: Tone;
 }) {
     return (
-        <Card className={`${color} border-0`}>
-            <div className="flex items-center justify-between">
-                <div>
-                    <p className="text-xs font-medium opacity-80">{label}</p>
-                    <p className="text-2xl font-bold">{value.toLocaleString()}</p>
-                </div>
-                <div className="opacity-50">{icon}</div>
-            </div>
-        </Card>
+        <li>
+            <Link to={to} className="group flex items-start gap-3 px-5 py-4 transition-colors hover:bg-paper">
+                <span
+                    className={cn(
+                        'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border',
+                        tone === 'draft' && 'border-draft-rule bg-draft-tint text-draft',
+                        tone === 'partial' && 'border-partial-rule bg-partial-tint text-partial',
+                        tone === 'overdue' && 'border-overdue-rule bg-overdue-tint text-overdue',
+                        tone === 'info' && 'border-info-rule bg-info-tint text-info'
+                    )}
+                >
+                    <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-ink">{title}</span>
+                    {detail && <span className="block text-sm text-ink-muted">{detail}</span>}
+                </span>
+                <ArrowRight
+                    className="mt-1 h-4 w-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:text-brand-primary"
+                    aria-hidden="true"
+                />
+            </Link>
+        </li>
     );
 }
 
-function QuickActionCard({
-    title,
-    description,
-    icon,
-    link,
-}: {
-    title: string;
-    description: string;
-    icon: React.ReactNode;
-    link: string;
-}) {
+function BookLink({ to, icon: Icon, title, detail }: { to: string; icon: LucideIcon; title: string; detail: string }) {
     return (
-        <Link to={link}>
-            <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
-                <div className="flex items-start gap-3">
-                    <div className="p-2 rounded-lg bg-brand-primary/10 text-brand-primary">
-                        {icon}
-                    </div>
-                    <div>
-                        <h4 className="font-semibold">{title}</h4>
-                        <p className="text-sm text-muted-foreground">{description}</p>
-                    </div>
-                </div>
-            </Card>
-        </Link>
+        <li>
+            <Link to={to} className="group flex items-center gap-3 px-5 py-3 transition-colors hover:bg-paper">
+                <Icon className="h-[18px] w-[18px] shrink-0 text-ink-muted group-hover:text-brand-primary" aria-hidden="true" />
+                <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-ink group-hover:text-brand-primary">{title}</span>
+                    <span className="block truncate text-sm text-ink-muted">{detail}</span>
+                </span>
+                <ArrowRight className="h-4 w-4 shrink-0 text-ink-faint" aria-hidden="true" />
+            </Link>
+        </li>
     );
 }

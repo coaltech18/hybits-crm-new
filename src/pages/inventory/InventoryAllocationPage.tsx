@@ -1,18 +1,25 @@
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { ArrowLeftRight, PackageCheck, Search, Send, Undo2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { supabase } from '@/lib/supabase';
-import { getAllocationsByReference, getAllocationSummary } from '@/services/allocationService';
+import { ilikePattern } from '@/utils/query';
+import { daysSince, toLocalISODate } from '@/utils/date';
+import { cn } from '@/utils/cn';
+import { getAllocationsByReference, summarizeAllocations } from '@/services/allocationService';
 import type { InventoryAllocation, ReferenceType } from '@/types';
-import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { Spinner } from '@/components/ui/Spinner';
+import { Skeleton, TableSkeleton } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { Package, Plus, ArrowLeft } from 'lucide-react';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { StatusBadge } from '@/components/ui/StatusStamp';
+import { AgingBar } from '@/components/ui/AgingBar';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { TabList, TabPanel } from '@/components/inventory/Tabs';
 import AllocateInventoryModal from '@/components/inventory/AllocateInventoryModal';
 import ReturnDamageLossModal from '@/components/inventory/ReturnDamageLossModal';
 
@@ -25,7 +32,31 @@ import ReturnDamageLossModal from '@/components/inventory/ReturnDamageLossModal'
 // - Accountants are read-only
 // ================================================================
 
+interface ReferenceOption {
+  id: string;
+  name: string;
+  outlet_id: string;
+  status: string;
+}
+
+type ClientEmbed = { name?: string } | { name?: string }[] | null;
+
+function embeddedClientName(client: unknown): string {
+  const c = client as ClientEmbed;
+  const name = Array.isArray(c) ? c[0]?.name : c?.name;
+  return name || 'Unknown';
+}
+
+type Task = 'send' | 'receive';
+
+const count = (n: number) => new Intl.NumberFormat('en-IN').format(n);
+const daysOut = (iso: string) => daysSince(toLocalISODate(new Date(iso)));
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+const rowKey = (a: InventoryAllocation) => a.allocation_id ?? `${a.inventory_item_id}-${a.reference_id}`;
+
 export default function InventoryAllocationPage() {
+  useDocumentTitle('Send and receive dishes');
   const { user } = useAuth();
   const { showToast } = useToast();
   const [searchParams] = useSearchParams();
@@ -36,15 +67,12 @@ export default function InventoryAllocationPage() {
 
   const [referenceType, setReferenceType] = useState<ReferenceType | ''>('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedReference, setSelectedReference] = useState<{
-    id: string;
-    name: string;
-    outlet_id: string;
-  } | null>(null);
+  const [selectedReference, setSelectedReference] = useState<ReferenceOption | null>(null);
 
   // Reference search results
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<ReferenceOption[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const searchRequestId = useRef(0);
 
   // Allocations
   const [allocations, setAllocations] = useState<InventoryAllocation[]>([]);
@@ -62,339 +90,322 @@ export default function InventoryAllocationPage() {
 
   const isAccountant = user?.role === 'accountant';
 
-  // Auto-select reference from URL params on mount
-  useEffect(() => {
-    const isValidType = paramType === 'subscription' || paramType === 'event';
-    const isValidRef = paramRef && paramRef.length > 0;
-    if (isValidType && isValidRef && !selectedReference) {
-      autoSelectReference(paramType as ReferenceType, paramRef);
-    }
-  }, []); // Run once on mount
+  // Presentational: which of the two tasks is in front.
+  const [task, setTask] = useState<Task>('send');
 
+  // Auto-select reference from URL params (deep link from Event/Subscription detail pages).
+  // No status filter: a cancelled subscription/event with outstanding dishes must stay reachable.
   useEffect(() => {
-    if (searchQuery && referenceType) {
-      searchReferences();
-    } else {
+    if ((paramType !== 'subscription' && paramType !== 'event') || !paramRef) return;
+    let cancelled = false;
+
+    async function autoSelectReference(type: ReferenceType, refId: string) {
+      setReferenceType(type);
+      try {
+        if (type === 'subscription') {
+          const { data, error: fetchError } = await supabase
+            .from('subscriptions')
+            .select('id, outlet_id, status, clients(name)')
+            .eq('id', refId)
+            .maybeSingle();
+          if (fetchError) throw fetchError;
+          if (data && !cancelled) {
+            setSelectedReference({
+              id: data.id,
+              name: embeddedClientName(data.clients),
+              outlet_id: data.outlet_id,
+              status: data.status,
+            });
+          }
+        } else if (type === 'event') {
+          const { data, error: fetchError } = await supabase
+            .from('events')
+            .select('id, event_name, outlet_id, status')
+            .eq('id', refId)
+            .maybeSingle();
+          if (fetchError) throw fetchError;
+          if (data && !cancelled) {
+            setSelectedReference({
+              id: data.id,
+              name: data.event_name,
+              outlet_id: data.outlet_id,
+              status: data.status,
+            });
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            `Could not open the linked ${type}: ${
+              err instanceof Error ? err.message : 'unknown error'
+            }. Search for it below.`
+          );
+        }
+      }
+    }
+
+    autoSelectReference(paramType, paramRef);
+    return () => {
+      cancelled = true;
+    };
+  }, [paramType, paramRef]);
+
+  // Debounced reference search; only the latest response is applied.
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query || !referenceType) {
+      searchRequestId.current += 1;
       setSearchResults([]);
-    }
-  }, [searchQuery, referenceType]);
-
-  useEffect(() => {
-    if (selectedReference && referenceType) {
-      loadAllocations();
-    }
-  }, [selectedReference, referenceType]);
-
-  async function searchReferences() {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
+      setSearchLoading(false);
       return;
     }
 
-    try {
+    const requestId = ++searchRequestId.current;
+    const timer = setTimeout(async () => {
       setSearchLoading(true);
-
-      if (referenceType === 'subscription') {
-        const { data } = await supabase
-          .from('subscriptions')
-          .select('id, client_id, outlet_id, status, clients(name)')
-          .ilike('clients.name', `%${searchQuery}%`)
-          .eq('is_active', true)
-          .limit(10);
-
-        setSearchResults(
-          data?.map((s: any) => ({
+      try {
+        let results: ReferenceOption[] = [];
+        if (referenceType === 'subscription') {
+          // Cancelled subscriptions are included so their outstanding dishes can still be received back.
+          const { data, error: fetchError } = await supabase
+            .from('subscriptions')
+            .select('id, outlet_id, status, clients!inner(name)')
+            .ilike('clients.name', ilikePattern(query))
+            .limit(10);
+          if (fetchError) throw fetchError;
+          results = (data || []).map((s) => ({
             id: s.id,
-            name: s.clients?.name || 'Unknown',
+            name: embeddedClientName(s.clients),
             outlet_id: s.outlet_id,
             status: s.status,
-          })) || []
-        );
-      } else if (referenceType === 'event') {
-        const { data } = await supabase
-          .from('events')
-          .select('id, event_name, outlet_id, status')
-          .ilike('event_name', `%${searchQuery}%`)
-          .neq('status', 'cancelled')
-          .limit(10);
-
-        setSearchResults(
-          data?.map((e: any) => ({
+          }));
+        } else if (referenceType === 'event') {
+          // Cancelled events are included so their outstanding dishes can still be received back.
+          const { data, error: fetchError } = await supabase
+            .from('events')
+            .select('id, event_name, outlet_id, status')
+            .ilike('event_name', ilikePattern(query))
+            .limit(10);
+          if (fetchError) throw fetchError;
+          results = (data || []).map((e) => ({
             id: e.id,
             name: e.event_name,
             outlet_id: e.outlet_id,
             status: e.status,
-          })) || []
-        );
-      }
-    } catch (err) {
-      console.error('Search failed:', err);
-    } finally {
-      setSearchLoading(false);
-    }
-  }
-
-  // Auto-select reference from URL params (deep link from Event/Subscription detail pages)
-  async function autoSelectReference(type: ReferenceType, refId: string) {
-    try {
-      setReferenceType(type);
-
-      if (type === 'subscription') {
-        const { data } = await supabase
-          .from('subscriptions')
-          .select('id, client_id, outlet_id, status, clients(name)')
-          .eq('id', refId)
-          .eq('is_active', true)
-          .maybeSingle();
-
-        if (data) {
-          setSelectedReference({
-            id: data.id,
-            name: (data.clients as any)?.name || 'Unknown',
-            outlet_id: data.outlet_id,
-          });
+          }));
         }
-      } else if (type === 'event') {
-        const { data } = await supabase
-          .from('events')
-          .select('id, event_name, outlet_id, status')
-          .eq('id', refId)
-          .maybeSingle();
-
-        if (data) {
-          setSelectedReference({
-            id: data.id,
-            name: data.event_name,
-            outlet_id: data.outlet_id,
-          });
+        if (requestId === searchRequestId.current) setSearchResults(results);
+      } catch (err) {
+        if (requestId === searchRequestId.current) {
+          setSearchResults([]);
+          setError(err instanceof Error ? err.message : 'Search failed');
         }
+      } finally {
+        if (requestId === searchRequestId.current) setSearchLoading(false);
       }
-    } catch (err) {
-      console.error('Auto-select failed, falling back to manual search:', err);
-      // Fail silently — user can still search manually
-    }
-  }
+    }, 300);
 
-  async function loadAllocations() {
+    return () => clearTimeout(timer);
+  }, [searchQuery, referenceType]);
+
+  // Only the latest allocations request may write state (the booking can change mid-flight).
+  const allocationsRequestId = useRef(0);
+
+  const loadAllocations = useCallback(async () => {
     if (!user?.id || !selectedReference || !referenceType) return;
+    const req = ++allocationsRequestId.current;
 
     try {
       setAllocationsLoading(true);
       setError(null);
 
-      const [allocationsData, summaryData] = await Promise.all([
-        getAllocationsByReference(user.id, referenceType as ReferenceType, selectedReference.id),
-        getAllocationSummary(user.id, referenceType as ReferenceType, selectedReference.id),
-      ]);
+      // One query; the summary is derived from the same rows.
+      const allocationsData = await getAllocationsByReference(
+        user.id,
+        referenceType as ReferenceType,
+        selectedReference.id
+      );
+      if (req !== allocationsRequestId.current) return;
 
       setAllocations(allocationsData);
-      setSummary(summaryData);
+      setSummary(summarizeAllocations(allocationsData));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load allocations');
+      if (req === allocationsRequestId.current) {
+        setError(err instanceof Error ? err.message : 'Failed to load allocations');
+      }
     } finally {
-      setAllocationsLoading(false);
+      if (req === allocationsRequestId.current) setAllocationsLoading(false);
     }
-  }
+  }, [user?.id, selectedReference, referenceType]);
 
-  function handleSelectReference(ref: any) {
+  useEffect(() => {
+    if (selectedReference && referenceType) {
+      loadAllocations();
+    }
+  }, [selectedReference, referenceType, loadAllocations]);
+
+  function handleSelectReference(ref: ReferenceOption) {
+    setError(null);
     setSelectedReference(ref);
     setSearchQuery('');
     setSearchResults([]);
   }
 
   function handleBack() {
+    allocationsRequestId.current += 1; // drop any in-flight load for the old booking
+    setAllocationsLoading(false);
     setSelectedReference(null);
     setAllocations([]);
     setSummary(null);
   }
 
+  const outstandingRows = allocations.filter((a) => (a.outstanding_quantity || 0) > 0);
+  const oldestOut = outstandingRows.reduce<string | null>(
+    (min, a) => (a.created_at && (!min || a.created_at < min) ? a.created_at : min),
+    null
+  );
+  const refKind = referenceType === 'event' ? 'Event' : 'Subscription';
+  const refLink =
+    selectedReference && referenceType
+      ? referenceType === 'event'
+        ? `/events/${selectedReference.id}`
+        : `/subscriptions/${selectedReference.id}`
+      : null;
+  // Dishes can only be dispatched to an active subscription or a planned event
+  // (the DB rejects anything else); receiving back is allowed for any booking.
+  const sendableStatus = referenceType === 'event' ? 'planned' : 'active';
+  const canSend = !isAccountant && !!selectedReference && selectedReference.status === sendableStatus;
+  // Summary and rows arrive together; until the first load lands (or fails) show skeletons.
+  const firstLoad = !summary && !error;
+  const sum = (n: number | undefined) => (summary ? count(n ?? 0) : '—');
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Package className="w-8 h-8" />
-            Send / Receive Items
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Send and receive dishware for subscriptions or events
-          </p>
-        </div>
+    <div>
+      <PageHeader
+        title="Send and receive dishes"
+        description="Dispatch dishware to a subscription or event, and record what comes back."
+        actions={
+          canSend ? (
+            task === 'send' ? (
+              <Button onClick={() => setShowAllocateModal(true)}>
+                <Send className="h-4 w-4" aria-hidden="true" />
+                Send dishes
+              </Button>
+            ) : undefined
+          ) : undefined
+        }
+      />
 
-        {selectedReference && !isAccountant && (
-          <Button onClick={() => setShowAllocateModal(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Allocate Items
-          </Button>
-        )}
-      </div>
+      <TabList<Task>
+        idPrefix="dishes"
+        label="Task"
+        variant="segmented"
+        active={task}
+        onChange={setTask}
+        className="mb-6"
+        tabs={[
+          { id: 'send', label: 'Send dishes', icon: Send },
+          {
+            id: 'receive',
+            label: 'Receive back',
+            icon: Undo2,
+            count: selectedReference && !firstLoad ? outstandingRows.length : undefined,
+          },
+        ]}
+      />
 
-      {error && <Alert variant="error">{error}</Alert>}
+      {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
-      {!selectedReference ? (
-        /* Search for Reference */
-        <Card>
-          <h3 className="font-semibold mb-4">Select Subscription or Event</h3>
+      <TabPanel idPrefix="dishes" id={task}>
+        {!selectedReference ? (
+          <ReferenceSearch
+            task={task}
+            referenceType={referenceType}
+            onTypeChange={(t) => setReferenceType(t)}
+            searchQuery={searchQuery}
+            onQueryChange={setSearchQuery}
+            loading={searchLoading}
+            results={searchResults}
+            onSelect={handleSelectReference}
+          />
+        ) : (
+          <div className="space-y-6">
+            {/* The booking: who holds the dishes, and how much is still out */}
+            <section className="sheet overflow-hidden" aria-labelledby="ref-h">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-rule px-5 py-4">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{refKind}</p>
+                  <h2 id="ref-h" className="truncate text-xl font-semibold text-ink">
+                    {refLink ? (
+                      <Link to={refLink} className="hover:text-brand-primary">
+                        {selectedReference.name}
+                      </Link>
+                    ) : (
+                      selectedReference.name
+                    )}
+                  </h2>
+                </div>
+                <Button variant="ghost" size="sm" onClick={handleBack}>
+                  <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />
+                  Change booking
+                </Button>
+              </div>
+              <dl className="grid grid-cols-2 gap-px bg-rule lg:grid-cols-4">
+                <Figure label="Sent" loading={firstLoad}>
+                  {sum(summary?.totalAllocated)} <span className="text-base font-medium text-ink-muted">pcs</span>
+                </Figure>
+                <Figure label="Still out" loading={firstLoad}>
+                  <span className={cn((summary?.totalOutstanding ?? 0) > 0 ? 'text-partial' : 'text-final')}>
+                    {sum(summary?.totalOutstanding)}
+                  </span>{' '}
+                  <span className="text-base font-medium text-ink-muted">pcs</span>
+                </Figure>
+                <Figure label="Items" loading={firstLoad}>
+                  {sum(summary?.itemCount)}
+                </Figure>
+                <Figure label="Out since" loading={firstLoad}>
+                  {oldestOut ? (
+                    <span className="flex flex-col gap-1.5">
+                      <span className="text-base font-semibold text-ink">{fmtDate(oldestOut)}</span>
+                      <AgingBar days={daysOut(oldestOut)} pxPerDay={1} />
+                    </span>
+                  ) : (
+                    <span className="text-base font-semibold text-final">Nothing out</span>
+                  )}
+                </Figure>
+              </dl>
+            </section>
 
-          <div className="space-y-4">
-            <Select
-              label="Reference Type"
-              value={referenceType}
-              onChange={(e) => setReferenceType(e.target.value as ReferenceType | '')}
-            >
-              <option value="">Select Type</option>
-              <option value="subscription">Subscription</option>
-              <option value="event">Event</option>
-            </Select>
-
-            {referenceType && (
-              <Input
-                label={`Search ${referenceType === 'subscription' ? 'by client name' : 'by event name'}`}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={`Type to search...`}
+            {!summary && error ? null : task === 'send' ? (
+              <>
+                {!isAccountant && !canSend && (
+                  <Alert variant="info">
+                    Dishes can only be sent to {referenceType === 'event' ? 'a planned event' : 'an active subscription'}.
+                    This {refKind.toLowerCase()} is {selectedReference.status}. You can still receive dishes back.
+                  </Alert>
+                )}
+                <SentLedger
+                  rows={allocations}
+                  loading={allocationsLoading || firstLoad}
+                  canWrite={canSend}
+                  onSend={() => setShowAllocateModal(true)}
+                />
+              </>
+            ) : (
+              <ReceiveLedger
+                rows={outstandingRows}
+                anySent={allocations.length > 0}
+                loading={allocationsLoading || firstLoad}
+                canWrite={!isAccountant}
+                onReceive={setReturnAllocation}
               />
             )}
-
-            {searchLoading && (
-              <div className="flex items-center justify-center py-4">
-                <Spinner />
-              </div>
-            )}
-
-            {searchResults.length > 0 && (
-              <div className="border rounded divide-y">
-                {searchResults.map((result) => (
-                  <button
-                    key={result.id}
-                    onClick={() => handleSelectReference(result)}
-                    className="w-full text-left p-4 hover:bg-muted transition-colors"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium">{result.name}</p>
-                        <p className="text-sm text-muted-foreground capitalize">
-                          {referenceType} - {result.status}
-                        </p>
-                      </div>
-                      <Badge variant="default">Select</Badge>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
-        </Card>
-      ) : (
-        /* View Allocations */
-        <>
-          {/* Back button */}
-          <Button variant="outline" onClick={handleBack}>
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Search
-          </Button>
-
-          {/* Reference Info */}
-          <Card>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground capitalize">{referenceType}</p>
-                <h3 className="text-xl font-bold">{selectedReference.name}</h3>
-              </div>
-              {summary && (
-                <div className="text-right">
-                  <p className="text-sm text-muted-foreground">Total Sent</p>
-                  <p className="text-2xl font-bold text-brand-primary">{summary.totalAllocated}</p>
-                  <p className="text-sm text-muted-foreground mt-1">Pending Return</p>
-                  <p className="text-lg font-semibold text-orange-600">{summary.totalOutstanding}</p>
-                </div>
-              )}
-            </div>
-          </Card>
-
-          {/* Allocations Table */}
-          <Card>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">Sent Items</h3>
-              <p className="text-sm text-muted-foreground">
-                {allocations.length} item{allocations.length !== 1 ? 's' : ''}
-              </p>
-            </div>
-
-            {allocationsLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Spinner size="lg" />
-              </div>
-            ) : allocations.length === 0 ? (
-              <div className="text-center py-12">
-                <Package className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">No items sent out yet</p>
-                {!isAccountant && (
-                  <Button onClick={() => setShowAllocateModal(true)} className="mt-4">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Allocate Items
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="border-b">
-                    <tr>
-                      <th className="text-left py-3 px-4">Item</th>
-                      <th className="text-left py-3 px-4">Category</th>
-                      <th className="text-right py-3 px-4">Sent</th>
-                      <th className="text-right py-3 px-4">Pending Return</th>
-                      <th className="text-center py-3 px-4">Status</th>
-                      <th className="text-center py-3 px-4">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allocations.map((allocation) => (
-                      <tr key={allocation.id} className="border-b hover:bg-muted/50">
-                        <td className="py-3 px-4 font-medium">{allocation.item_name}</td>
-                        <td className="py-3 px-4">
-                          <Badge variant="default">{allocation.item_category}</Badge>
-                        </td>
-                        <td className="text-right py-3 px-4 font-semibold">
-                          {allocation.allocated_quantity}
-                        </td>
-                        <td className="text-right py-3 px-4 text-orange-600 font-semibold">
-                          {allocation.outstanding_quantity || 0}
-                        </td>
-                        <td className="text-center py-3 px-4">
-                          {allocation.is_active ? (
-                            <Badge variant="success">Active</Badge>
-                          ) : (
-                            <Badge variant="secondary">Closed</Badge>
-                          )}
-                        </td>
-                        <td className="text-center py-3 px-4">
-                          {allocation.is_active &&
-                            (allocation.outstanding_quantity || 0) > 0 &&
-                            !isAccountant && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setReturnAllocation(allocation)}
-                              >
-                                Process Return
-                              </Button>
-                            )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </>
-      )}
+        )}
+      </TabPanel>
 
       {/* Allocate Modal */}
-      {showAllocateModal && selectedReference && selectedReference.outlet_id && referenceType && (
+      {showAllocateModal && canSend && selectedReference && selectedReference.outlet_id && referenceType && (
         <AllocateInventoryModal
           isOpen={showAllocateModal}
           onClose={() => setShowAllocateModal(false)}
@@ -429,5 +440,255 @@ export default function InventoryAllocationPage() {
         />
       )}
     </div>
+  );
+}
+
+// ================================================================
+// SUB-COMPONENTS (presentational)
+// ================================================================
+
+function Figure({ label, loading, children }: { label: string; loading: boolean; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0 bg-white px-5 py-4">
+      <dt className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{label}</dt>
+      <dd className="amount mt-1 text-2xl font-bold tracking-tight text-ink">
+        {loading ? <Skeleton className="mt-1 h-7 w-24" /> : children}
+      </dd>
+    </div>
+  );
+}
+
+function ReferenceSearch({
+  task,
+  referenceType,
+  onTypeChange,
+  searchQuery,
+  onQueryChange,
+  loading,
+  results,
+  onSelect,
+}: {
+  task: Task;
+  referenceType: ReferenceType | '';
+  onTypeChange: (t: ReferenceType | '') => void;
+  searchQuery: string;
+  onQueryChange: (q: string) => void;
+  loading: boolean;
+  results: ReferenceOption[];
+  onSelect: (r: ReferenceOption) => void;
+}) {
+  const kind = referenceType === 'event' ? 'event' : 'subscription';
+  return (
+    <section className="sheet" aria-labelledby="find-h">
+      <div className="border-b border-rule px-5 py-4">
+        <h2 id="find-h" className="text-lg font-semibold text-ink">
+          {task === 'send' ? 'Who are the dishes going to?' : 'Who is returning dishes?'}
+        </h2>
+        <p className="text-sm text-ink-muted">
+          Find the subscription or event first. You can switch between sending and receiving at any time.
+        </p>
+      </div>
+      <div className="grid gap-4 px-5 py-4 sm:grid-cols-[14rem_minmax(0,1fr)]">
+        <Select
+          label="Booking type"
+          value={referenceType}
+          onChange={(e) => onTypeChange(e.target.value as ReferenceType | '')}
+        >
+          <option value="">Select type</option>
+          <option value="subscription">Subscription</option>
+          <option value="event">Event</option>
+        </Select>
+        <Input
+          type="search"
+          label={referenceType === 'event' ? 'Event name' : 'Client name'}
+          value={searchQuery}
+          onChange={(e) => onQueryChange(e.target.value)}
+          placeholder={referenceType ? 'Start typing…' : 'Choose a booking type first'}
+          disabled={!referenceType}
+          autoComplete="off"
+        />
+      </div>
+
+      {loading ? (
+        <div className="space-y-3 border-t border-rule px-5 py-4" aria-busy="true">
+          <Skeleton className="h-5" />
+          <Skeleton className="h-5" />
+          <Skeleton className="h-5 w-2/3" />
+        </div>
+      ) : results.length > 0 ? (
+        <ul className="divide-y divide-rule border-t border-rule" aria-label="Matching bookings">
+          {results.map((result) => (
+            <li key={result.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(result)}
+                className="flex w-full items-center justify-between gap-4 px-5 py-3 text-left transition-colors hover:bg-final-tint/40 focus-visible:bg-final-tint/40 focus-visible:outline-none"
+              >
+                <span className="min-w-0 truncate text-sm font-semibold text-ink">{result.name}</span>
+                <span className="flex shrink-0 items-center gap-3">
+                  <StatusBadge kind={kind} status={result.status} />
+                  <span className="text-sm font-semibold text-brand-primary">Open</span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="flex items-center gap-3 border-t border-rule px-5 py-6 text-sm text-ink-muted">
+          <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
+          {searchQuery.trim() && referenceType
+            ? `Matching ${kind}s appear here. Check the spelling if nothing shows.`
+            : task === 'send'
+              ? 'Pick who the dishes are for, then add each item and its quantity.'
+              : 'Pick the booking that holds the dishes, then record each item that came back.'}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SentLedger({
+  rows,
+  loading,
+  canWrite,
+  onSend,
+}: {
+  rows: InventoryAllocation[];
+  loading: boolean;
+  canWrite: boolean;
+  onSend: () => void;
+}) {
+  const totalSent = rows.reduce((n, a) => n + a.allocated_quantity, 0);
+  return (
+    <section className="sheet overflow-hidden" aria-labelledby="sent-h">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-rule px-5 py-4">
+        <h2 id="sent-h" className="text-lg font-semibold text-ink">Dishes sent</h2>
+        {!loading && rows.length > 0 && (
+          <p className="text-sm text-ink-muted">
+            {rows.length} item{rows.length === 1 ? '' : 's'} · {count(totalSent)} pcs
+          </p>
+        )}
+      </div>
+      {loading && rows.length === 0 ? (
+        <TableSkeleton rows={4} cols={5} />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon={Send}
+          title="Nothing sent yet"
+          description={
+            canWrite
+              ? 'Send dishes to start the record. Each item you send appears here with what is still out.'
+              : 'No dishware has been sent to this booking.'
+          }
+          action={canWrite ? { label: 'Send dishes', onClick: onSend } : undefined}
+        />
+      ) : (
+        <div className={cn('overflow-x-auto', loading && 'opacity-60 transition-opacity')} aria-busy={loading || undefined}>
+          <table className="ledger">
+            <thead>
+              <tr>
+                <th scope="col">Item</th>
+                <th scope="col">Category</th>
+                <th scope="col">Sent on</th>
+                <th scope="col" className="text-right">Sent</th>
+                <th scope="col" className="text-right">Still out</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((a) => {
+                const out = a.outstanding_quantity || 0;
+                return (
+                  <tr key={rowKey(a)}>
+                    <td className="font-semibold text-ink">{a.item_name}</td>
+                    <td className="text-ink-muted">{a.item_category}</td>
+                    <td className="whitespace-nowrap text-ink-muted">{a.created_at ? fmtDate(a.created_at) : '—'}</td>
+                    <td className="tabular text-right font-semibold">{count(a.allocated_quantity)}</td>
+                    <td className={cn('tabular text-right font-semibold', out > 0 ? 'text-partial' : 'text-final')}>
+                      {out > 0 ? count(out) : 'All back'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReceiveLedger({
+  rows,
+  anySent,
+  loading,
+  canWrite,
+  onReceive,
+}: {
+  rows: InventoryAllocation[];
+  anySent: boolean;
+  loading: boolean;
+  canWrite: boolean;
+  onReceive: (a: InventoryAllocation) => void;
+}) {
+  return (
+    <section className="sheet overflow-hidden" aria-labelledby="out-h">
+      <div className="border-b border-rule px-5 py-4">
+        <h2 id="out-h" className="text-lg font-semibold text-ink">Still out</h2>
+        <p className="text-sm text-ink-muted">Bar length is days since the item was sent. Record returns, damage or loss per item.</p>
+      </div>
+      {loading && rows.length === 0 && !anySent ? (
+        <TableSkeleton rows={4} cols={4} />
+      ) : rows.length === 0 ? (
+        <div className="px-5 py-12 text-center">
+          <PackageCheck className="mx-auto mb-3 h-8 w-8 text-final" aria-hidden="true" />
+          <p className="text-base font-semibold text-final">
+            {anySent ? 'Everything sent here has come back.' : 'Nothing has been sent to this booking.'}
+          </p>
+          <p className="mt-1 text-sm text-ink-muted">
+            {anySent ? 'Returned, damaged and lost pieces are already recorded.' : 'Switch to Send dishes to dispatch dishware.'}
+          </p>
+        </div>
+      ) : (
+        <div className={cn('overflow-x-auto', loading && 'opacity-60 transition-opacity')} aria-busy={loading || undefined}>
+          <table className="ledger">
+            <thead>
+              <tr>
+                <th scope="col">Item</th>
+                <th scope="col" className="text-right">Sent</th>
+                <th scope="col" className="text-right">Still out</th>
+                <th scope="col">Out for</th>
+                {canWrite && <th scope="col" data-nolabel className="w-px"><span className="sr-only">Action</span></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((a) => (
+                <tr key={rowKey(a)}>
+                  <td>
+                    <div className="inline-block max-w-full align-top">
+                      <span className="block font-semibold text-ink">{a.item_name}</span>
+                      <span className="block text-xs text-ink-muted">{a.item_category}</span>
+                    </div>
+                  </td>
+                  <td className="tabular text-right text-ink-muted">{count(a.allocated_quantity)}</td>
+                  <td className="tabular text-right text-base font-bold text-partial">{count(a.outstanding_quantity || 0)}</td>
+                  <td>{a.created_at ? <AgingBar days={daysOut(a.created_at)} /> : '—'}</td>
+                  {canWrite && (
+                    <td className="text-right">
+                      {a.is_active && (
+                        <Button variant="outline" size="sm" onClick={() => onReceive(a)}>
+                          <Undo2 className="h-4 w-4" aria-hidden="true" />
+                          Receive back
+                          <span className="sr-only"> {a.item_name}</span>
+                        </Button>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

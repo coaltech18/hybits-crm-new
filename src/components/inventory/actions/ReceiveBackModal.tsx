@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
-import { Spinner } from '@/components/ui/Spinner';
+import { Skeleton } from '@/components/ui/Spinner';
+import { ChoiceGroup, FactWell, ModalActions } from '../ModalParts';
 import { supabase } from '@/lib/supabase';
 import { returnInventoryV2 } from '@/services/inventoryMovementServiceV2';
 import type { InventoryAllocation } from '@/types';
@@ -49,6 +50,37 @@ export default function ReceiveBackModal({
     const selectedAllocation = allocations.find((a) => a.id === selectedAllocationId);
     const outstandingQty = selectedAllocation?.outstanding_quantity || 0;
 
+    const loadAllocations = useCallback(async () => {
+        try {
+            setAllocationsLoading(true);
+
+            // outstanding_quantity is derived and only exists on the view, which also
+            // resolves reference_name (and only returns active allocations).
+            const { data, error: fetchError } = await supabase
+                .from('inventory_allocations_with_details')
+                .select(
+                    'allocation_id, outlet_id, inventory_item_id, reference_type, reference_id, reference_name, allocated_quantity, outstanding_quantity, is_active, created_at, updated_at'
+                )
+                .eq('inventory_item_id', itemId)
+                .eq('outlet_id', outletId)
+                .gt('outstanding_quantity', 0);
+
+            if (fetchError) throw new Error(fetchError.message);
+
+            setAllocations(
+                ((data || []) as Omit<InventoryAllocation, 'id'>[]).map((row) => ({
+                    ...row,
+                    id: row.allocation_id as string,
+                    reference_name: row.reference_name || 'Unknown',
+                }))
+            );
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to load allocations');
+        } finally {
+            setAllocationsLoading(false);
+        }
+    }, [itemId, outletId]);
+
     useEffect(() => {
         if (isOpen) {
             setSelectedAllocationId('');
@@ -58,71 +90,11 @@ export default function ReceiveBackModal({
             setError(null);
             loadAllocations();
         }
-    }, [isOpen]);
-
-    async function loadAllocations() {
-        try {
-            setAllocationsLoading(true);
-
-            // Fetch active allocations for this item with outstanding > 0
-            const { data, error: fetchError } = await supabase
-                .from('inventory_allocations')
-                .select(`
-          id,
-          outlet_id,
-          inventory_item_id,
-          reference_type,
-          reference_id,
-          allocated_quantity,
-          outstanding_quantity,
-          is_active,
-          created_at,
-          updated_at
-        `)
-                .eq('inventory_item_id', itemId)
-                .eq('outlet_id', outletId)
-                .eq('is_active', true)
-                .gt('outstanding_quantity', 0);
-
-            if (fetchError) throw new Error(fetchError.message);
-
-            // Fetch reference names
-            const allocsWithNames: InventoryAllocation[] = [];
-            for (const alloc of data || []) {
-                let refName = 'Unknown';
-
-                if (alloc.reference_type === 'subscription') {
-                    const { data: sub } = await supabase
-                        .from('subscriptions')
-                        .select('client_id, clients(name)')
-                        .eq('id', alloc.reference_id)
-                        .maybeSingle();
-                    refName = (sub as any)?.clients?.name || 'Unknown Client';
-                } else if (alloc.reference_type === 'event') {
-                    const { data: evt } = await supabase
-                        .from('events')
-                        .select('event_name')
-                        .eq('id', alloc.reference_id)
-                        .maybeSingle();
-                    refName = evt?.event_name || 'Unknown Event';
-                }
-
-                allocsWithNames.push({
-                    ...alloc,
-                    reference_name: refName,
-                });
-            }
-
-            setAllocations(allocsWithNames);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to load allocations');
-        } finally {
-            setAllocationsLoading(false);
-        }
-    }
+    }, [isOpen, loadAllocations]);
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (loading) return;
         setError(null);
 
         if (!selectedAllocation) {
@@ -170,129 +142,98 @@ export default function ReceiveBackModal({
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Record Return">
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Receive back"
+            description="Record pieces coming back from a subscription or event."
+            dismissable={!loading}
+        >
             <form onSubmit={handleSubmit} className="space-y-4">
                 {error && <Alert variant="error">{error}</Alert>}
 
-                {/* Item Info */}
-                <div className="bg-muted p-4 rounded">
-                    <p className="text-sm text-muted-foreground">Item</p>
-                    <p className="font-semibold">{itemName}</p>
-                </div>
+                <FactWell
+                    eyebrow="Item"
+                    title={itemName}
+                    facts={selectedAllocation ? [{ label: 'Still out', value: outstandingQty, tone: 'partial' }] : []}
+                />
 
                 {allocationsLoading ? (
-                    <div className="flex items-center justify-center py-8">
-                        <Spinner />
+                    <div className="space-y-3 py-2" aria-busy="true">
+                        <Skeleton className="h-10" />
+                        <Skeleton className="h-10" />
                     </div>
                 ) : allocations.length === 0 ? (
-                    <Alert variant="warning">
-                        No outstanding allocations found for this item. Items can only be received back against existing allocations.
+                    <Alert variant="info">
+                        None of this item is out with a client right now. Pieces can only be received back against a booking that holds them.
                     </Alert>
                 ) : (
                     <>
-                        {/* Select Allocation */}
                         <Select
-                            label="Return Against"
+                            label="Coming back from"
                             value={selectedAllocationId}
                             onChange={(e) => setSelectedAllocationId(e.target.value)}
                             required
                         >
-                            <option value="">Select Allocation</option>
+                            <option value="">Select booking</option>
                             {allocations.map((alloc) => (
                                 <option key={alloc.id} value={alloc.id}>
-                                    {alloc.reference_type === 'subscription' ? '📋' : '🎉'}{' '}
-                                    {alloc.reference_name} — Pending Return: {alloc.outstanding_quantity}
+                                    {alloc.reference_type === 'subscription' ? 'Subscription' : 'Event'} · {alloc.reference_name} ({alloc.outstanding_quantity} out)
                                 </option>
                             ))}
                         </Select>
 
-                        {/* Outstanding Info */}
-                        {selectedAllocation && (
-                            <div className="bg-orange-50 p-3 rounded">
-                                <p className="text-sm text-muted-foreground">Pending Return</p>
-                                <p className="text-lg font-bold text-orange-600">{outstandingQty}</p>
-                            </div>
-                        )}
+                        <ChoiceGroup<'good' | 'damaged'>
+                            legend="Condition"
+                            name="return-condition"
+                            value={condition}
+                            onChange={setCondition}
+                            options={[
+                                { value: 'good', label: 'Good', hint: 'Back to available stock', tone: 'final' },
+                                { value: 'damaged', label: 'Damaged', hint: 'Into damaged stock', tone: 'partial' },
+                            ]}
+                        />
 
-                        {/* Condition */}
-                        <div>
-                            <label className="block text-sm font-medium mb-2">Condition</label>
-                            <div className="flex gap-4">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="radio"
-                                        name="condition"
-                                        value="good"
-                                        checked={condition === 'good'}
-                                        onChange={() => setCondition('good')}
-                                        className="w-4 h-4 text-green-600 focus:ring-green-500"
-                                    />
-                                    <span className="flex items-center gap-1">
-                                        <span className="w-2 h-2 rounded-full bg-green-500" />
-                                        Good Condition
-                                    </span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="radio"
-                                        name="condition"
-                                        value="damaged"
-                                        checked={condition === 'damaged'}
-                                        onChange={() => setCondition('damaged')}
-                                        className="w-4 h-4 text-orange-600 focus:ring-orange-500"
-                                    />
-                                    <span className="flex items-center gap-1">
-                                        <span className="w-2 h-2 rounded-full bg-orange-500" />
-                                        Damaged
-                                    </span>
-                                </label>
-                            </div>
-                        </div>
-
-                        {/* Quantity */}
                         <Input
                             type="number"
-                            label="Quantity"
+                            inputMode="numeric"
+                            label="Pieces"
                             value={quantity}
                             onChange={(e) => setQuantity(e.target.value)}
                             min="1"
                             max={outstandingQty}
                             required
                             disabled={!selectedAllocation}
-                            placeholder={selectedAllocation ? `Max: ${outstandingQty}` : 'Select an allocation first'}
+                            placeholder={selectedAllocation ? `Up to ${outstandingQty}` : 'Select a booking first'}
+                            className="tabular"
                         />
 
-                        {/* Notes */}
                         <Textarea
-                            label={condition === 'damaged' ? 'Notes (required)' : 'Notes (optional)'}
+                            label="Notes"
                             value={notes}
                             onChange={(e) => setNotes(e.target.value)}
-                            placeholder={
-                                condition === 'damaged'
-                                    ? 'Describe the damage...'
-                                    : 'Optional notes'
-                            }
+                            placeholder={condition === 'damaged' ? 'Describe the damage' : undefined}
+                            helperText={condition === 'damaged' ? 'Required for damaged pieces' : 'Optional'}
                             required={condition === 'damaged'}
                             rows={3}
                         />
 
                         {condition === 'damaged' && (
                             <Alert variant="warning">
-                                Damaged items will be added to the damaged stock count and reduce allocated quantity.
+                                Damaged pieces come off the booking and are added to damaged stock.
                             </Alert>
                         )}
                     </>
                 )}
 
-                {/* Buttons */}
-                <div className="flex justify-end gap-2 pt-4">
+                <ModalActions>
                     <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
                         Cancel
                     </Button>
-                    <Button type="submit" disabled={loading || allocations.length === 0}>
-                        {loading ? 'Processing...' : 'Record Return'}
+                    <Button type="submit" isLoading={loading} disabled={allocations.length === 0}>
+                        {loading ? 'Saving…' : 'Receive back'}
                     </Button>
-                </div>
+                </ModalActions>
             </form>
         </Modal>
     );

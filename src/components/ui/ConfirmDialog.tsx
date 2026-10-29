@@ -1,155 +1,88 @@
-import React from 'react';
-import { AlertTriangle, X } from 'lucide-react';
+import { useId } from 'react';
+import { createPortal } from 'react-dom';
+import { AlertTriangle, Info } from 'lucide-react';
 import { Button } from './Button';
+import { useDialog } from './Modal';
 
 // ================================================================
-// CONFIRM DIALOG COMPONENT
-// ================================================================
-// Modal dialog for confirming destructive actions.
-// Shows before delete, cancel, or other irreversible operations.
+// CONFIRM DIALOG — confirms destructive or irreversible actions.
+// Hooks run unconditionally (the old early return crashed on open).
+// Initial focus lands on Cancel so Enter never confirms by accident.
 // ================================================================
 
 interface ConfirmDialogProps {
-    isOpen: boolean;
-    title: string;
-    message: string;
-    confirmLabel?: string;
-    cancelLabel?: string;
-    variant?: 'danger' | 'warning' | 'info';
-    isLoading?: boolean;
-    onConfirm: () => void;
-    onCancel: () => void;
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: 'danger' | 'warning' | 'info';
+  isLoading?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
 }
 
+const tone = {
+  danger: { ring: 'bg-danger-tint text-danger', button: 'danger' as const, Icon: AlertTriangle },
+  warning: { ring: 'bg-partial-tint text-partial', button: 'primary' as const, Icon: AlertTriangle },
+  info: { ring: 'bg-info-tint text-info', button: 'primary' as const, Icon: Info },
+};
+
 export function ConfirmDialog({
-    isOpen,
-    title,
-    message,
-    confirmLabel = 'Confirm',
-    cancelLabel = 'Cancel',
-    variant = 'danger',
-    isLoading = false,
-    onConfirm,
-    onCancel,
+  isOpen,
+  title,
+  message,
+  confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  variant = 'danger',
+  isLoading = false,
+  onConfirm,
+  onCancel,
 }: ConfirmDialogProps) {
-    // Don't render if not open
-    if (!isOpen) return null;
+  const panelRef = useDialog(isOpen, onCancel, !isLoading);
+  const titleId = useId();
+  const msgId = useId();
 
-    // Variant styles
-    const variantStyles = {
-        danger: {
-            iconBg: 'bg-red-100',
-            iconColor: 'text-red-600',
-            buttonClass: 'bg-red-600 hover:bg-red-700 text-white',
-        },
-        warning: {
-            iconBg: 'bg-yellow-100',
-            iconColor: 'text-yellow-600',
-            buttonClass: 'bg-yellow-600 hover:bg-yellow-700 text-white',
-        },
-        info: {
-            iconBg: 'bg-blue-100',
-            iconColor: 'text-blue-600',
-            buttonClass: 'bg-blue-600 hover:bg-blue-700 text-white',
-        },
-    };
+  if (!isOpen) return null;
+  const t = tone[variant];
 
-    const styles = variantStyles[variant];
-
-    // Handle escape key
-    React.useEffect(() => {
-        const handleEscape = (e: KeyboardEvent) => {
-            if (e.key === 'Escape' && !isLoading) {
-                onCancel();
-            }
-        };
-
-        document.addEventListener('keydown', handleEscape);
-        return () => document.removeEventListener('keydown', handleEscape);
-    }, [onCancel, isLoading]);
-
-    // Prevent background scroll when modal is open
-    React.useEffect(() => {
-        document.body.style.overflow = 'hidden';
-        return () => {
-            document.body.style.overflow = 'unset';
-        };
-    }, []);
-
-    return (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-            {/* Backdrop */}
-            <div
-                className="fixed inset-0 bg-black/50 transition-opacity animate-fade-in"
-                onClick={!isLoading ? onCancel : undefined}
-                aria-hidden="true"
-            />
-
-            {/* Dialog */}
-            <div className="flex min-h-full items-center justify-center p-4">
-                <div
-                    className="relative bg-white rounded-xl shadow-xl max-w-md w-full p-6 animate-scale-in"
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="confirm-dialog-title"
-                    aria-describedby="confirm-dialog-message"
-                >
-                    {/* Close button */}
-                    <button
-                        onClick={onCancel}
-                        disabled={isLoading}
-                        className="absolute top-4 right-4 text-brand-text/50 hover:text-brand-text transition-colors disabled:opacity-50"
-                        aria-label="Close"
-                    >
-                        <X className="w-5 h-5" />
-                    </button>
-
-                    {/* Icon */}
-                    <div className={`mx-auto w-12 h-12 ${styles.iconBg} rounded-full flex items-center justify-center mb-4`}>
-                        <AlertTriangle className={`w-6 h-6 ${styles.iconColor}`} />
-                    </div>
-
-                    {/* Title */}
-                    <h3
-                        id="confirm-dialog-title"
-                        className="text-lg font-semibold text-brand-text text-center mb-2"
-                    >
-                        {title}
-                    </h3>
-
-                    {/* Message */}
-                    <p
-                        id="confirm-dialog-message"
-                        className="text-brand-text/70 text-center mb-6"
-                    >
-                        {message}
-                    </p>
-
-                    {/* Actions */}
-                    <div className="flex gap-3 justify-center">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={onCancel}
-                            disabled={isLoading}
-                        >
-                            {cancelLabel}
-                        </Button>
-                        <button
-                            type="button"
-                            onClick={onConfirm}
-                            disabled={isLoading}
-                            className={`
-                px-4 py-2 rounded-lg font-medium transition-colors
-                disabled:opacity-50 disabled:cursor-not-allowed
-                ${styles.buttonClass}
-              `}
-                        >
-                            {isLoading ? 'Please wait...' : confirmLabel}
-                        </button>
-                    </div>
-                </div>
+  return createPortal(
+    <div className="fixed inset-0 z-[60] overflow-y-auto">
+      <div
+        className="fixed inset-0 bg-scrim/45 backdrop-blur-[2px] animate-fade-in"
+        onClick={!isLoading ? onCancel : undefined}
+        aria-hidden="true"
+      />
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div
+          ref={panelRef}
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={msgId}
+          tabIndex={-1}
+          className="relative w-full max-w-md rounded-sheet bg-white p-6 shadow-dialog animate-scale-in focus:outline-none"
+        >
+          <div className="flex gap-4">
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${t.ring}`}>
+              <t.Icon className="h-5 w-5" aria-hidden="true" />
             </div>
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-lg font-semibold text-ink">{title}</h2>
+              <p id={msgId} className="mt-1 text-sm text-ink-muted whitespace-pre-line">{message}</p>
+            </div>
+          </div>
+          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading} data-autofocus>
+              {cancelLabel}
+            </Button>
+            <Button type="button" variant={t.button} onClick={onConfirm} isLoading={isLoading}>
+              {isLoading ? 'Working…' : confirmLabel}
+            </Button>
+          </div>
         </div>
-    );
+      </div>
+    </div>,
+    document.body
+  );
 }

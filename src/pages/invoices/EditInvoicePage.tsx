@@ -1,21 +1,37 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { getInvoiceById, updateInvoice } from '@/services/invoiceService';
-import type { Invoice, CreateInvoiceItemInput } from '@/types';
+import {
+    getInvoiceById,
+    updateInvoice,
+    InvoicePartialSaveError,
+    MIN_INVOICE_DATE,
+} from '@/services/invoiceService';
+import type { Invoice, UpdateInvoiceItemInput } from '@/types';
 import { DEFAULT_GST_RATE } from '@/types';
-import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
+import { DateInput } from '@/components/ui/DateInput';
+import { Textarea } from '@/components/ui/Textarea';
 import { Alert } from '@/components/ui/Alert';
-import { Spinner } from '@/components/ui/Spinner';
-import { formatCurrency } from '@/utils/format';
+import { Skeleton } from '@/components/ui/Spinner';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { StatusBadge } from '@/components/ui/StatusStamp';
+import { FormActionBar, FormSection, GrandTotalSummary, LineItemsEditor, TotalsPanel } from './InvoiceFormParts';
+import { INVOICE_TYPE_LABEL } from './invoiceDisplay';
+import { calcInvoiceTotals } from '@/utils/format';
+import { todayISO, toLocalISODate } from '@/utils/date';
+
+const emptyItem = (): UpdateInvoiceItemInput => ({
+    description: '',
+    quantity: 1,
+    unit_price: 0,
+    tax_rate: DEFAULT_GST_RATE,
+});
 
 export default function EditInvoicePage() {
-    useDocumentTitle('Edit Invoice');
+    useDocumentTitle('Edit invoice');
 
     const navigate = useNavigate();
     const { id } = useParams<{ id: string }>();
@@ -27,18 +43,14 @@ export default function EditInvoicePage() {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Editable form state
-    const [items, setItems] = useState<CreateInvoiceItemInput[]>([]);
+    // Editable form state (existing rows keep their id so saves update them in place)
+    const [items, setItems] = useState<UpdateInvoiceItemInput[]>([]);
     const [termsAndConditions, setTermsAndConditions] = useState('');
-    // Invoice date. Back-date it to re-enter a historical invoice.
-    const today = new Date().toISOString().slice(0, 10);
+    // Invoice date (local, not UTC). Back-date it to re-enter a historical invoice.
+    const today = todayISO();
     const [issuedAt, setIssuedAt] = useState(today);
 
-    useEffect(() => {
-        loadInvoice();
-    }, [id]);
-
-    async function loadInvoice() {
+    const loadInvoice = useCallback(async () => {
         if (!id) return;
 
         try {
@@ -46,7 +58,8 @@ export default function EditInvoicePage() {
             const data = await getInvoiceById(id);
 
             if (!data) {
-                setError('Invoice not found');
+                setInvoice(null);
+                setError('Invoice not found or you do not have access');
                 return;
             }
 
@@ -59,27 +72,31 @@ export default function EditInvoicePage() {
 
             setInvoice(data);
 
-            // Pre-populate editable fields
-            setItems(
-                data.invoice_items?.map(item => ({
-                    description: item.description,
-                    quantity: item.quantity,
-                    unit_price: item.unit_price,
-                    tax_rate: item.tax_rate,
-                })) || [{ description: '', quantity: 1, unit_price: 0, tax_rate: DEFAULT_GST_RATE }]
-            );
+            // Pre-populate editable fields; an item-less draft gets one blank row
+            const mapped = (data.invoice_items ?? []).map(item => ({
+                id: item.id,
+                description: item.description,
+                quantity: Number(item.quantity),
+                unit_price: Number(item.unit_price),
+                tax_rate: Number(item.tax_rate),
+            }));
+            setItems(mapped.length > 0 ? mapped : [emptyItem()]);
 
             setTermsAndConditions(data.terms_and_conditions || '');
-            setIssuedAt((data.issued_at || data.created_at).slice(0, 10));
+            setIssuedAt(toLocalISODate(new Date(data.issued_at ?? data.created_at)));
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load invoice');
         } finally {
             setLoading(false);
         }
-    }
+    }, [id, navigate, showToast]);
+
+    useEffect(() => {
+        void loadInvoice();
+    }, [loadInvoice]);
 
     function addItem() {
-        setItems([...items, { description: '', quantity: 1, unit_price: 0, tax_rate: DEFAULT_GST_RATE }]);
+        setItems([...items, emptyItem()]);
     }
 
     function removeItem(index: number) {
@@ -88,39 +105,25 @@ export default function EditInvoicePage() {
         }
     }
 
-    function updateItem(index: number, field: keyof CreateInvoiceItemInput, value: string | number) {
+    function updateItem<K extends keyof UpdateInvoiceItemInput>(
+        index: number,
+        field: K,
+        value: UpdateInvoiceItemInput[K]
+    ) {
         const newItems = [...items];
         newItems[index] = { ...newItems[index], [field]: value };
         setItems(newItems);
     }
 
-    /**
-     * PREVIEW CALCULATION ONLY
-     * Backend recalculates using identical logic on save.
-     */
-    function calculateTotals() {
-        let subtotal = 0;
-        let taxTotal = 0;
-
-        items.forEach(item => {
-            const lineTotal = Math.round(item.quantity * item.unit_price * 100) / 100;
-            const taxAmount = Math.round(lineTotal * (item.tax_rate / 100) * 100) / 100;
-            subtotal += lineTotal;
-            taxTotal += taxAmount;
-        });
-
-        return {
-            subtotal: Math.round(subtotal * 100) / 100,
-            taxTotal: Math.round(taxTotal * 100) / 100,
-            grandTotal: Math.round((subtotal + taxTotal) * 100) / 100,
-        };
-    }
-
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
-        if (!user?.id || !id) return;
+        if (!user?.id || !id || submitting) return;
 
         // Validation
+        if (items.length === 0) {
+            setError('At least one invoice item is required');
+            return;
+        }
         if (items.some(item => !item.description.trim())) {
             setError('All items must have a description');
             return;
@@ -140,206 +143,153 @@ export default function EditInvoicePage() {
             navigate(`/invoices/${id}`);
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'Failed to update invoice';
-            setError(errorMessage);
             showToast(errorMessage, 'error');
+            if (err instanceof InvoicePartialSaveError) {
+                // Re-read the stored rows so a retry can't insert new lines twice
+                await loadInvoice();
+            }
+            setError(errorMessage);
         } finally {
             setSubmitting(false);
         }
     }
 
+    const back = { to: id ? `/invoices/${id}` : '/invoices', label: 'Back to invoice' };
+
     if (loading) {
         return (
-            <div className="flex items-center justify-center min-h-[400px]">
-                <Spinner size="lg" />
+            <div>
+                <PageHeader back={back} title="Edit draft" />
+                <div className="sheet space-y-4 p-5 sm:p-6" role="status" aria-label="Loading invoice">
+                    <Skeleton className="h-6 w-40" />
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <Skeleton className="h-10" />
+                        <Skeleton className="h-10" />
+                    </div>
+                    <Skeleton className="h-6 w-32" />
+                    <Skeleton className="h-24" />
+                </div>
             </div>
         );
     }
 
     if (!invoice) {
         return (
-            <div className="max-w-4xl mx-auto">
+            <div>
+                <PageHeader back={{ to: '/invoices', label: 'Invoices' }} title="Edit draft" />
                 <Alert variant="error">{error || 'Invoice not found'}</Alert>
             </div>
         );
     }
 
-    const totals = calculateTotals();
+    // PREVIEW ONLY: same exact paise maths as invoiceService; stored values are authoritative.
+    const totals = calcInvoiceTotals(items);
+    const gstType = invoice.client_gst_type_snap ?? invoice.clients?.gst_type ?? null;
+    const totalsProps = {
+        subtotal: totals.subtotal,
+        taxTotal: totals.tax_total,
+        grandTotal: totals.grand_total,
+        lineCount: items.length,
+        gstType,
+    };
 
     return (
-        <div className="max-w-4xl mx-auto space-y-6">
-            <div>
-                <h1 className="text-3xl font-bold">Edit Invoice</h1>
-                <p className="text-muted-foreground mt-1">
-                    Editing draft invoice <span className="font-mono font-semibold">{invoice.invoice_number}</span>
-                </p>
-            </div>
+        <div>
+            <PageHeader
+                back={back}
+                title={
+                    <>
+                        Edit <span className="serial">{invoice.invoice_number || 'draft'}</span>
+                    </>
+                }
+                meta={<StatusBadge kind="invoice" status={invoice.status} />}
+                description="Change the date, lines and terms. Client, outlet and type were fixed when the draft was created."
+            />
 
-            {error && <Alert variant="error">{error}</Alert>}
+            {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
-            {/* Locked Fields (Read-Only) */}
-            <Card>
-                <h2 className="text-lg font-semibold mb-4">Invoice Details (Locked)</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium mb-1 text-muted-foreground">Invoice Type</label>
-                        <p className="font-medium capitalize">{invoice.invoice_type}</p>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium mb-1 text-muted-foreground">Outlet</label>
-                        <p className="font-medium">
-                            {invoice.outlets?.name} ({invoice.outlets?.code})
-                        </p>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium mb-1 text-muted-foreground">Client</label>
-                        <p className="font-medium">{invoice.clients?.name}</p>
-                    </div>
-                    {invoice.events && (
-                        <div>
-                            <label className="block text-sm font-medium mb-1 text-muted-foreground">Event</label>
-                            <p className="font-medium">{invoice.events.event_name}</p>
-                        </div>
-                    )}
-                </div>
-                <p className="text-xs text-muted-foreground mt-3">
-                    These fields cannot be changed after invoice creation.
-                </p>
-            </Card>
-
-            <form onSubmit={handleSubmit} className="space-y-6">
-                {/* Invoice Date */}
-                <Card>
-                    <h2 className="text-lg font-semibold mb-4">Invoice Date</h2>
-                    <Input
-                        type="date"
-                        label="Invoice Date"
-                        value={issuedAt}
-                        max={today}
-                        onChange={(e) => setIssuedAt(e.target.value)}
-                        required
-                        helperText="Back-date this to re-enter a past invoice. Drives reports and GST sheets. Locked once finalized."
-                    />
-                </Card>
-
-                {/* Editable Items */}
-                <Card>
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-semibold">Invoice Items</h2>
-                        <Button type="button" variant="outline" size="sm" onClick={addItem}>
-                            + Add Item
-                        </Button>
-                    </div>
-
-                    <div className="space-y-4">
-                        {items.map((item, index) => (
-                            <div key={index} className="grid grid-cols-12 gap-3 items-end border-b pb-4">
-                                <div className="col-span-12 md:col-span-5">
-                                    <Input
-                                        label="Description"
-                                        value={item.description}
-                                        onChange={(e) => updateItem(index, 'description', e.target.value)}
-                                        placeholder="Item description"
-                                        required
-                                    />
-                                </div>
-                                <div className="col-span-4 md:col-span-2">
-                                    <Input
-                                        label="Qty"
-                                        type="number"
-                                        min="0.01"
-                                        step="0.01"
-                                        value={item.quantity}
-                                        onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value) || 0)}
-                                        required
-                                    />
-                                </div>
-                                <div className="col-span-4 md:col-span-2">
-                                    <Input
-                                        label="Price"
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        value={item.unit_price}
-                                        onChange={(e) => updateItem(index, 'unit_price', parseFloat(e.target.value) || 0)}
-                                        required
-                                    />
-                                </div>
-                                <div className="col-span-3 md:col-span-2">
-                                    <Select
-                                        label="Tax %"
-                                        value={item.tax_rate.toString()}
-                                        onChange={(e) => updateItem(index, 'tax_rate', parseFloat(e.target.value))}
-                                        required
-                                    >
-                                        <option value="0">0%</option>
-                                        <option value="5">5%</option>
-                                        <option value="12">12%</option>
-                                        <option value="18">18%</option>
-                                    </Select>
-                                </div>
-                                <div className="col-span-1">
-                                    {items.length > 1 && (
-                                        <Button
-                                            type="button"
-                                            variant="destructive"
-                                            size="sm"
-                                            onClick={() => removeItem(index)}
-                                        >
-                                            ×
-                                        </Button>
-                                    )}
-                                </div>
+            <form onSubmit={handleSubmit}>
+                <div className="sheet max-w-5xl">
+                    {/* 1. Bill to (locked) */}
+                    <FormSection first title="Bill to" description="Fixed when the draft was created.">
+                        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+                            <div>
+                                <dt className="text-sm text-ink-muted">Client</dt>
+                                <dd className="mt-0.5 font-medium text-ink">{invoice.clients?.name ?? '—'}</dd>
                             </div>
-                        ))}
-                    </div>
-                </Card>
+                            <div>
+                                <dt className="text-sm text-ink-muted">Outlet</dt>
+                                <dd className="mt-0.5 font-medium text-ink">
+                                    {invoice.outlets?.name}{' '}
+                                    {invoice.outlets?.code && <span className="serial text-ink-muted">({invoice.outlets.code})</span>}
+                                </dd>
+                            </div>
+                            <div>
+                                <dt className="text-sm text-ink-muted">Invoice type</dt>
+                                <dd className="mt-0.5 font-medium text-ink">{INVOICE_TYPE_LABEL[invoice.invoice_type] ?? invoice.invoice_type}</dd>
+                            </div>
+                            {invoice.events && (
+                                <div>
+                                    <dt className="text-sm text-ink-muted">Event</dt>
+                                    <dd className="mt-0.5 font-medium text-ink">{invoice.events.event_name}</dd>
+                                </div>
+                            )}
+                        </dl>
+                    </FormSection>
 
-                {/* Totals */}
-                <Card>
-                    <h2 className="text-lg font-semibold mb-4">Invoice Summary</h2>
-                    <div className="space-y-2">
-                        <div className="flex justify-between">
-                            <span>Subtotal:</span>
-                            <span className="font-medium">{formatCurrency(totals.subtotal)}</span>
+                    {/* 2. Date */}
+                    <FormSection title="Invoice date">
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <DateInput
+                                label="Invoice date"
+                                value={issuedAt}
+                                min={MIN_INVOICE_DATE}
+                                max={today}
+                                onChange={(e) => setIssuedAt(e.target.value)}
+                                required
+                                helperText="Back-date this to re-enter a past invoice. Drives reports and GST sheets. Locked once finalized."
+                            />
                         </div>
-                        <div className="flex justify-between">
-                            <span>Tax Total:</span>
-                            <span className="font-medium">{formatCurrency(totals.taxTotal)}</span>
-                        </div>
-                        <div className="flex justify-between text-lg font-bold border-t pt-2">
-                            <span>Grand Total:</span>
-                            <span className="text-primary">{formatCurrency(totals.grandTotal)}</span>
-                        </div>
-                    </div>
-                </Card>
+                    </FormSection>
 
-                {/* Terms & Conditions */}
-                <Card>
-                    <h2 className="text-lg font-semibold mb-4">Terms & Conditions</h2>
-                    <div className="space-y-2">
-                        <textarea
+                    {/* 3. Line items */}
+                    <FormSection title="Line items" description="Amounts work out as you type, rounded to the paisa per line.">
+                        <LineItemsEditor
+                            items={items}
+                            lines={totals.items}
+                            onChange={updateItem}
+                            onAdd={addItem}
+                            onRemove={removeItem}
+                        />
+                        <TotalsPanel {...totalsProps} className="mt-6" />
+                    </FormSection>
+
+                    {/* 4. Terms */}
+                    <FormSection title="Terms and conditions">
+                        <Textarea
                             id="terms-and-conditions"
-                            className="w-full min-h-[160px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                            label="Terms and conditions"
+                            className="min-h-[160px]"
                             value={termsAndConditions}
                             onChange={(e) => setTermsAndConditions(e.target.value)}
-                            placeholder="Enter terms and conditions..."
+                            placeholder="Enter terms and conditions"
+                            helperText="Printed on the invoice PDF."
                         />
-                    </div>
-                </Card>
+                    </FormSection>
 
-                {/* Actions */}
-                <div className="flex gap-3 justify-end">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => navigate(`/invoices/${id}`)}
-                        disabled={submitting}
-                    >
-                        Cancel
-                    </Button>
-                    <Button type="submit" disabled={submitting}>
-                        {submitting ? 'Saving...' : 'Save Changes'}
-                    </Button>
+                    <FormActionBar summary={<GrandTotalSummary grandTotal={totals.grand_total} lineCount={items.length} />}>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => navigate(`/invoices/${id}`)}
+                            disabled={submitting}
+                        >
+                            Cancel
+                        </Button>
+                        <Button type="submit" disabled={submitting} isLoading={submitting}>
+                            {submitting ? 'Saving…' : 'Save changes'}
+                        </Button>
+                    </FormActionBar>
                 </div>
             </form>
         </div>

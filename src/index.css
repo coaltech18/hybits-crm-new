@@ -2,69 +2,240 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ================================================================
+   BILL BOOK BASE
+   ================================================================ */
+
 @layer base {
   * {
-    border-color: #D4DDD9; /* brand.border */
+    border-color: theme('colors.rule.DEFAULT');
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    font-feature-settings: 'cv11';
   }
 
   body {
-    @apply antialiased;
-    background-color: #FEFBF6; /* brand.bg */
-    color: #1A382E; /* brand.text */
+    @apply antialiased font-sans text-sm text-ink bg-paper;
+  }
+
+  ::selection {
+    background-color: #CDEBDD;
+    color: theme('colors.ink.DEFAULT');
+  }
+
+  /* One focus language everywhere: a 2px logo-green ring with paper offset. */
+  :focus-visible {
+    outline: 2px solid theme('colors.brand.logo');
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  input,
+  select,
+  textarea {
+    caret-color: theme('colors.brand.primary');
+    accent-color: theme('colors.brand.primary');
+  }
+
+  /* Figures in tables, totals and amounts always line up. */
+  table,
+  .tabular {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  th {
+    font-weight: 600;
+  }
+
+  a {
+    text-underline-offset: 3px;
+  }
+
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.rule.strong') transparent;
   }
 }
 
-/* Muted text (secondary body copy) - brand text with reduced opacity */
-.text-muted-foreground {
-  color: rgba(26, 56, 46, 0.7);
+@layer components {
+  /* A sheet: the white page that sits on the paper ground. */
+  .sheet {
+    @apply bg-white border border-rule rounded-sheet shadow-sheet;
+  }
+
+  /* Serial numbers: invoice no., codes. Mono is data here, not costume. */
+  .serial {
+    @apply font-mono text-[0.92em] tracking-tight;
+    font-variant-numeric: tabular-nums slashed-zero;
+  }
+
+  .amount {
+    font-variant-numeric: tabular-nums lining-nums;
+    @apply whitespace-nowrap;
+  }
+
+  /* Ledger table: ruled, dense, readable. Opt in with className="ledger". */
+  .ledger {
+    @apply w-full text-sm border-collapse;
+  }
+  .ledger thead th {
+    @apply sticky top-0 z-[1] bg-paper-sunk text-left text-xs font-semibold uppercase tracking-wide text-ink-muted px-4 py-2.5 border-b border-rule whitespace-nowrap;
+  }
+  .ledger tbody td {
+    @apply px-4 py-3 border-b border-rule/70 align-middle;
+  }
+  .ledger tbody tr {
+    @apply transition-colors duration-150;
+  }
+  .ledger tbody tr:hover {
+    @apply bg-final-tint/40;
+  }
+  .ledger tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  /* Carbon-copy row states: the record itself carries its state, not just the badge. */
+  .ledger tbody tr.row-draft {
+    @apply bg-draft-tint/60;
+  }
+  .ledger tbody tr.row-overdue {
+    @apply bg-overdue-tint/50;
+  }
+  .ledger tbody tr.row-void td {
+    @apply text-void;
+  }
+  .ledger tbody tr.row-void .amount,
+  .ledger tbody tr.row-void .serial {
+    @apply line-through decoration-void/70;
+  }
+  .ledger tbody tr.row-draft:hover,
+  .ledger tbody tr.row-overdue:hover {
+    filter: brightness(0.985);
+  }
+
+  /* Phones: each row becomes a labelled card (labels from useLedgerLabels).
+     Opt out with className="ledger ledger-keep" for editable grids. */
+  @media (max-width: 639px) {
+    .ledger:not(.ledger-keep),
+    .ledger:not(.ledger-keep) tbody,
+    .ledger:not(.ledger-keep) tfoot {
+      display: block;
+      width: 100%;
+      min-width: 0 !important;
+    }
+    .ledger:not(.ledger-keep) thead {
+      display: none;
+    }
+    .ledger:not(.ledger-keep) tbody tr,
+    .ledger:not(.ledger-keep) tfoot tr {
+      @apply block border-b border-rule px-4 py-3;
+    }
+    .ledger:not(.ledger-keep) tbody tr:last-child {
+      @apply border-b-0;
+    }
+    .ledger:not(.ledger-keep) tbody td,
+    .ledger:not(.ledger-keep) tfoot td {
+      @apply grid items-baseline gap-x-4 border-0 px-0 py-1 text-right;
+      grid-template-columns: max-content minmax(0, 1fr);
+      max-width: none;
+      min-width: 0;
+      white-space: normal;
+    }
+    .ledger:not(.ledger-keep) td[data-label] > * {
+      grid-column: 2;
+      justify-self: end;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .ledger:not(.ledger-keep) td[data-label]::before {
+      content: attr(data-label);
+      grid-column: 1;
+      grid-row: 1 / span 4;
+      @apply text-left text-xs font-semibold uppercase tracking-wide text-ink-muted;
+    }
+    /* Phone-only emphasis and omission, per cell. */
+    .ledger:not(.ledger-keep) td.cell-emph {
+      @apply text-lg font-bold;
+    }
+    .ledger:not(.ledger-keep) td.cell-hide-sm {
+      display: none;
+    }
+    .ledger:not(.ledger-keep) td:not([data-label]) {
+      @apply block text-left;
+    }
+    .ledger:not(.ledger-keep) tbody td:first-child {
+      @apply block pb-1.5 text-left text-base;
+    }
+    .ledger:not(.ledger-keep) tbody td:first-child::before {
+      content: none;
+    }
+    .ledger:not(.ledger-keep) tbody td:first-child > * {
+      justify-self: start;
+      text-align: left;
+    }
+    /* Strike-through would also cross out the phone label; grey ink marks void rows here. */
+    .ledger:not(.ledger-keep) tbody tr.row-void td.amount {
+      text-decoration: none;
+    }
+  }
+}
+
+/* Right-aligned numeric headers. Outside @layer and via [class~=] so
+   Tailwind doesn't treat it as a redefinition of the text-right utility. */
+.ledger thead th[class~="text-right"] {
+  text-align: right;
 }
 
 /* ================================================================
-   ANIMATIONS
+   MOTION — state, never decoration. Respect reduced motion.
    ================================================================ */
 
-/* Slide in from right - used for toast notifications */
 @keyframes slide-in-right {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
+  from { transform: translateX(16px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
+.animate-slide-in-right { animation: slide-in-right 220ms cubic-bezier(0.16, 1, 0.3, 1); }
 
-.animate-slide-in-right {
-  animation: slide-in-right 0.3s ease-out;
-}
-
-/* Fade in - used for modals and overlays */
 @keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
+.animate-fade-in { animation: fade-in 160ms ease-out; }
 
-.animate-fade-in {
-  animation: fade-in 0.2s ease-out;
-}
-
-/* Scale in - used for modal content */
 @keyframes scale-in {
-  from {
-    transform: scale(0.95);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
+  from { transform: translateY(6px) scale(0.98); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+.animate-scale-in { animation: scale-in 200ms cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* The signature move: a rubber stamp pressing onto the record. */
+@keyframes stamp-press {
+  0% { transform: rotate(-4deg) scale(1.35); opacity: 0; filter: blur(2px); }
+  60% { transform: rotate(-4deg) scale(0.97); opacity: 1; filter: blur(0); }
+  100% { transform: rotate(-4deg) scale(1); opacity: 1; }
+}
+.animate-stamp { animation: stamp-press 180ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #EBF0ED 25%, #F4F7F5 50%, #EBF0ED 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
 }
 
-.animate-scale-in {
-  animation: scale-in 0.2s ease-out;
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
 }

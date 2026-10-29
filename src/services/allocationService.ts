@@ -1,41 +1,30 @@
 import { supabase } from '@/lib/supabase';
-import type { InventoryAllocation, ReferenceType } from '@/types';
+import type { InventoryAllocation, InventoryAllocationHistory, ReferenceType } from '@/types';
 
 // ================================================================
-// ALLOCATION SERVICE (STATE ONLY)
+// ALLOCATION SERVICE (READ ONLY)
 // ================================================================
-// RESPONSIBILITY: Manage inventory_allocations table
-// NO quantity math here - allocation state is derived from movements
-// Allocation ≠ movement (allocation is created AFTER movement succeeds)
+// inventory_allocations is maintained by the DB trigger
+// sync_allocation_on_movement: it is created, topped up and closed
+// from inventory_movements. The app never writes it directly.
 // ================================================================
 
-/**
- * Get user role
- */
-async function getUserRole(userId: string): Promise<string> {
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  return profile.role;
+// Both views expose the allocation's primary key as allocation_id.
+// Map it to `id` so callers (and React keys) have a stable identifier.
+function withId<T extends { allocation_id?: string; id?: string }>(rows: T[] | null): (T & { id: string })[] {
+  return (rows || []).map((r) => ({ ...r, id: r.allocation_id ?? r.id ?? '' }));
 }
 
 /**
- * Get allocations by reference (subscription or event)
- * 
+ * Get ACTIVE allocations by reference (subscription or event)
+ *
  * CRITICAL: outstanding_quantity is DERIVED from movements view
  * NOT stored in the allocation record
- * 
+ *
  * @param userId - Current user ID
  * @param referenceType - 'subscription' or 'event'
  * @param referenceId - Subscription ID or Event ID
- * @returns List of allocations with DERIVED outstanding quantity
+ * @returns List of active allocations with DERIVED outstanding quantity
  */
 export async function getAllocationsByReference(
   _userId: string,
@@ -54,196 +43,62 @@ export async function getAllocationsByReference(
     throw new Error(error.message);
   }
 
-  return data || [];
+  return withId(data as (InventoryAllocation & { allocation_id?: string })[] | null);
 }
 
 /**
- * Get all active allocations for an inventory item
- * 
- * @param userId - Current user ID
- * @param inventoryItemId - Inventory item ID
- * @returns List of allocations
+ * Get the full allocation history for a reference, including allocations
+ * that are fully resolved (closed). Returns per-outcome totals:
+ * returned_good, returned_damaged, lost, disposed and outstanding.
+ *
+ * Reads view reference_allocation_history (migration 042).
  */
-export async function getAllocationsByItem(
-  _userId: string,
-  inventoryItemId: string
-): Promise<InventoryAllocation[]> {
-  const { data, error } = await supabase
-    .from('inventory_allocations_with_details')
-    .select('*')
-    .eq('inventory_item_id', inventoryItemId)
-    .eq('is_active', true);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return data || [];
-}
-
-/**
- * Create allocation record
- * 
- * CRITICAL: This is called AFTER allocation movement succeeds
- * NOT used directly - called by integration hooks
- * Relies on UNIQUE constraint (inventory_item_id, reference_type, reference_id)
- * 
- * @param userId - Current user ID
- * @param outletId - Outlet ID
- * @param inventoryItemId - Inventory item ID
- * @param referenceType - 'subscription' or 'event'
- * @param referenceId - Subscription ID or Event ID
- * @param allocatedQuantity - Quantity allocated
- * @returns Created allocation record
- */
-export async function createAllocation(
-  userId: string,
-  outletId: string,
-  inventoryItemId: string,
-  referenceType: ReferenceType,
-  referenceId: string,
-  allocatedQuantity: number
-): Promise<InventoryAllocation> {
-  const role = await getUserRole(userId);
-
-  // Accountants cannot create allocations
-  if (role === 'accountant') {
-    throw new Error('Accountants cannot create allocations');
-  }
-
-  // Insert allocation record
-  // UNIQUE constraint will prevent duplicates
-  const { data, error } = await supabase
-    .from('inventory_allocations')
-    .insert({
-      outlet_id: outletId,
-      inventory_item_id: inventoryItemId,
-      reference_type: referenceType,
-      reference_id: referenceId,
-      allocated_quantity: allocatedQuantity,
-      is_active: true,
-    })
-    .select()
-    .maybeSingle();
-
-  if (error) {
-    // If duplicate, update the existing allocation (increment)
-    if (error.code === '23505') {
-      // First, fetch the current allocation
-      const { data: existing, error: fetchError } = await supabase
-        .from('inventory_allocations')
-        .select('allocated_quantity')
-        .eq('inventory_item_id', inventoryItemId)
-        .eq('reference_type', referenceType)
-        .eq('reference_id', referenceId)
-        .maybeSingle();
-
-      if (fetchError) {
-        throw new Error(fetchError.message);
-      }
-
-      if (!existing) {
-        throw new Error('Failed to fetch existing allocation');
-      }
-
-      // Then update with incremented value
-      const { data: updated, error: updateError } = await supabase
-        .from('inventory_allocations')
-        .update({
-          allocated_quantity: (existing.allocated_quantity || 0) + allocatedQuantity,
-        })
-        .eq('inventory_item_id', inventoryItemId)
-        .eq('reference_type', referenceType)
-        .eq('reference_id', referenceId)
-        .select()
-        .maybeSingle();
-
-      if (updateError) {
-        throw new Error(updateError.message);
-      }
-
-      return updated;
-    }
-
-    throw new Error(error.message);
-  }
-
-  return data;
-}
-
-/**
- * Close allocation (mark as inactive)
- * 
- * CRITICAL: Called when all items are returned/damaged/lost
- * DB trigger (sync_allocation_on_movement) automatically closes allocations
- * when outstanding = 0
- * 
- * Manual close is also allowed (e.g., subscription cancelled)
- * 
- * @param userId - Current user ID
- * @param allocationId - Allocation ID
- */
-export async function closeAllocation(
-  userId: string,
-  allocationId: string
-): Promise<void> {
-  const role = await getUserRole(userId);
-
-  // Accountants cannot close allocations
-  if (role === 'accountant') {
-    throw new Error('Accountants cannot close allocations');
-  }
-
-  // Update allocation to inactive
-  const { error } = await supabase
-    .from('inventory_allocations')
-    .update({ is_active: false })
-    .eq('id', allocationId);
-
-  if (error) {
-    throw new Error(error.message);
-  }
-}
-
-/**
- * Close all allocations for a reference (subscription or event)
- * 
- * Used when subscription is cancelled or event is cancelled
- * 
- * @param userId - Current user ID
- * @param referenceType - 'subscription' or 'event'
- * @param referenceId - Subscription ID or Event ID
- */
-export async function closeAllocationsByReference(
-  userId: string,
+export async function getAllocationHistoryByReference(
   referenceType: ReferenceType,
   referenceId: string
-): Promise<void> {
-  const role = await getUserRole(userId);
-
-  // Accountants cannot close allocations
-  if (role === 'accountant') {
-    throw new Error('Accountants cannot close allocations');
-  }
-
-  // Update all active allocations for this reference
-  const { error } = await supabase
-    .from('inventory_allocations')
-    .update({ is_active: false })
+): Promise<InventoryAllocationHistory[]> {
+  const { data, error } = await supabase
+    .from('reference_allocation_history')
+    .select('*')
     .eq('reference_type', referenceType)
     .eq('reference_id', referenceId)
-    .eq('is_active', true);
+    .order('created_at', { ascending: true });
 
   if (error) {
     throw new Error(error.message);
   }
+
+  return withId(data as InventoryAllocationHistory[] | null).map((r) => ({
+    ...r,
+    allocated_quantity: Number(r.allocated_quantity) || 0,
+    returned_good: Number(r.returned_good) || 0,
+    returned_damaged: Number(r.returned_damaged) || 0,
+    lost: Number(r.lost) || 0,
+    disposed: Number(r.disposed) || 0,
+    outstanding_quantity: Number(r.outstanding_quantity) || 0,
+  }));
+}
+
+/** Totals for a set of active allocations (sent, still out, item count). */
+export function summarizeAllocations(allocations: InventoryAllocation[]): {
+  totalAllocated: number;
+  totalOutstanding: number;
+  itemCount: number;
+} {
+  return {
+    totalAllocated: allocations.reduce((sum, a) => sum + a.allocated_quantity, 0),
+    totalOutstanding: allocations.reduce((sum, a) => sum + (a.outstanding_quantity || 0), 0),
+    itemCount: allocations.length,
+  };
 }
 
 /**
  * Get allocation summary for a reference
- * 
- * Returns total allocated and outstanding quantities
- * 
+ *
+ * Returns total allocated and outstanding quantities (active allocations).
+ * Callers that already hold the allocation rows should use
+ * summarizeAllocations instead of querying again.
+ *
  * @param userId - Current user ID
  * @param referenceType - 'subscription' or 'event'
  * @param referenceId - Subscription ID or Event ID
@@ -259,14 +114,5 @@ export async function getAllocationSummary(
   itemCount: number;
 }> {
   const allocations = await getAllocationsByReference(userId, referenceType, referenceId);
-
-  const totalAllocated = allocations.reduce((sum, a) => sum + a.allocated_quantity, 0);
-  const totalOutstanding = allocations.reduce((sum, a) => sum + (a.outstanding_quantity || 0), 0);
-  const itemCount = allocations.length;
-
-  return {
-    totalAllocated,
-    totalOutstanding,
-    itemCount,
-  };
+  return summarizeAllocations(allocations);
 }

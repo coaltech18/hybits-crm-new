@@ -1,47 +1,49 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { AuthState, UserProfile, Outlet } from '@/types';
+import type { AuthState, UserProfile, Outlet, UserRole } from '@/types';
 import * as authService from '@/services/authService';
-import { supabase } from '@/lib/supabase';
+import type { LoginResponse } from '@/services/authService';
+import { supabase, SUPABASE_AUTH_STORAGE_KEY } from '@/lib/supabase';
 
 // ================================================================
-// AUTH CONTEXT - STRICT PROFILE LOADING (v3)
+// AUTH CONTEXT
 // ================================================================
-// 
-// STRICT RULES:
-// 1. 5-second HARD timeout on profile fetch → force logout
-// 2. ANY profile fetch error → clear session, redirect to /login
-// 3. NEVER redirect to /dashboard until user_profiles is loaded
 //
-// This prevents infinite loading loops and ensures clean state.
+// RULES:
+// 1. Profile fetch has a 15-second timeout. On timeout or a network/query
+//    error at startup, the stored session is kept and `authError` is set;
+//    ProtectedRoute shows a "Couldn't load your profile" screen (Retry /
+//    Sign out). isAuthenticated is never true without a loaded user.
+// 2. A missing profile, missing/invalid role or deactivated account (at
+//    startup, login, or a later re-check) signs out globally and redirects
+//    to /login.
+// 3. The onAuthStateChange callback is synchronous and never awaits a
+//    Supabase call: the client runs it while holding its auth lock, so any
+//    nested getSession()/query would deadlock until the timeout. Work is
+//    deferred with setTimeout (per the Supabase docs).
+// 4. On SIGNED_IN for a different user, USER_UPDATED, or a SIGNED_IN /
+//    TOKEN_REFRESHED more than 10 minutes after the last check, the profile
+//    is re-loaded and re-validated (catches deactivation without reload).
 //
 // ================================================================
 
-// Timeout constant (15 seconds - increased for production networks)
 const PROFILE_FETCH_TIMEOUT_MS = 15000;
+const PROFILE_REVALIDATE_MS = 10 * 60 * 1000;
+const VALID_ROLES: UserRole[] = ['admin', 'manager', 'accountant'];
+
+type LogoutScope = 'local' | 'global';
 
 interface AuthContextValue extends AuthState {
   isAuthReady: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** `redirectTo` must be a same-origin path; anything else falls back to /dashboard. */
+  login: (email: string, password: string, redirectTo?: string) => Promise<void>;
   logout: () => Promise<void>;
   setSelectedOutlet: (outletId: string | null) => void;
+  /** Re-fetch profile + outlets. Rejects on network/timeout errors (state is kept). */
   refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
-
-// Initial state - loading true, not authenticated
-const INITIAL_STATE: AuthState = {
-  user: null,
-  profile: null,
-  outlets: [],
-  selectedOutlet: null,
-  isLoading: true,
-  isAuthenticated: false,
-  isAdmin: false,
-  isManager: false,
-  isAccountant: false,
-};
 
 // Logged out state - loading false, not authenticated
 const LOGGED_OUT_STATE: AuthState = {
@@ -54,62 +56,18 @@ const LOGGED_OUT_STATE: AuthState = {
   isAdmin: false,
   isManager: false,
   isAccountant: false,
+  authError: null,
 };
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const navigate = useNavigate();
-  const [state, setState] = useState<AuthState>(INITIAL_STATE);
+// Initial state - loading true, not authenticated
+const INITIAL_STATE: AuthState = { ...LOGGED_OUT_STATE, isLoading: true };
 
-  // Refs for lifecycle tracking
-  const isMountedRef = useRef(true);
-  const hasInitializedRef = useRef(false);
-  // Track if login() is currently in progress to skip duplicate profile reload
-  const isLoginInProgressRef = useRef(false);
-
-  // ================================================================
-  // FORCE LOGOUT - Clears everything and redirects to login
-  // ================================================================
-  const forceLogout = useCallback(async (reason: string) => {
-    console.error('[AuthContext] Force logout:', reason);
-
-    try {
-      // Clear Supabase session
-      await supabase.auth.signOut();
-    } catch (err) {
-      console.error('[AuthContext] Error during signOut:', err);
-    }
-
-    // Clear localStorage auth-related items
-    try {
-      const keysToRemove: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.includes('supabase') || key.includes('auth') || key.includes('sb-'))) {
-          keysToRemove.push(key);
-        }
-      }
-      keysToRemove.forEach(key => localStorage.removeItem(key));
-    } catch (err) {
-      console.error('[AuthContext] Error clearing localStorage:', err);
-    }
-
-    // Set logged out state
-    if (isMountedRef.current) {
-      setState(LOGGED_OUT_STATE);
-    }
-
-    // Redirect to login
-    navigate('/login', { replace: true });
-  }, [navigate]);
-
-  // ================================================================
-  // BUILD AUTH STATE FROM PROFILE
-  // ================================================================
-  const buildAuthState = (
-    profile: UserProfile,
-    outlets: Outlet[],
-    selectedOutlet: string | null
-  ): AuthState => ({
+function buildAuthState(
+  profile: UserProfile,
+  outlets: Outlet[],
+  selectedOutlet: string | null
+): AuthState {
+  return {
     user: {
       id: profile.id,
       email: profile.email,
@@ -125,64 +83,136 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAdmin: profile.role === 'admin',
     isManager: profile.role === 'manager',
     isAccountant: profile.role === 'accountant',
+    authError: null,
+  };
+}
+
+/** Returns a user-facing logout reason, or null when the profile may use the app. */
+function validateProfile(profile: UserProfile | null | undefined): string | null {
+  if (!profile) return 'User profile not found. Please contact support.';
+  if (!profile.role) return 'Your account has no role assigned. Please contact admin.';
+  if (!VALID_ROLES.includes(profile.role)) return 'Your account has an invalid role. Please contact admin.';
+  if (!profile.is_active) return 'Your account has been deactivated. Please contact admin.';
+  return null;
+}
+
+/** Fetch the profile; rejects on timeout or network/query error, resolves null when there is no profile. */
+function fetchProfileWithTimeout(userId?: string): Promise<LoginResponse | null> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`Profile fetch timed out after ${PROFILE_FETCH_TIMEOUT_MS / 1000}s`));
+    }, PROFILE_FETCH_TIMEOUT_MS);
+
+    authService.getCurrentUserProfile(userId).then(
+      (response) => {
+        clearTimeout(timeoutId);
+        resolve(response);
+      },
+      (error: unknown) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      }
+    );
   });
+}
+
+/** Remove only the Supabase auth keys (session, PKCE verifier, user) from localStorage. */
+function clearSupabaseAuthStorage() {
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key === SUPABASE_AUTH_STORAGE_KEY || key.startsWith(SUPABASE_AUTH_STORAGE_KEY + '-'))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((key) => localStorage.removeItem(key));
+  } catch (err) {
+    console.error('[AuthContext] Error clearing auth storage:', err);
+  }
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
+  const [state, setState] = useState<AuthState>(INITIAL_STATE);
+
+  // Lifecycle / bookkeeping refs
+  const isMountedRef = useRef(true);
+  const hasInitializedRef = useRef(false);
+  const initDoneRef = useRef(false);
+  const isLoginInProgressRef = useRef(false);
+  const loadedUserIdRef = useRef<string | null>(null);
+  const lastProfileCheckRef = useRef(0);
+  const hasRecordedRestoreRef = useRef(false);
+
+  // useNavigate() changes identity on every navigation under BrowserRouter;
+  // keep the latest in a ref so the callbacks below stay stable.
+  const navigateRef = useRef(navigate);
+  useEffect(() => {
+    navigateRef.current = navigate;
+  }, [navigate]);
 
   // ================================================================
-  // FETCH PROFILE WITH TIMEOUT
+  // FORCE LOGOUT - Clears the session and redirects to login.
+  // 'local' ends only this browser's session; 'global' revokes every
+  // device (used when the account itself is unusable).
   // ================================================================
-  const fetchProfileWithTimeout = useCallback(async (): Promise<{
-    profile: UserProfile;
-    outlets: Outlet[];
-    selectedOutlet: string | null;
-  } | null> => {
-    return new Promise((resolve, reject) => {
-      // Set up timeout
-      const timeoutId = setTimeout(() => {
-        reject(new Error(`Profile fetch timed out after ${PROFILE_FETCH_TIMEOUT_MS}ms`));
-      }, PROFILE_FETCH_TIMEOUT_MS);
+  const forceLogout = useCallback(async (reason: string, scope: LogoutScope = 'local') => {
+    console.warn('[AuthContext] Logout:', reason, `(scope: ${scope})`);
 
-      // Attempt to fetch profile
-      authService.getCurrentUserProfile()
-        .then((response) => {
-          clearTimeout(timeoutId);
-          if (response && response.profile) {
-            resolve(response);
-          } else {
-            reject(new Error('Profile not found'));
-          }
-        })
-        .catch((error) => {
-          clearTimeout(timeoutId);
-          reject(error);
-        });
+    try {
+      const { error } = await supabase.auth.signOut({ scope });
+      if (error) console.error('[AuthContext] signOut error:', error.message);
+    } catch (err) {
+      console.error('[AuthContext] Error during signOut:', err);
+    }
+
+    // signOut keeps the session when the network call fails; make sure it is gone.
+    clearSupabaseAuthStorage();
+    loadedUserIdRef.current = null;
+    lastProfileCheckRef.current = 0;
+
+    if (isMountedRef.current) {
+      setState(LOGGED_OUT_STATE);
+    }
+
+    navigateRef.current('/login', { replace: true });
+  }, []);
+
+  // ================================================================
+  // APPLY A LOADED PROFILE (keeps the chosen outlet when still valid)
+  // ================================================================
+  const applyProfile = useCallback((response: LoginResponse) => {
+    loadedUserIdRef.current = response.profile.id;
+    lastProfileCheckRef.current = Date.now();
+    setState((prev) => {
+      const keepSelected =
+        prev.user?.id === response.profile.id &&
+        prev.selectedOutlet !== null &&
+        response.outlets.some((o) => o.id === prev.selectedOutlet);
+      return buildAuthState(
+        response.profile,
+        response.outlets,
+        keepSelected ? prev.selectedOutlet : response.selectedOutlet
+      );
     });
   }, []);
 
   // ================================================================
-  // INITIALIZE AUTH (RUNS ONCE ON MOUNT)
+  // INITIALIZE AUTH + SUBSCRIBE TO AUTH EVENTS
   // ================================================================
   useEffect(() => {
     isMountedRef.current = true;
 
-    // Guard against double initialization
-    if (hasInitializedRef.current) {
-      console.log('[AuthContext] Already initialized, skipping');
-      return;
-    }
-    hasInitializedRef.current = true;
-
-    // Main initialization function
     async function initializeAuth() {
-      console.log('[AuthContext] Initializing - explicitly calling getSession()...');
-
       try {
-        // ================================================================
-        // STEP 1: Explicitly call getSession() on mount
-        // ================================================================
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
         if (sessionError) {
-          console.warn('[AuthContext] Invalid session state - session error:', sessionError.message);
           if (isMountedRef.current) {
             await forceLogout('Session error: ' + sessionError.message);
           }
@@ -190,235 +220,206 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (!session) {
-          console.log('[AuthContext] No session found - user not logged in');
+          if (isMountedRef.current) setState(LOGGED_OUT_STATE);
+          return;
+        }
+
+        let response: LoginResponse | null;
+        try {
+          response = await fetchProfileWithTimeout(session.user.id);
+        } catch (profileError) {
+          // Network/timeout: keep the stored session and let the user retry.
+          console.error('[AuthContext] Profile load failed', profileError);
           if (isMountedRef.current) {
-            setState(LOGGED_OUT_STATE);
+            setState({
+              ...LOGGED_OUT_STATE,
+              authError: errorMessage(profileError, 'Could not load your profile.'),
+            });
           }
           return;
         }
 
-        console.log('[AuthContext] Session exists, validating profile...');
-
-        // ================================================================
-        // STEP 2: Load and validate user profile
-        // ================================================================
-        try {
-          const response = await fetchProfileWithTimeout();
-
-          if (!isMountedRef.current) return;
-
-          // ================================================================
-          // VALIDATION: Check if profile exists
-          // ================================================================
-          if (!response || !response.profile) {
-            console.warn('[AuthContext] Profile fetch failed - profile is null or undefined');
-            console.warn('[AuthContext] Invalid session state - session exists but no profile');
-            await forceLogout('Profile not found for authenticated user');
-            return;
-          }
-
-          // ================================================================
-          // VALIDATION: Check if role is present and valid
-          // ================================================================
-          const { profile } = response;
-          const validRoles = ['admin', 'manager', 'accountant'];
-
-          if (!profile.role) {
-            console.warn('[AuthContext] Profile fetch failed - role is missing');
-            console.warn('[AuthContext] Invalid session state - profile exists but role is null');
-            await forceLogout('User role is missing');
-            return;
-          }
-
-          if (!validRoles.includes(profile.role)) {
-            console.warn('[AuthContext] Profile fetch failed - invalid role:', profile.role);
-            console.warn('[AuthContext] Invalid session state - unrecognized role');
-            await forceLogout('Invalid user role: ' + profile.role);
-            return;
-          }
-
-          // ================================================================
-          // VALIDATION: Check if user is active
-          // ================================================================
-          if (!profile.is_active) {
-            console.warn('[AuthContext] Profile fetch failed - user is inactive');
-            console.warn('[AuthContext] Invalid session state - account deactivated');
-            await forceLogout('Account is deactivated');
-            return;
-          }
-
-          // ================================================================
-          // SUCCESS: Profile is valid
-          // ================================================================
-          console.log('[AuthContext] Profile validated successfully:', {
-            id: profile.id,
-            email: profile.email,
-            role: profile.role,
-            is_active: profile.is_active,
-          });
-
-          setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
-
-        } catch (profileError) {
-          console.error('[AuthContext] Profile load failed', profileError);
-
-          if (!isMountedRef.current) return;
-
-          // Set profile to null but don't force logout - allow app to continue
-          setState(prev => ({
-            ...prev,
-            profile: null,
-            isLoading: false,
-            isAuthenticated: true, // Session exists, just profile failed
-          }));
-        }
-      } catch (error) {
-        const errorMessage = (error as Error).message || 'Unknown error';
-        console.error('[AuthContext] Initialization error:', errorMessage);
-        console.warn('[AuthContext] Invalid session state - initialization failed');
-
         if (!isMountedRef.current) return;
 
-        await forceLogout('Initialization failed: ' + errorMessage);
+        const reason = validateProfile(response?.profile);
+        if (reason || !response) {
+          await forceLogout(reason ?? 'User profile not found.', 'global');
+          return;
+        }
+
+        applyProfile(response);
+
+        // Restored sessions also count as a login (fire-and-forget, once).
+        if (!hasRecordedRestoreRef.current) {
+          hasRecordedRestoreRef.current = true;
+          setTimeout(() => {
+            void authService.recordLogin();
+          }, 0);
+        }
+      } catch (error) {
+        console.error('[AuthContext] Initialization error:', error);
+        if (!isMountedRef.current) return;
+        await forceLogout('Initialization failed: ' + errorMessage(error, 'Unknown error'));
+      } finally {
+        initDoneRef.current = true;
       }
     }
 
-    // Run initialization
-    initializeAuth();
-
-    // Set up auth state change listener for RUNTIME changes only
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('[AuthContext] Auth event:', event);
-
-        // Skip INITIAL_SESSION - we handle it in initializeAuth
-        if (event === 'INITIAL_SESSION') {
-          console.log('[AuthContext] Skipping INITIAL_SESSION (handled by init)');
+    // Deferred profile re-check, run outside the auth lock.
+    async function reloadProfile(userId: string) {
+      if (!isMountedRef.current || isLoginInProgressRef.current) return;
+      try {
+        const response = await fetchProfileWithTimeout(userId);
+        if (!isMountedRef.current || isLoginInProgressRef.current) return;
+        const reason = validateProfile(response?.profile);
+        if (reason || !response) {
+          await forceLogout(reason ?? 'User profile not found.', 'global');
           return;
         }
-
-        // Skip if unmounted
-        if (!isMountedRef.current) return;
-
-        // Handle SIGNED_OUT
-        if (event === 'SIGNED_OUT') {
-          console.log('[AuthContext] Signed out event received');
-          setState(LOGGED_OUT_STATE);
-          navigate('/login', { replace: true });
-          return;
-        }
-
-        // If session becomes null
-        if (!session) {
-          console.warn('[AuthContext] Session null - forcing logout');
-          await forceLogout('Session became null');
-          return;
-        }
-
-        // SIGNED_IN or TOKEN_REFRESHED - reload profile
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          // Skip profile reload if login() is already handling it
-          if (isLoginInProgressRef.current) {
-            console.log('[AuthContext] Skipping profile reload - login in progress');
-            return;
-          }
-
-          console.log('[AuthContext] Session updated, reloading profile...');
-          try {
-            const response = await fetchProfileWithTimeout();
-            if (isMountedRef.current && response && response.profile) {
-              setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
-            }
-          } catch (err) {
-            console.error('[AuthContext] Profile reload error:', err);
-            // Don't force logout on profile reload failures - keep existing session
-            // The user is already authenticated, just couldn't refresh their profile
-            console.log('[AuthContext] Profile reload failed, keeping current session');
-          }
-        }
+        applyProfile(response);
+      } catch (err) {
+        // Network/timeout: keep the current session and state.
+        console.error('[AuthContext] Profile re-check failed, keeping current session:', err);
       }
-    );
+    }
 
-    // Cleanup
+    // StrictMode mounts effects twice; run the one-time init once but always
+    // (re)subscribe, since the cleanup below unsubscribes.
+    if (!hasInitializedRef.current) {
+      hasInitializedRef.current = true;
+      void initializeAuth();
+    }
+
+    // IMPORTANT: synchronous callback; never await Supabase calls here.
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION') return; // handled by initializeAuth
+      if (!isMountedRef.current) return;
+
+      if (event === 'SIGNED_OUT') {
+        loadedUserIdRef.current = null;
+        lastProfileCheckRef.current = 0;
+        setState(LOGGED_OUT_STATE);
+        navigateRef.current('/login', { replace: true });
+        return;
+      }
+
+      if (!session) {
+        setTimeout(() => {
+          void forceLogout('Session became null');
+        }, 0);
+        return;
+      }
+
+      if (event === 'PASSWORD_RECOVERY') {
+        setTimeout(() => {
+          navigateRef.current('/reset-password', { replace: true });
+        }, 0);
+      }
+
+      // initializeAuth / login() load the profile themselves.
+      if (!initDoneRef.current || isLoginInProgressRef.current) return;
+
+      const userId = session.user.id;
+      const isDifferentUser = userId !== loadedUserIdRef.current;
+      const isStale = Date.now() - lastProfileCheckRef.current > PROFILE_REVALIDATE_MS;
+
+      const shouldReload =
+        event === 'USER_UPDATED' ||
+        ((event === 'SIGNED_IN' || event === 'PASSWORD_RECOVERY') && isDifferentUser) ||
+        ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && isStale);
+
+      if (shouldReload) {
+        // Throttle repeated events while the reload is in flight.
+        lastProfileCheckRef.current = Date.now();
+        setTimeout(() => {
+          void reloadProfile(userId);
+        }, 0);
+      }
+    });
+
     return () => {
-      console.log('[AuthContext] Unmounting...');
       isMountedRef.current = false;
-      authListener?.subscription.unsubscribe();
+      data.subscription.unsubscribe();
     };
-  }, []); // Empty deps - run once on mount
+  }, [forceLogout, applyProfile]);
 
   // ================================================================
-  // LOGIN - Only navigates to dashboard AFTER profile is loaded
+  // LOGIN - Only navigates AFTER the profile is loaded and valid
   // ================================================================
-  const login = useCallback(async (email: string, password: string) => {
-    // Mark that login is in progress to prevent duplicate profile reloads from onAuthStateChange
+  const login = useCallback(async (email: string, password: string, redirectTo?: string) => {
     isLoginInProgressRef.current = true;
 
     try {
-      // This function returns profile data
       const response = await authService.login({ email, password });
 
-      // ONLY navigate if profile is successfully loaded
-      if (response && response.profile) {
-        setState(buildAuthState(response.profile, response.outlets, response.selectedOutlet));
-        navigate('/dashboard');
-      } else {
-        throw new Error('Login successful but profile not found');
+      const reason = validateProfile(response.profile);
+      if (reason) {
+        throw new authService.AccountUnavailableError(reason);
       }
+
+      applyProfile(response);
+      navigateRef.current(authService.safeRedirectPath(redirectTo), { replace: true });
     } catch (error) {
       console.error('[AuthContext] Login error:', error);
-      // On any login error, ensure clean state
-      await forceLogout((error as Error).message || 'Login failed');
-      throw error; // Re-throw to let the login form display the error
+      if (!(error instanceof authService.SignInError)) {
+        // A session was created but cannot be used: end it.
+        const scope: LogoutScope = error instanceof authService.AccountUnavailableError ? 'global' : 'local';
+        await forceLogout(errorMessage(error, 'Login failed'), scope);
+      }
+      throw error; // let the login form display the error
     } finally {
-      // Always reset the flag when login completes (success or failure)
       isLoginInProgressRef.current = false;
     }
-  }, [navigate, forceLogout]);
+  }, [forceLogout, applyProfile]);
 
   // ================================================================
-  // LOGOUT
+  // LOGOUT (this device only)
   // ================================================================
   const logout = useCallback(async () => {
-    await forceLogout('User initiated logout');
+    await forceLogout('User initiated logout', 'local');
   }, [forceLogout]);
 
   // ================================================================
-  // SET SELECTED OUTLET
-  // ================================================================
-  const setSelectedOutlet = useCallback((outletId: string | null) => {
-    setState(prev => ({ ...prev, selectedOutlet: outletId }));
-  }, []);
-
-  // ================================================================
-  // REFRESH PROFILE
+  // REFRESH PROFILE - re-fetch profile + outlets (e.g. after an admin
+  // changes outlets). Logs out only if the profile is now unusable; on a
+  // network/timeout error keeps the current state, sets authError and
+  // rethrows so the caller can tell the user.
   // ================================================================
   const refreshProfile = useCallback(async () => {
+    let response: LoginResponse | null;
     try {
-      const response = await fetchProfileWithTimeout();
-      if (response && response.profile) {
-        setState(prev => ({
-          ...buildAuthState(response.profile, response.outlets, response.selectedOutlet),
-          // Preserve selected outlet if not provided
-          selectedOutlet: response.selectedOutlet || prev.selectedOutlet,
-        }));
-      }
+      response = await fetchProfileWithTimeout(loadedUserIdRef.current ?? undefined);
     } catch (err) {
-      console.error('[AuthContext] Profile load failed', err);
-      // On refresh error, just set profile to null - don't force logout
-      setState(prev => ({
-        ...prev,
-        profile: null,
-      }));
+      console.error('[AuthContext] Profile refresh failed, keeping current state:', err);
+      if (isMountedRef.current) {
+        setState((prev) => ({ ...prev, authError: errorMessage(err, 'Could not refresh your profile.') }));
+      }
+      throw err;
     }
-  }, [fetchProfileWithTimeout, forceLogout]);
+
+    if (!isMountedRef.current) return;
+    const reason = validateProfile(response?.profile);
+    if (reason || !response) {
+      await forceLogout(reason ?? 'User profile not found.', 'global');
+      return;
+    }
+    applyProfile(response);
+  }, [forceLogout, applyProfile]);
 
   // ================================================================
-  // CONTEXT VALUE
+  // SET SELECTED OUTLET (must be one of the user's outlets)
   // ================================================================
+  const setSelectedOutlet = useCallback((outletId: string | null) => {
+    setState((prev) =>
+      outletId === null || prev.outlets.some((o) => o.id === outletId)
+        ? { ...prev, selectedOutlet: outletId }
+        : prev
+    );
+  }, []);
+
   const value: AuthContextValue = {
     ...state,
-    isAuthReady: !state.isLoading && state.isAuthenticated,
+    isAuthReady: !state.isLoading && state.isAuthenticated && state.user !== null,
     login,
     logout,
     setSelectedOutlet,

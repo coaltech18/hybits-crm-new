@@ -12,9 +12,12 @@ services:
   - type: web
     name: hybits-crm
     runtime: static
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     staticPublishPath: ./build
-    pullRequestPreviewsEnabled: true
+    # PR previews would run untrusted branch code against the PRODUCTION
+    # Supabase project (they inherit the VITE_* values). Keep them off
+    # unless previews get their own staging project.
+    pullRequestPreviewsEnabled: false
 
     # ================================================================
     # BUILD-TIME ENVIRONMENT (REQUIRED)
@@ -53,3 +56,31 @@ services:
       - type: rewrite
         source: /*
         destination: /index.html
+
+    # ================================================================
+    # SECURITY HEADERS
+    # ================================================================
+    # The Supabase session lives in localStorage, so XSS = account takeover.
+    # CSP allows only this site, Google Fonts and Supabase; no framing.
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=(), payment=()"
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=31536000; includeSubDomains
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable

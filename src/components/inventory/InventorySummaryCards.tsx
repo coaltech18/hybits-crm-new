@@ -1,4 +1,4 @@
-import { Card } from '@/components/ui/Card';
+import { cn } from '@/utils/cn';
 import type { InventoryItem } from '@/types';
 
 // ================================================================
@@ -24,36 +24,27 @@ export default function InventorySummaryCards({ items }: InventorySummaryCardsPr
   const totalLost = items.reduce((sum, item) => sum + item.lost_quantity, 0);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-      <Card>
-        <p className="text-sm text-muted-foreground">Total Items</p>
-        <p className="text-2xl font-bold">{totalItems}</p>
-      </Card>
+    <section
+      aria-label="Stock totals"
+      className="sheet grid grid-cols-2 gap-px overflow-hidden bg-rule sm:grid-cols-3 lg:grid-cols-6"
+    >
+      <Figure label="Items" value={totalItems} />
+      <Figure label="Total pieces" value={totalQuantity} />
+      <Figure label="Available" value={totalAvailable} tone="text-final" />
+      <Figure label="Allocated" value={totalAllocated} tone="text-info" />
+      <Figure label="Damaged" value={totalDamaged} tone="text-partial" />
+      <Figure label="Lost" value={totalLost} tone="text-overdue" />
+    </section>
+  );
+}
 
-      <Card>
-        <p className="text-sm text-muted-foreground">Total Quantity</p>
-        <p className="text-2xl font-bold">{totalQuantity}</p>
-      </Card>
-
-      <Card>
-        <p className="text-sm text-muted-foreground">Available</p>
-        <p className="text-2xl font-bold text-green-600">{totalAvailable}</p>
-      </Card>
-
-      <Card>
-        <p className="text-sm text-muted-foreground">Allocated</p>
-        <p className="text-2xl font-bold text-brand-primary">{totalAllocated}</p>
-      </Card>
-
-      <Card>
-        <p className="text-sm text-muted-foreground">Damaged</p>
-        <p className="text-2xl font-bold text-orange-600">{totalDamaged}</p>
-      </Card>
-
-      <Card>
-        <p className="text-sm text-muted-foreground">Lost</p>
-        <p className="text-2xl font-bold text-red-600">{totalLost}</p>
-      </Card>
+function Figure({ label, value, tone = 'text-ink' }: { label: string; value: number; tone?: string }) {
+  return (
+    <div className="min-w-0 bg-white px-5 py-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{label}</div>
+      <div className={cn('tabular mt-1 text-2xl font-bold tracking-tight', value === 0 ? 'text-ink-faint' : tone)}>
+        {new Intl.NumberFormat('en-IN').format(value)}
+      </div>
     </div>
   );
 }

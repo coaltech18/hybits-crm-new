@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
+import { FactWell, ModalActions } from '../ModalParts';
 import { writeOffInventoryV2 } from '@/services/inventoryMovementServiceV2';
 
 // ================================================================
@@ -51,6 +52,7 @@ export default function MarkDamagedModal({
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (loading) return;
         setError(null);
 
         const qty = parseInt(quantity);
@@ -91,55 +93,57 @@ export default function MarkDamagedModal({
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Mark Damaged (Warehouse)">
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Mark damaged"
+            description="For pieces damaged at the outlet. Client returns go through Receive back."
+            dismissable={!loading}
+        >
             <form onSubmit={handleSubmit} className="space-y-4">
                 {error && <Alert variant="error">{error}</Alert>}
 
-                {/* Item Info */}
-                <div className="bg-muted p-4 rounded">
-                    <p className="text-sm text-muted-foreground">Item</p>
-                    <p className="font-semibold">{itemName}</p>
-                    <p className="text-sm text-muted-foreground mt-2">Available Stock</p>
-                    <p className="text-lg font-bold text-green-600">{availableQuantity}</p>
-                </div>
+                <FactWell
+                    eyebrow="Item"
+                    title={itemName}
+                    facts={[{ label: 'Available', value: availableQuantity, tone: 'final' }]}
+                />
 
-                <Alert variant="warning">
-                    This action marks warehouse stock as damaged. Damaged items will be moved from
-                    available stock to the damaged pool. Use &quot;Receive Back → Damaged&quot; for
-                    client-returned damaged items.
-                </Alert>
-
-                {/* Quantity */}
                 <Input
                     type="number"
-                    label="Quantity"
+                    inputMode="numeric"
+                    label="Damaged pieces"
                     value={quantity}
                     onChange={(e) => setQuantity(e.target.value)}
                     min="1"
                     max={availableQuantity}
                     required
-                    placeholder={`Max: ${availableQuantity}`}
+                    placeholder={`Up to ${availableQuantity}`}
+                    className="tabular"
                 />
 
-                {/* Notes (REQUIRED) */}
                 <Textarea
-                    label="Notes (required)"
+                    label="What happened"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Describe how the damage occurred..."
+                    placeholder="Describe how the damage occurred"
+                    helperText="Required"
                     required
                     rows={3}
                 />
 
-                {/* Buttons */}
-                <div className="flex justify-end gap-2 pt-4">
+                <Alert variant="warning">
+                    These pieces move from available stock to damaged stock.
+                </Alert>
+
+                <ModalActions>
                     <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
                         Cancel
                     </Button>
-                    <Button type="submit" disabled={loading} variant="destructive">
-                        {loading ? 'Processing...' : 'Mark as Damaged'}
+                    <Button type="submit" isLoading={loading} variant="danger">
+                        {loading ? 'Saving…' : 'Mark damaged'}
                     </Button>
-                </div>
+                </ModalActions>
             </form>
         </Modal>
     );

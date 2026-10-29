@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { ClipboardCheck, Plus } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import {
     getAudits,
     canCreateAudit,
@@ -9,21 +11,16 @@ import {
     type AuditStatus,
 } from '@/services/inventoryAuditService';
 import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { Spinner } from '@/components/ui/Spinner';
+import { Button, LinkButton } from '@/components/ui/Button';
+import { TableSkeleton } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
-import {
-    ClipboardCheck,
-    Plus,
-    Eye,
-    Clock,
-    CheckCircle,
-    XCircle,
-    AlertCircle,
-    FileText,
-    Calendar,
-} from 'lucide-react';
+import { Select } from '@/components/ui/Select';
+import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { AuditStatusBadge } from '@/components/inventory/AuditStatus';
+import { ModalActions } from '@/components/inventory/ModalParts';
+import { cn } from '@/utils/cn';
 
 // ================================================================
 // INVENTORY AUDIT PAGE
@@ -34,9 +31,19 @@ import {
 // - Navigate to audit detail
 // ================================================================
 
+const AUDIT_STATUSES: AuditStatus[] = ['draft', 'counting', 'review', 'pending_approval', 'approved', 'rejected'];
+
+function getCurrentPeriod(): string {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export default function InventoryAuditPage() {
+    useDocumentTitle('Stock audits');
     const { user, outlets, isAuthReady } = useAuth();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const initialStatus = searchParams.get('status') as AuditStatus | null;
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -48,12 +55,16 @@ export default function InventoryAuditPage() {
     const [createPeriod, setCreatePeriod] = useState(getCurrentPeriod());
     const [createLoading, setCreateLoading] = useState(false);
     const [createError, setCreateError] = useState<string | null>(null);
-    const [canCreate, setCanCreate] = useState(true);
+    // False until the eligibility check for the chosen outlet + period returns
+    const [canCreate, setCanCreate] = useState(false);
     const [canCreateReason, setCanCreateReason] = useState<string | null>(null);
 
     // Filters
     const [filterOutletId, setFilterOutletId] = useState('');
-    const [filterStatus, setFilterStatus] = useState<AuditStatus | ''>('');
+    // ?status= deep link (e.g. "Review Now" from the Overview)
+    const [filterStatus, setFilterStatus] = useState<AuditStatus | ''>(
+        initialStatus && AUDIT_STATUSES.includes(initialStatus) ? initialStatus : ''
+    );
 
     const userRole = user?.role || '';
     const isAdmin = userRole === 'admin';
@@ -61,23 +72,7 @@ export default function InventoryAuditPage() {
     const showOutletFilter = userRole === 'admin' || userRole === 'accountant';
     const availableOutlets = outlets || [];
 
-    useEffect(() => {
-        if (!isAuthReady) return;
-        loadAudits();
-    }, [isAuthReady, filterOutletId, filterStatus]);
-
-    useEffect(() => {
-        if (createOutletId && createPeriod) {
-            checkCanCreate();
-        }
-    }, [createOutletId, createPeriod]);
-
-    function getCurrentPeriod(): string {
-        const now = new Date();
-        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    }
-
-    async function loadAudits() {
+    const loadAudits = useCallback(async () => {
         if (!user?.id) return;
 
         try {
@@ -95,23 +90,39 @@ export default function InventoryAuditPage() {
         } finally {
             setLoading(false);
         }
-    }
+    }, [user?.id, filterOutletId, filterStatus]);
 
-    async function checkCanCreate() {
+    useEffect(() => {
+        if (!isAuthReady) return;
+        loadAudits();
+    }, [isAuthReady, loadAudits]);
+
+    useEffect(() => {
+        // A new outlet/period is not eligible until its own check says so
+        setCanCreate(false);
+        setCanCreateReason(null);
         if (!user?.id || !createOutletId || !createPeriod) return;
-
-        try {
-            const result = await canCreateAudit(user.id, createOutletId, createPeriod);
-            setCanCreate(result.canCreate);
-            setCanCreateReason(result.reason || null);
-        } catch (err) {
-            setCanCreate(false);
-            setCanCreateReason('Failed to check eligibility');
-        }
-    }
+        let stale = false;
+        canCreateAudit(user.id, createOutletId, createPeriod)
+            .then((result) => {
+                if (stale) return;
+                setCanCreate(result.canCreate);
+                setCanCreateReason(result.reason || null);
+            })
+            .catch((err: unknown) => {
+                if (stale) return;
+                setCanCreate(false);
+                setCanCreateReason(
+                    `Failed to check eligibility: ${err instanceof Error ? err.message : 'unknown error'}`
+                );
+            });
+        return () => {
+            stale = true;
+        };
+    }, [user?.id, createOutletId, createPeriod]);
 
     async function handleCreateAudit() {
-        if (!user?.id || !createOutletId || !createPeriod) return;
+        if (!user?.id || !createOutletId || !createPeriod || createLoading) return;
 
         try {
             setCreateLoading(true);
@@ -128,25 +139,6 @@ export default function InventoryAuditPage() {
             setCreateError(err instanceof Error ? err.message : 'Failed to create audit');
         } finally {
             setCreateLoading(false);
-        }
-    }
-
-    function getStatusBadge(status: AuditStatus) {
-        switch (status) {
-            case 'draft':
-                return <Badge variant="secondary"><FileText className="w-3 h-3 mr-1" /> Draft</Badge>;
-            case 'counting':
-                return <Badge variant="default" className="bg-blue-500"><Clock className="w-3 h-3 mr-1" /> Counting</Badge>;
-            case 'review':
-                return <Badge variant="default" className="bg-purple-500"><Eye className="w-3 h-3 mr-1" /> Review</Badge>;
-            case 'pending_approval':
-                return <Badge variant="default" className="bg-yellow-500"><AlertCircle className="w-3 h-3 mr-1" /> Pending Approval</Badge>;
-            case 'approved':
-                return <Badge variant="default" className="bg-green-500"><CheckCircle className="w-3 h-3 mr-1" /> Approved</Badge>;
-            case 'rejected':
-                return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" /> Rejected</Badge>;
-            default:
-                return <Badge variant="secondary">{status}</Badge>;
         }
     }
 
@@ -177,277 +169,287 @@ export default function InventoryAuditPage() {
         return periods;
     }
 
-    if (loading && audits.length === 0) {
-        return (
-            <div className="flex items-center justify-center min-h-[400px]">
-                <Spinner size="lg" />
-            </div>
-        );
+    function closeCreateModal() {
+        setShowCreateModal(false);
+        setCreateError(null);
     }
 
+    const pendingCount = audits.filter((a) => a.status === 'pending_approval').length;
+    const filtered = !!(filterOutletId || filterStatus);
+    const firstLoad = loading && audits.length === 0;
+
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-3xl font-bold flex items-center gap-2">
-                        <ClipboardCheck className="w-8 h-8" />
-                        Monthly Audit
-                    </h1>
-                    <p className="text-muted-foreground mt-1">
-                        Physical count reconciliation and stock adjustments
-                    </p>
-                </div>
+        <div>
+            <PageHeader
+                title="Stock audits"
+                description="Monthly physical counts, reconciled against the system and approved before stock is adjusted."
+                actions={
+                    !isAccountant ? (
+                        <Button onClick={() => setShowCreateModal(true)}>
+                            <Plus className="h-4 w-4" aria-hidden="true" />
+                            New audit
+                        </Button>
+                    ) : undefined
+                }
+            />
 
-                {!isAccountant && (
-                    <Button onClick={() => setShowCreateModal(true)}>
-                        <Plus className="w-4 h-4 mr-2" />
-                        New Audit
-                    </Button>
-                )}
-            </div>
+            {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
-            {error && <Alert variant="error">{error}</Alert>}
-
-            {/* Pending Approvals Alert (Admin) */}
-            {isAdmin && audits.filter((a) => a.status === 'pending_approval').length > 0 && (
-                <Alert variant="warning" className="flex items-center gap-2">
-                    <AlertCircle className="w-5 h-5" />
-                    <span>
-                        <strong>{audits.filter((a) => a.status === 'pending_approval').length}</strong> audit(s)
-                        pending your approval with negative variances.
-                    </span>
+            {/* Pending approvals (admin) */}
+            {isAdmin && pendingCount > 0 && (
+                <Alert variant="warning" className="mb-6">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <span>
+                            <strong className="font-semibold">{pendingCount}</strong> audit{pendingCount === 1 ? ' is' : 's are'}{' '}
+                            waiting for your approval.
+                        </span>
+                        {filterStatus !== 'pending_approval' && (
+                            <button
+                                type="button"
+                                onClick={() => setFilterStatus('pending_approval')}
+                                className="font-semibold underline underline-offset-2 hover:no-underline"
+                            >
+                                Show only these
+                            </button>
+                        )}
+                    </div>
                 </Alert>
             )}
 
             {/* Filters */}
-            <Card>
-                <h3 className="font-semibold mb-4">Filters</h3>
-                <div className="flex flex-wrap gap-4">
+            <Card padding="sm" className="mb-4">
+                <div className="flex flex-wrap items-end gap-3">
                     {showOutletFilter && (
-                        <div>
-                            <label className="block text-sm font-medium mb-1">Outlet</label>
-                            <select
+                        <div className="w-full sm:w-56">
+                            <Select
+                                label="Outlet"
                                 value={filterOutletId}
                                 onChange={(e) => setFilterOutletId(e.target.value)}
-                                className="px-3 py-2 border rounded-lg min-w-[200px]"
                             >
-                                <option value="">All Outlets</option>
+                                <option value="">All outlets</option>
                                 {availableOutlets.map((outlet) => (
                                     <option key={outlet.id} value={outlet.id}>
                                         {outlet.name}
                                     </option>
                                 ))}
-                            </select>
+                            </Select>
                         </div>
                     )}
 
-                    <div>
-                        <label className="block text-sm font-medium mb-1">Status</label>
-                        <select
+                    <div className="w-full sm:w-56">
+                        <Select
+                            label="Status"
                             value={filterStatus}
                             onChange={(e) => setFilterStatus(e.target.value as AuditStatus | '')}
-                            className="px-3 py-2 border rounded-lg min-w-[200px]"
                         >
-                            <option value="">All Statuses</option>
+                            <option value="">All statuses</option>
                             <option value="counting">Counting</option>
-                            <option value="review">Review</option>
-                            <option value="pending_approval">Pending Approval</option>
+                            <option value="review">In review</option>
+                            <option value="pending_approval">Submitted</option>
                             <option value="approved">Approved</option>
                             <option value="rejected">Rejected</option>
-                        </select>
+                        </Select>
                     </div>
                 </div>
             </Card>
 
-            {/* Audits List */}
-            <Card>
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-semibold">Audits</h3>
-                    <p className="text-sm text-muted-foreground">{audits.length} audit(s)</p>
-                </div>
+            {/* Count line */}
+            {!firstLoad && audits.length > 0 && (
+                <p className="mb-3 text-sm text-ink-muted">
+                    {audits.length} audit{audits.length === 1 ? '' : 's'}
+                    {pendingCount > 0 && ` · ${pendingCount} awaiting approval`}
+                </p>
+            )}
 
-                {audits.length === 0 ? (
-                    <div className="text-center py-12">
-                        <ClipboardCheck className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                        <p className="text-muted-foreground">No audits found</p>
-                        {!isAccountant && (
-                            <Button onClick={() => setShowCreateModal(true)} className="mt-4">
-                                <Plus className="w-4 h-4 mr-2" />
-                                Start First Audit
-                            </Button>
-                        )}
-                    </div>
+            {/* Audits ledger */}
+            <Card padding="none" className="overflow-hidden">
+                {firstLoad ? (
+                    <TableSkeleton rows={6} cols={showOutletFilter ? 6 : 5} />
+                ) : audits.length === 0 ? (
+                    <EmptyState
+                        icon={ClipboardCheck}
+                        title={filtered ? 'No audits match these filters' : 'No audits yet'}
+                        description={
+                            filtered
+                                ? 'Clear a filter to see more audits.'
+                                : isAccountant
+                                  ? 'Audits appear here once a manager starts a monthly count.'
+                                  : 'Start an audit to generate a count sheet for every active item at an outlet.'
+                        }
+                        action={!isAccountant && !filtered ? { label: 'Start an audit', onClick: () => setShowCreateModal(true) } : undefined}
+                    />
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead className="border-b">
+                    <div className={cn('overflow-x-auto', loading && 'opacity-60 transition-opacity')} aria-busy={loading || undefined}>
+                        <table className="ledger">
+                            <thead>
                                 <tr>
-                                    <th className="text-left py-3 px-4">Period</th>
-                                    {showOutletFilter && <th className="text-left py-3 px-4">Outlet</th>}
-                                    <th className="text-center py-3 px-4">Status</th>
-                                    <th className="text-center py-3 px-4">Progress</th>
-                                    <th className="text-right py-3 px-4">Variance (+/-)</th>
-                                    <th className="text-left py-3 px-4">Created</th>
-                                    <th className="text-center py-3 px-4">Actions</th>
+                                    <th scope="col">Period</th>
+                                    {showOutletFilter && <th scope="col">Outlet</th>}
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Counted</th>
+                                    <th scope="col" className="text-right">Variance</th>
+                                    <th scope="col">Started</th>
+                                    <th scope="col" data-nolabel className="w-px"><span className="sr-only">Action</span></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {audits.map((audit) => (
-                                    <tr key={audit.id} className="border-b hover:bg-muted/50">
-                                        <td className="py-3 px-4">
-                                            <div className="flex items-center gap-2">
-                                                <Calendar className="w-4 h-4 text-muted-foreground" />
-                                                <span className="font-medium">{getPeriodLabel(audit.period)}</span>
-                                            </div>
-                                        </td>
-                                        {showOutletFilter && (
-                                            <td className="py-3 px-4 text-sm">{audit.outlet_name}</td>
-                                        )}
-                                        <td className="py-3 px-4 text-center">
-                                            {getStatusBadge(audit.status)}
-                                        </td>
-                                        <td className="py-3 px-4 text-center">
-                                            <div className="flex items-center justify-center gap-2">
-                                                <div className="w-20 h-2 rounded-full bg-gray-200 overflow-hidden">
-                                                    <div
-                                                        className="h-full bg-brand-primary transition-all"
-                                                        style={{ width: `${audit.progress_percentage || 0}%` }}
-                                                    />
+                                {audits.map((audit) => {
+                                    const inProgress = audit.status === 'counting' || audit.status === 'review';
+                                    const settled = audit.status === 'approved' || audit.status === 'pending_approval';
+                                    const pct = Math.max(0, Math.min(100, audit.progress_percentage || 0));
+                                    return (
+                                        <tr key={audit.id}>
+                                            <td>
+                                                <div className="inline-block max-w-full align-top">
+                                                    <Link
+                                                        to={`/inventory/audit/${audit.id}`}
+                                                        className="serial font-semibold text-ink hover:text-brand-primary"
+                                                    >
+                                                        {audit.period}
+                                                    </Link>
+                                                    <span className="block text-xs text-ink-muted">{getPeriodLabel(audit.period)}</span>
                                                 </div>
-                                                <span className="text-xs text-muted-foreground">
-                                                    {audit.items_counted}/{audit.items_total}
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td className="py-3 px-4 text-right">
-                                            {audit.status === 'approved' || audit.status === 'pending_approval' ? (
-                                                <div className="flex items-center justify-end gap-2">
-                                                    {audit.variance_positive > 0 && (
-                                                        <span className="text-green-600">+{audit.variance_positive}</span>
-                                                    )}
-                                                    {audit.variance_negative < 0 && (
-                                                        <span className="text-red-600">{audit.variance_negative}</span>
-                                                    )}
-                                                    {audit.variance_positive === 0 && audit.variance_negative === 0 && (
-                                                        <span className="text-muted-foreground">0</span>
-                                                    )}
-                                                </div>
-                                            ) : (
-                                                <span className="text-muted-foreground">-</span>
+                                            </td>
+                                            {showOutletFilter && (
+                                                <td>
+                                                    <div>
+                                                        <span className="block text-ink">{audit.outlet_name}</span>
+                                                        {audit.outlet_code && (
+                                                            <span className="serial block text-xs text-ink-muted">{audit.outlet_code}</span>
+                                                        )}
+                                                    </div>
+                                                </td>
                                             )}
-                                        </td>
-                                        <td className="py-3 px-4 text-sm">
-                                            <div>
-                                                <p>{formatDate(audit.created_at)}</p>
-                                                <p className="text-xs text-muted-foreground">
-                                                    by {audit.created_by_name}
-                                                </p>
-                                            </div>
-                                        </td>
-                                        <td className="py-3 px-4 text-center">
-                                            <Link to={`/inventory/audit/${audit.id}`}>
-                                                <Button variant="ghost" size="sm">
-                                                    <Eye className="w-4 h-4 mr-1" />
-                                                    {audit.status === 'counting' || audit.status === 'review' ? 'Continue' : 'View'}
-                                                </Button>
-                                            </Link>
-                                        </td>
-                                    </tr>
-                                ))}
+                                            <td>
+                                                <AuditStatusBadge status={audit.status} />
+                                            </td>
+                                            <td>
+                                                <span className="flex items-center gap-2 whitespace-nowrap">
+                                                    <span className="relative block h-2 w-20 rounded-full bg-paper-sunk" aria-hidden="true">
+                                                        <span
+                                                            className={cn(
+                                                                'absolute inset-y-0 left-0 rounded-full',
+                                                                pct >= 100 ? 'bg-final' : 'bg-brand-logo'
+                                                            )}
+                                                            style={{ width: `${pct}%` }}
+                                                        />
+                                                    </span>
+                                                    <span className="tabular text-sm text-ink-muted">
+                                                        {audit.items_counted}/{audit.items_total}
+                                                    </span>
+                                                </span>
+                                            </td>
+                                            <td className="text-right">
+                                                {settled ? (
+                                                    <VarianceSummary plus={audit.variance_positive} minus={audit.variance_negative} />
+                                                ) : (
+                                                    <span className="text-ink-faint">—</span>
+                                                )}
+                                            </td>
+                                            <td className="whitespace-nowrap">
+                                                <div>
+                                                    <span className="block text-ink">{formatDate(audit.created_at)}</span>
+                                                    {audit.created_by_name && (
+                                                        <span className="block text-xs text-ink-muted">by {audit.created_by_name}</span>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="text-right">
+                                                {inProgress && !isAccountant ? (
+                                                    <LinkButton to={`/inventory/audit/${audit.id}`} variant="outline" size="sm">
+                                                        Continue counting
+                                                    </LinkButton>
+                                                ) : audit.status === 'pending_approval' && isAdmin ? (
+                                                    <LinkButton to={`/inventory/audit/${audit.id}`} variant="outline" size="sm">
+                                                        Review
+                                                    </LinkButton>
+                                                ) : null}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
                 )}
             </Card>
 
-            {/* Create Audit Modal */}
-            {showCreateModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                            <ClipboardCheck className="w-5 h-5" />
-                            Start New Audit
-                        </h3>
+            {/* Create audit */}
+            <Modal
+                isOpen={showCreateModal}
+                onClose={closeCreateModal}
+                title="Start a stock audit"
+                description="Counts one outlet's dishware for one month."
+                dismissable={!createLoading}
+            >
+                <div className="space-y-4">
+                    {createError && <Alert variant="error">{createError}</Alert>}
 
-                        {createError && <Alert variant="error" className="mb-4">{createError}</Alert>}
+                    <Select
+                        label="Outlet"
+                        value={createOutletId}
+                        onChange={(e) => setCreateOutletId(e.target.value)}
+                        required
+                    >
+                        <option value="">Select outlet</option>
+                        {availableOutlets.map((outlet) => (
+                            <option key={outlet.id} value={outlet.id}>
+                                {outlet.name}
+                            </option>
+                        ))}
+                    </Select>
 
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium mb-1">
-                                    Outlet <span className="text-red-500">*</span>
-                                </label>
-                                <select
-                                    value={createOutletId}
-                                    onChange={(e) => setCreateOutletId(e.target.value)}
-                                    className="w-full px-3 py-2 border rounded-lg"
-                                    required
-                                >
-                                    <option value="">Select Outlet</option>
-                                    {availableOutlets.map((outlet) => (
-                                        <option key={outlet.id} value={outlet.id}>
-                                            {outlet.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
+                    <Select
+                        label="Period"
+                        value={createPeriod}
+                        onChange={(e) => setCreatePeriod(e.target.value)}
+                        required
+                    >
+                        {getAvailablePeriods().map((period) => (
+                            <option key={period} value={period}>
+                                {getPeriodLabel(period)}
+                            </option>
+                        ))}
+                    </Select>
 
-                            <div>
-                                <label className="block text-sm font-medium mb-1">
-                                    Period <span className="text-red-500">*</span>
-                                </label>
-                                <select
-                                    value={createPeriod}
-                                    onChange={(e) => setCreatePeriod(e.target.value)}
-                                    className="w-full px-3 py-2 border rounded-lg"
-                                    required
-                                >
-                                    {getAvailablePeriods().map((period) => (
-                                        <option key={period} value={period}>
-                                            {getPeriodLabel(period)}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
+                    {!canCreate && canCreateReason && <Alert variant="warning">{canCreateReason}</Alert>}
 
-                            {!canCreate && canCreateReason && (
-                                <Alert variant="warning" className="text-sm">
-                                    {canCreateReason}
-                                </Alert>
-                            )}
-
-                            <div className="bg-muted/50 p-3 rounded-lg text-sm">
-                                <p className="font-medium mb-1">What happens:</p>
-                                <ul className="list-disc list-inside text-muted-foreground space-y-1">
-                                    <li>A count sheet is generated for all active items</li>
-                                    <li>System quantities are snapshotted</li>
-                                    <li>You can enter physical counts and review variances</li>
-                                    <li>Adjustments are created only after approval</li>
-                                </ul>
-                            </div>
-                        </div>
-
-                        <div className="flex justify-end gap-2 mt-6">
-                            <Button
-                                variant="outline"
-                                onClick={() => {
-                                    setShowCreateModal(false);
-                                    setCreateError(null);
-                                }}
-                                disabled={createLoading}
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                onClick={handleCreateAudit}
-                                disabled={!createOutletId || !createPeriod || !canCreate || createLoading}
-                            >
-                                {createLoading ? 'Creating...' : 'Start Audit'}
-                            </Button>
-                        </div>
+                    <div className="rounded-lg border border-rule bg-paper px-4 py-3 text-sm">
+                        <p className="font-semibold text-ink">What happens next</p>
+                        <ol className="mt-1.5 list-inside list-decimal space-y-1 text-ink-muted">
+                            <li>A count sheet is made for every active item.</li>
+                            <li>System quantities are frozen as of now.</li>
+                            <li>You enter physical counts and explain each variance.</li>
+                            <li>Stock is adjusted only after approval.</li>
+                        </ol>
                     </div>
+
+                    <ModalActions>
+                        <Button variant="outline" type="button" onClick={closeCreateModal} disabled={createLoading}>
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            onClick={handleCreateAudit}
+                            isLoading={createLoading}
+                            disabled={!createOutletId || !createPeriod || !canCreate || createLoading}
+                        >
+                            {createLoading ? 'Starting…' : 'Start audit'}
+                        </Button>
+                    </ModalActions>
                 </div>
-            )}
+            </Modal>
         </div>
+    );
+}
+
+/** Surplus in green, shortage in red, a quiet zero when the count matched. */
+function VarianceSummary({ plus, minus }: { plus: number; minus: number }) {
+    if (plus === 0 && minus === 0) return <span className="tabular text-ink-muted">0</span>;
+    return (
+        <span className="tabular inline-flex items-center justify-end gap-3 font-semibold">
+            {plus > 0 && <span className="text-final">+{plus}</span>}
+            {minus < 0 && <span className="text-overdue">−{Math.abs(minus)}</span>}
+        </span>
     );
 }

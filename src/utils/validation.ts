@@ -7,7 +7,7 @@
 /**
  * Validate GSTIN format (15 characters)
  * Format: 2-digit state code + 10-digit PAN + 1 check digit + Z + 1 alphanumeric
- * Example: 27AABCU9603R1ZV
+ * Example: 27AAPFU0939F1ZV
  */
 export function validateGSTIN(gstin: string): { valid: boolean; error?: string } {
   if (!gstin || gstin.trim() === '') {
@@ -30,16 +30,46 @@ export function validateGSTIN(gstin: string): { valid: boolean; error?: string }
   if (!gstinPattern.test(trimmed)) {
     return {
       valid: false,
-      error: 'Invalid GSTIN format. Example: 27AABCU9603R1ZV',
+      error: 'Invalid GSTIN format. Example: 27AAPFU0939F1ZV',
+    };
+  }
+
+  // State code: 01-38, or 97 (Other Territory)
+  const stateCode = parseInt(trimmed.slice(0, 2), 10);
+  if (!((stateCode >= 1 && stateCode <= 38) || stateCode === 97)) {
+    return {
+      valid: false,
+      error: 'Invalid GSTIN state code (first two digits)',
+    };
+  }
+
+  // Check digit (15th character): GSTN mod-36 checksum
+  if (computeGstinCheckChar(trimmed) !== trimmed[14]) {
+    return {
+      valid: false,
+      error: 'Invalid GSTIN check digit. Please re-check the number.',
     };
   }
 
   return { valid: true };
 }
 
+const GSTIN_CHARSET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+/** Compute the GSTIN check character from the first 14 characters. */
+function computeGstinCheckChar(gstin: string): string {
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    const v = GSTIN_CHARSET.indexOf(gstin[i]) * (i % 2 ? 2 : 1);
+    sum += Math.floor(v / 36) + (v % 36);
+  }
+  return GSTIN_CHARSET[(36 - (sum % 36)) % 36];
+}
+
 /**
  * Validate Indian phone number
- * Accepts: 10 digits, with optional +91 or 91 prefix
+ * Accepts: 10-digit mobile (6-9 start) with optional +91 or 91 prefix,
+ * or an 11-digit landline with STD code (leading 0, e.g. 080-12345678)
  */
 export function validatePhone(phone: string): { valid: boolean; error?: string } {
   if (!phone || phone.trim() === '') {
@@ -54,6 +84,7 @@ export function validatePhone(phone: string): { valid: boolean; error?: string }
     /^[6-9]\d{9}$/, // 10 digits starting with 6-9
     /^\+91[6-9]\d{9}$/, // +91 prefix
     /^91[6-9]\d{9}$/, // 91 prefix
+    /^0\d{10}$/, // landline with STD code
   ];
 
   const isValid = patterns.some(pattern => pattern.test(cleaned));
@@ -61,7 +92,7 @@ export function validatePhone(phone: string): { valid: boolean; error?: string }
   if (!isValid) {
     return {
       valid: false,
-      error: 'Invalid phone number. Must be 10 digits starting with 6-9',
+      error: 'Invalid phone number. Use a 10-digit mobile starting with 6-9, or a landline with STD code (e.g. 080-12345678)',
     };
   }
 

@@ -114,6 +114,7 @@ export interface CreateClientInput {
   email?: string;
   gstin?: string;
   billing_address?: string;
+  gst_type?: ClientGstType | null; // GST classification (corporate only; NULL = domestic)
 }
 
 // Update Client Input (partial updates allowed)
@@ -213,6 +214,8 @@ export interface AuthState {
   isAdmin: boolean;
   isManager: boolean;
   isAccountant: boolean;
+  /** Set when a stored session exists but the profile could not be loaded (network/timeout). */
+  authError: string | null;
 }
 
 // ================================================================
@@ -253,6 +256,17 @@ export interface FormErrors {
 export type SubscriptionStatus = 'active' | 'paused' | 'cancelled';
 export type BillingCycle = 'daily' | 'weekly' | 'monthly';
 
+// Questionnaire answers captured on a subscription (reference only, not used for pricing).
+export interface SubscriptionQuestionnaire {
+  daily_volume?: string | number;
+  peak_challenges?: string;
+  has_washing_facility?: boolean;
+  esg_priority?: string;
+  additional_context?: string;
+  standard_kit?: { inventory_item_id: string; item_name?: string | null; quantity: number }[];
+  [key: string]: unknown;
+}
+
 export interface Subscription {
   id: string;
   outlet_id: string;
@@ -266,7 +280,7 @@ export interface Subscription {
   price_per_unit: number;
   next_billing_date: string; // ISO date string
   notes: string | null;
-  questionnaire: Record<string, any> | null; // V1: Reference-only, not used for pricing
+  questionnaire: SubscriptionQuestionnaire | null; // V1: Reference-only, not used for pricing
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -288,21 +302,22 @@ export interface CreateSubscriptionInput {
   quantity: number;
   price_per_unit: number; // V1: Manual entry, required
   notes: string; // V1: Required for pricing justification
-  questionnaire?: Record<string, any>; // V1: Optional reference data
+  questionnaire?: SubscriptionQuestionnaire; // V1: Optional reference data
   // V1: Standard dishware kit (optional, for ops planning)
   inventoryItems?: Array<{
     inventoryItemId: string;
+    itemName?: string;
     quantity: number;
   }>;
 }
 
 export interface UpdateSubscriptionInput {
   billing_cycle?: BillingCycle;
-  billing_day?: number;
+  billing_day?: number | null;
   quantity?: number;
   price_per_unit?: number;
   notes?: string;
-  questionnaire?: Record<string, any>; // V1: Optional reference data
+  questionnaire?: SubscriptionQuestionnaire; // V1: Optional reference data
   price_change_reason?: string; // Required when price_per_unit changes
   // Admin-only fields
   outlet_id?: string;
@@ -332,7 +347,8 @@ export interface SubscriptionPriceHistory {
 // EVENT TYPES (PHASE 4)
 // ================================================================
 
-export type EventStatus = 'planned' | 'completed' | 'cancelled' | 'archived';
+// Matches the Postgres enum event_status (004). There is no 'archived' value.
+export type EventStatus = 'planned' | 'completed' | 'cancelled';
 
 export interface Event {
   id: string;
@@ -369,9 +385,9 @@ export interface UpdateEventInput {
   event_name?: string;
   event_type?: string;
   event_date?: string; // ISO date string
-  guest_count?: number;
+  guest_count?: number | null; // null clears it
   notes?: string;
-  status?: EventStatus;
+  // Status changes go through completeEvent / cancelEvent only.
   // Admin-only fields
   outlet_id?: string;
   client_id?: string;
@@ -411,6 +427,8 @@ export interface Invoice {
   client_id: string;
   outlet_id: string;
   event_id: string | null;
+  /** Subscription this invoice bills (042). Null on event invoices and older rows. */
+  subscription_id?: string | null;
   status: InvoiceStatus;
   subtotal: number;
   tax_total: number;
@@ -421,6 +439,12 @@ export interface Invoice {
   created_at: string;
   updated_at: string;
   created_by: string | null;
+  /** Snapshot of the bill-to party taken at finalization (042). Null on drafts and pre-042 rows. */
+  client_name_snap?: string | null;
+  client_gstin_snap?: string | null;
+  client_address_snap?: string | null;
+  client_gst_type_snap?: ClientGstType | null;
+  supplier_gstin_snap?: string | null;
   // Joined data
   clients?: Client;
   outlets?: Outlet;
@@ -438,11 +462,18 @@ export interface CreateInvoiceItemInput {
   tax_rate: number;
 }
 
+/** A draft line on edit: `id` is set for rows that already exist in invoice_items. */
+export interface UpdateInvoiceItemInput extends CreateInvoiceItemInput {
+  id?: string;
+}
+
 export interface CreateInvoiceInput {
   invoice_type: InvoiceType;
   client_id: string;
   outlet_id: string;
   event_id?: string | null;
+  /** Subscription being billed (subscription invoices only; 042). */
+  subscription_id?: string | null;
   items: CreateInvoiceItemInput[];
   terms_and_conditions?: string;
   invoice_number_format?: string;
@@ -453,7 +484,7 @@ export interface CreateInvoiceInput {
 export interface UpdateInvoiceInput {
   status?: InvoiceStatus;
   // Editable fields (draft only)
-  items?: CreateInvoiceItemInput[];
+  items?: UpdateInvoiceItemInput[];
   terms_and_conditions?: string;
   /** Invoice date (YYYY-MM-DD). Draft only. */
   issued_at?: string | null;
@@ -503,7 +534,13 @@ export interface Payment {
   client_phone?: string;
   outlet_name?: string;
   outlet_code?: string;
+  outlet_id?: string; // from payments_with_details (migration 042)
   recorded_by_name?: string;
+  // Void trail (payments columns from migration 043; attached by paymentService)
+  void_reason?: string | null;
+  voided_by?: string | null;
+  voided_at?: string | null;
+  voided_by_name?: string | null;
 }
 
 export interface CreatePaymentInput {
@@ -515,21 +552,14 @@ export interface CreatePaymentInput {
   notes?: string;
 }
 
-export interface UpdatePaymentInput {
-  amount?: number;
-  payment_method?: PaymentMethod;
-  payment_date?: string;
-  reference_number?: string;
-  notes?: string;
-}
-
 export interface PaymentFilters {
   invoice_id?: string;
   payment_method?: PaymentMethod;
   date_from?: string;
   date_to?: string;
-  outlet_id?: string;
-  is_active?: boolean; // Show deleted payments
+  outlet_id?: string; // needs payments_with_details.outlet_id (migration 042)
+  is_active?: boolean;
+  include_inactive?: boolean; // Show deleted (voided) payments as well
 }
 
 // ================================================================
@@ -537,7 +567,18 @@ export interface PaymentFilters {
 // ================================================================
 
 // Movement type enum
-export type MovementType = 'stock_in' | 'allocation' | 'return' | 'damage' | 'loss' | 'adjustment';
+export type MovementType =
+  | 'stock_in'
+  | 'allocation'
+  | 'return'
+  | 'damage'
+  | 'loss'
+  | 'adjustment'
+  // V2 values (035a)
+  | 'return_damaged'
+  | 'disposal'
+  | 'send_to_repair'
+  | 'return_from_repair';
 
 // Reference type enum (already defined, but including for inventory context)
 export type ReferenceType = 'subscription' | 'event' | 'manual';
@@ -556,6 +597,10 @@ export interface InventoryItem {
   damaged_quantity: number;
   lost_quantity: number;
   is_active: boolean;
+  // V2 columns (024); select('*') returns them
+  in_repair_quantity?: number;
+  lifecycle_status?: 'draft' | 'active' | 'discontinued' | 'archived';
+  opening_balance_confirmed?: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -570,6 +615,8 @@ export interface InventoryMovement {
   outlet_id: string;
   inventory_item_id: string;
   movement_type: MovementType;
+  movement_category?: string; // V2: inflow | outflow | return | writeoff | adjustment | repair
+  reason_code?: string | null;
   quantity: number;
   reference_type: ReferenceType;
   reference_id: string | null;
@@ -587,6 +634,7 @@ export interface InventoryMovement {
 // Inventory allocation
 export interface InventoryAllocation {
   id: string;
+  allocation_id?: string; // inventory_allocations_with_details exposes ia.id AS allocation_id
   outlet_id: string;
   inventory_item_id: string;
   reference_type: ReferenceType;
@@ -603,6 +651,18 @@ export interface InventoryAllocation {
   outstanding_quantity?: number; // DERIVED from movements
 }
 
+// Row of view reference_allocation_history (042). Unlike
+// inventory_allocations_with_details it keeps closed (is_active = false)
+// allocations and splits what came back by outcome.
+export interface InventoryAllocationHistory extends InventoryAllocation {
+  allocation_id: string;
+  returned_good: number;
+  returned_damaged: number;
+  lost: number;
+  disposed: number;
+  outstanding_quantity: number;
+}
+
 // Create inventory item input
 export interface CreateInventoryItemInput {
   outlet_id: string;
@@ -617,7 +677,7 @@ export interface CreateInventoryItemInput {
 export interface UpdateInventoryItemInput {
   name?: string;
   category?: string;
-  material?: string;
+  material?: string | null; // null clears it
   unit?: string;
 }
 
@@ -681,7 +741,10 @@ export interface AdjustInventoryInput {
 export interface InventoryFilters {
   outlet_id?: string;
   category?: string;
-  is_active?: boolean;
+  is_active?: boolean | 'all'; // undefined = active only
+  has_damaged?: boolean; // damaged_quantity > 0
+  in_repair?: boolean; // in_repair_quantity > 0
+  opening_unlocked?: boolean; // opening_balance_confirmed = false
 }
 
 // Movement filters
@@ -845,6 +908,7 @@ export interface GSTWorkingReportRow {
   as_per_your_invoice: number; // Column F
   taxable_value: number; // Column G
   rate: number; // Column H
+  rate_label?: string | null; // e.g. "5% + 18%" for mixed-rate invoices (added by a later migration)
   igst: number; // Column I
   cgst: number; // Column J
   sgst: number; // Column K

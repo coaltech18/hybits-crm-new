@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
-import type { OutletSummary } from '@/services/adminOutletService';
+import type { OutletDetails } from '@/services/adminOutletService';
+import { Modal } from '@/components/ui/Modal';
+import { Input } from '@/components/ui/Input';
+import { Textarea } from '@/components/ui/Textarea';
+import { Button } from '@/components/ui/Button';
+import { Alert } from '@/components/ui/Alert';
 
 // ================================================================
 // ADD / EDIT OUTLET MODAL
@@ -12,7 +16,8 @@ interface AddEditOutletModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: OutletFormData) => Promise<void>;
-  outlet?: OutletSummary | null;
+  /** Full outlet row (phone/email included) so editing never blanks them. */
+  outlet?: OutletDetails | null;
   mode: 'create' | 'edit';
 }
 
@@ -46,12 +51,12 @@ export function AddEditOutletModal({
   useEffect(() => {
     if (isOpen && outlet && mode === 'edit') {
       setFormData({
-        name: outlet.outlet_name,
-        code: outlet.outlet_code,
-        city: outlet.city,
+        name: outlet.name,
+        code: outlet.code,
+        city: outlet.city || '',
         address: outlet.address || '',
-        phone: '',
-        email: '',
+        phone: outlet.phone || '',
+        email: outlet.email || '',
       });
     } else if (isOpen && mode === 'create') {
       setFormData({
@@ -87,138 +92,91 @@ export function AddEditOutletModal({
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white  rounded-lg shadow-xl max-w-2xl w-full">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b ">
-          <h2 className="text-lg font-semibold">
-            {mode === 'create' ? 'Add New Outlet' : 'Edit Outlet'}
-          </h2>
-          <button
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="text-brand-text/60 hover:text-brand-text "
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={mode === 'create' ? 'Add outlet' : 'Edit outlet'}
+      description={
+        mode === 'create'
+          ? 'A new branch. Clients, invoices and stock are kept per outlet.'
+          : `Outlet ${outlet?.code ?? ''}`.trim()
+      }
+      maxWidth="2xl"
+      dismissable={!isSubmitting}
+    >
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {error && <Alert variant="error">{error}</Alert>}
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-600 dark:text-red-400 text-sm">
-              {error}
-            </div>
-          )}
-
-          {/* Name */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Outlet Name <span className="text-red-500">*</span>
-            </label>
-            <input
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <Input
+              label="Outlet name"
               type="text"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50"
               required
             />
           </div>
 
-          {/* Code */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Outlet Code <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={formData.code}
-              onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
-              disabled={mode === 'edit' || isSubmitting}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50 disabled:bg-brand-bg uppercase"
-              placeholder="e.g., MUM01, DEL01"
-              required
-            />
-            {mode === 'edit' && (
-              <p className="text-xs text-brand-text/60 mt-1">Code cannot be changed</p>
-            )}
-          </div>
+          <Input
+            label="Outlet code"
+            type="text"
+            value={formData.code}
+            onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+            disabled={mode === 'edit' || isSubmitting}
+            className="serial uppercase"
+            placeholder="e.g. MUM01, DEL01"
+            helperText={mode === 'edit' ? 'The code cannot be changed.' : 'Short and unique. Printed on records.'}
+            required
+          />
 
-          {/* City */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              City <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={formData.city}
-              onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-              disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50"
-              required
-            />
-          </div>
+          <Input
+            label="City"
+            type="text"
+            value={formData.city}
+            onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+            disabled={isSubmitting}
+            required
+          />
 
-          {/* Address */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Address</label>
-            <textarea
+          <div className="md:col-span-2">
+            <Textarea
+              label="Address"
               value={formData.address}
               onChange={(e) => setFormData({ ...formData, address: e.target.value })}
               disabled={isSubmitting}
               rows={3}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50"
             />
           </div>
 
-          {/* Phone */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Phone</label>
-            <input
-              type="tel"
-              value={formData.phone}
-              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-              disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50"
-            />
-          </div>
+          <Input
+            label="Phone"
+            type="tel"
+            value={formData.phone}
+            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+            disabled={isSubmitting}
+          />
 
-          {/* Email */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Email</label>
-            <input
-              type="email"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50"
-            />
-          </div>
+          <Input
+            label="Email"
+            type="email"
+            value={formData.email}
+            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            disabled={isSubmitting}
+          />
+        </div>
 
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t ">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-4 py-2 border border-brand-border rounded-md hover:bg-brand-bg disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark disabled:opacity-50"
-            >
-              {isSubmitting ? 'Saving...' : mode === 'create' ? 'Create Outlet' : 'Save Changes'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div className="flex flex-col-reverse gap-2 border-t border-rule pt-4 sm:flex-row sm:justify-end">
+          <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+            Cancel
+          </Button>
+          <Button type="submit" isLoading={isSubmitting}>
+            {isSubmitting ? 'Saving…' : mode === 'create' ? 'Create outlet' : 'Save changes'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

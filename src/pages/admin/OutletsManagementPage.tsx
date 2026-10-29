@@ -1,34 +1,44 @@
-import { useState, useEffect } from 'react';
-import { Building2, Plus, Edit, Power, Trash2, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Building2, Plus, Pencil, Power, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import {
   getOutlets,
+  getOutletDetails,
   createOutlet,
   updateOutlet,
   deactivateOutlet,
   activateOutlet,
   canDeactivateOutlet,
-  deleteOutlet,
-  canDeleteOutlet,
   type OutletSummary,
+  type OutletDetails,
   type CreateOutletInput,
   type UpdateOutletInput,
 } from '@/services/adminOutletService';
 import { AddEditOutletModal, type OutletFormData } from '@/components/admin/AddEditOutletModal';
 import { ConfirmationModal } from '@/components/admin/ConfirmationModal';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Skeleton, TableSkeleton } from '@/components/ui/Spinner';
+import { cn } from '@/utils/cn';
 
 // ================================================================
 // OUTLETS MANAGEMENT PAGE (ADMIN ONLY)
 // ================================================================
-// Manage outlets with operational metrics
+// Manage outlets with operational metrics.
+// Outlets are never deleted (DB trigger blocks it); deactivate instead.
 // ================================================================
 
 export default function OutletsManagementPage() {
-  useDocumentTitle('Outlet Management');
+  useDocumentTitle('Outlets');
 
-  const { user } = useAuth();
+  // refreshProfile reloads AuthContext.outlets (the list every outlet picker reads).
+  const { user, refreshProfile } = useAuth();
+  const userId = user?.id;
   const { showToast } = useToast();
   const [outlets, setOutlets] = useState<OutletSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,39 +47,42 @@ export default function OutletsManagementPage() {
 
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingOutlet, setEditingOutlet] = useState<OutletDetails | null>(null);
+  const [loadingEditId, setLoadingEditId] = useState<string | null>(null);
   const [isToggleModalOpen, setIsToggleModalOpen] = useState(false);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [selectedOutlet, setSelectedOutlet] = useState<OutletSummary | null>(null);
   const [toggleAction, setToggleAction] = useState<'activate' | 'deactivate'>('deactivate');
   const [deactivateWarning, setDeactivateWarning] = useState<string>('');
-  const [deleteWarning, setDeleteWarning] = useState<string>('');
+  const [checkingDeactivate, setCheckingDeactivate] = useState(false);
+  const toggleCheckSeq = useRef(0);
 
-  useEffect(() => {
-    loadOutlets();
-  }, [user]);
-
-  async function loadOutlets() {
-    if (!user?.id) return;
+  const loadOutlets = useCallback(async () => {
+    if (!userId) return;
 
     try {
       setLoading(true);
       setError(null);
-      const data = await getOutlets(user.id);
+      const data = await getOutlets(userId);
       setOutlets(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load outlets');
     } finally {
       setLoading(false);
     }
-  }
+  }, [userId]);
+
+  // Keyed on the user id, not the user object: token refreshes rebuild the
+  // object and must not refetch (or unmount open modals).
+  useEffect(() => {
+    loadOutlets();
+  }, [loadOutlets]);
 
   async function handleRefresh() {
-    if (!user?.id) return;
+    if (!userId || refreshing) return;
     try {
       setRefreshing(true);
       setError(null);
-      const data = await getOutlets(user.id);
+      const data = await getOutlets(userId);
       setOutlets(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to refresh outlets');
@@ -78,8 +91,18 @@ export default function OutletsManagementPage() {
     }
   }
 
+  /** Outlet pickers elsewhere read AuthContext.outlets; reload them. */
+  async function syncAuthOutlets() {
+    try {
+      await refreshProfile();
+    } catch (err) {
+      console.error('Failed to refresh outlet list after change:', err);
+      showToast('Saved, but other pages may show the old outlet list until you reload.', 'warning');
+    }
+  }
+
   async function handleCreateOutlet(formData: OutletFormData) {
-    if (!user?.id) return;
+    if (!userId) return;
 
     const input: CreateOutletInput = {
       name: formData.name,
@@ -90,13 +113,15 @@ export default function OutletsManagementPage() {
       email: formData.email,
     };
 
-    await createOutlet(user.id, input);
+    // Errors propagate to the modal, which shows them inline
+    await createOutlet(userId, input);
     showToast('Outlet created successfully', 'success');
     await loadOutlets();
+    await syncAuthOutlets();
   }
 
   async function handleEditOutlet(formData: OutletFormData) {
-    if (!user?.id || !selectedOutlet) return;
+    if (!userId || !editingOutlet) return;
 
     const input: UpdateOutletInput = {
       name: formData.name,
@@ -106,256 +131,238 @@ export default function OutletsManagementPage() {
       email: formData.email,
     };
 
-    await updateOutlet(user.id, selectedOutlet.outlet_id, input);
+    await updateOutlet(userId, editingOutlet.id, input);
     showToast('Outlet updated successfully', 'success');
     await loadOutlets();
+    await syncAuthOutlets();
   }
 
-  async function handleToggleStatus() {
-    if (!user?.id || !selectedOutlet) return;
-
-    if (toggleAction === 'deactivate') {
-      await deactivateOutlet(user.id, selectedOutlet.outlet_id);
-      showToast('Outlet deactivated', 'success');
-    } else {
-      await activateOutlet(user.id, selectedOutlet.outlet_id);
-      showToast('Outlet activated', 'success');
+  async function openEditModal(outlet: OutletSummary) {
+    if (!userId || loadingEditId) return;
+    try {
+      setLoadingEditId(outlet.outlet_id);
+      // The summary view has no phone/email; load the full row so the
+      // form shows (and keeps) the stored values.
+      const details = await getOutletDetails(userId, outlet.outlet_id);
+      setEditingOutlet(details);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to load outlet', 'error');
+    } finally {
+      setLoadingEditId(null);
     }
+  }
 
-    await loadOutlets();
+  function closeToggleModal() {
+    toggleCheckSeq.current++; // ignore any in-flight check
     setIsToggleModalOpen(false);
     setSelectedOutlet(null);
     setDeactivateWarning('');
+    setCheckingDeactivate(false);
   }
 
-  async function handleDeleteOutlet() {
-    if (!user?.id || !selectedOutlet) return;
+  async function handleToggleStatus() {
+    if (!userId || !selectedOutlet) return;
 
+    // A failure is thrown to ConfirmationModal, which stays open and shows it inline.
     try {
-      await deleteOutlet(user.id, selectedOutlet.outlet_id);
-      showToast('Outlet deleted permanently', 'success');
-      await loadOutlets();
-      setIsDeleteModalOpen(false);
-      setSelectedOutlet(null);
-      setDeleteWarning('');
+      if (toggleAction === 'deactivate') {
+        await deactivateOutlet(userId, selectedOutlet.outlet_id);
+        showToast('Outlet deactivated', 'success');
+      } else {
+        await activateOutlet(userId, selectedOutlet.outlet_id);
+        showToast('Outlet activated', 'success');
+      }
     } catch (err) {
-      setDeleteWarning(err instanceof Error ? err.message : 'Failed to delete outlet');
+      throw err instanceof Error ? err : new Error(`Failed to ${toggleAction} outlet`);
     }
+
+    closeToggleModal();
+    await loadOutlets();
+    await syncAuthOutlets();
   }
 
   async function openToggleModal(outlet: OutletSummary, action: 'activate' | 'deactivate') {
+    const seq = ++toggleCheckSeq.current;
     setSelectedOutlet(outlet);
     setToggleAction(action);
-
-    // Check if outlet can be deactivated
-    if (action === 'deactivate' && user?.id) {
-      try {
-        const validation = await canDeactivateOutlet(user.id, outlet.outlet_id);
-        if (!validation.canDeactivate) {
-          setDeactivateWarning(validation.reason || 'Cannot deactivate outlet');
-        } else {
-          setDeactivateWarning('');
-        }
-      } catch (err) {
-        setDeactivateWarning(
-          err instanceof Error ? err.message : 'Failed to validate outlet'
-        );
-      }
-    }
-
+    setDeactivateWarning('');
     setIsToggleModalOpen(true);
-  }
 
-  async function openDeleteModal(outlet: OutletSummary) {
-    setSelectedOutlet(outlet);
-    setDeleteWarning('');
-
-    // Check if outlet can be deleted
-    if (user?.id) {
-      try {
-        const validation = await canDeleteOutlet(user.id, outlet.outlet_id);
-        if (!validation.canDelete) {
-          setDeleteWarning(validation.reason || 'Cannot delete outlet');
-        }
-      } catch (err) {
-        setDeleteWarning(err instanceof Error ? err.message : 'Failed to validate');
-      }
+    if (action !== 'deactivate' || !userId) {
+      setCheckingDeactivate(false);
+      return;
     }
 
-    setIsDeleteModalOpen(true);
+    // Check if outlet can be deactivated; ignore results for a stale outlet
+    setCheckingDeactivate(true);
+    let warning = '';
+    try {
+      const validation = await canDeactivateOutlet(userId, outlet.outlet_id);
+      if (!validation.canDeactivate) {
+        warning = validation.reason || 'Cannot deactivate outlet';
+      }
+    } catch (err) {
+      warning = err instanceof Error ? err.message : 'Failed to validate outlet';
+    }
+    if (seq !== toggleCheckSeq.current) return;
+    setDeactivateWarning(warning);
+    setCheckingDeactivate(false);
   }
 
-  const totalUsers = outlets.reduce((sum, o) => sum + o.user_count, 0);
+  // user_count is per outlet, so a manager with several outlets is counted
+  // once per outlet: this is a count of assignments, not of people.
+  const totalAssignments = outlets.reduce((sum, o) => sum + o.user_count, 0);
   const totalClients = outlets.reduce((sum, o) => sum + o.client_count, 0);
   const totalSubscriptions = outlets.reduce((sum, o) => sum + o.active_subscription_count, 0);
-  const totalInventory = outlets.reduce((sum, o) => sum + o.allocated_inventory_count, 0);
+  const totalAllocations = outlets.reduce((sum, o) => sum + o.allocated_inventory_count, 0);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto"></div>
-          <p className="mt-4 text-brand-text/70">Loading outlets...</p>
-        </div>
-      </div>
-    );
-  }
+  const toggleMessage =
+    toggleAction === 'activate'
+      ? `Are you sure you want to activate ${selectedOutlet?.outlet_name}?`
+      : checkingDeactivate
+        ? `Checking whether ${selectedOutlet?.outlet_name} can be deactivated…`
+        : deactivateWarning
+          ? `${deactivateWarning}\n\nPlease resolve these issues before deactivating.`
+          : `Are you sure you want to deactivate ${selectedOutlet?.outlet_name}?\n\nIt will be removed from outlet lists across the app. Existing clients, invoices and reports are kept, and managers keep their assignment so the outlet can be reactivated later.`;
+
+  const first = loading && outlets.length === 0;
+  const n = (v: number) => new Intl.NumberFormat('en-IN').format(v);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Building2 className="w-8 h-8" />
-            Outlet Management
-          </h1>
-          <p className="text-brand-text/70 mt-1">
-            Manage outlets and operational metrics
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-2 px-4 py-2 border border-brand-border text-brand-text rounded-md hover:bg-brand-bg disabled:opacity-50"
-            title="Refresh from database"
-          >
-            <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-          <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark"
-          >
-            <Plus className="w-5 h-5" />
-            Add Outlet
-          </button>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        title="Outlets"
+        description="Branches, with live counts of users, clients, subscriptions and dishware out. Outlets are deactivated, never deleted."
+        actions={
+          <>
+            <Button type="button" onClick={() => setIsAddModalOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add outlet
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              aria-label="Refresh outlets"
+              title="Refresh from database"
+            >
+              <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} aria-hidden="true" />
+            </Button>
+          </>
+        }
+      />
 
-      {error && (
-        <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      )}
+      {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Total Outlets</p>
-          <p className="text-2xl font-bold">{outlets.length}</p>
+      <section className="sheet overflow-hidden" aria-labelledby="outlets-h">
+        <div className="border-b border-rule px-5 py-4">
+          <h2 id="outlets-h" className="text-lg font-semibold text-ink">All outlets</h2>
+          {first ? (
+            <Skeleton className="mt-1.5 h-4 w-72 max-w-full" />
+          ) : (
+            <p className="tabular text-sm text-ink-muted">
+              {n(outlets.length)} outlet{outlets.length === 1 ? '' : 's'} · {n(totalAssignments)} user assignment
+              {totalAssignments === 1 ? '' : 's'} · {n(totalClients)} clients · {n(totalSubscriptions)} active
+              subscriptions · {n(totalAllocations)} active allocations
+            </p>
+          )}
         </div>
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Total Users</p>
-          <p className="text-2xl font-bold text-brand-primary">{totalUsers}</p>
-        </div>
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Total Clients</p>
-          <p className="text-2xl font-bold text-brand-text">{totalClients}</p>
-        </div>
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Active Subscriptions</p>
-          <p className="text-2xl font-bold text-brand-primary">{totalSubscriptions}</p>
-        </div>
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Allocated Inventory</p>
-          <p className="text-2xl font-bold text-brand-text">{totalInventory}</p>
-        </div>
-      </div>
 
-      {/* Outlets Table */}
-      <div className="bg-white rounded-lg border border-brand-border overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-brand-bg border-b border-brand-border">
-              <tr>
-                <th className="text-left py-3 px-4 font-medium">Outlet</th>
-                <th className="text-left py-3 px-4 font-medium">Code</th>
-                <th className="text-left py-3 px-4 font-medium">City</th>
-                <th className="text-center py-3 px-4 font-medium">Users</th>
-                <th className="text-center py-3 px-4 font-medium">Clients</th>
-                <th className="text-center py-3 px-4 font-medium">Subscriptions</th>
-                <th className="text-center py-3 px-4 font-medium">Inventory</th>
-                <th className="text-left py-3 px-4 font-medium">Status</th>
-                <th className="text-right py-3 px-4 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-border">
-              {outlets.map((outlet) => (
-                <tr key={outlet.outlet_id} className="hover:bg-brand-primary/5">
-                  <td className="py-3 px-4 font-medium">{outlet.outlet_name}</td>
-                  <td className="py-3 px-4">
-                    <span className="font-mono text-sm bg-brand-bg px-2 py-1 rounded text-brand-text">
-                      {outlet.outlet_code}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-sm text-brand-text/70">
-                    {outlet.city}
-                  </td>
-                  <td className="py-3 px-4 text-center text-sm">{outlet.user_count}</td>
-                  <td className="py-3 px-4 text-center text-sm">{outlet.client_count}</td>
-                  <td className="py-3 px-4 text-center text-sm">
-                    {outlet.active_subscription_count}
-                  </td>
-                  <td className="py-3 px-4 text-center text-sm">
-                    {outlet.allocated_inventory_count}
-                  </td>
-                  <td className="py-3 px-4">
-                    {outlet.is_active ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-brand-primary/20 text-brand-primary">
-                        Active
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                        Inactive
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => {
-                          setSelectedOutlet(outlet);
-                          setIsEditModalOpen(true);
-                        }}
-                        className="p-1.5 text-brand-primary hover:bg-brand-primary/10 rounded"
-                        title="Edit Outlet"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      {outlet.is_active ? (
-                        <button
-                          onClick={() => openToggleModal(outlet, 'deactivate')}
-                          className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                          title="Deactivate Outlet"
-                        >
-                          <Power className="w-4 h-4" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => openToggleModal(outlet, 'activate')}
-                          className="p-1.5 text-brand-primary hover:bg-brand-primary/10 rounded"
-                          title="Activate Outlet"
-                        >
-                          <Power className="w-4 h-4" />
-                        </button>
-                      )}
-                      <button
-                        onClick={() => openDeleteModal(outlet)}
-                        className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                        title="Delete Outlet"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
+        {first ? (
+          <TableSkeleton rows={5} cols={6} />
+        ) : outlets.length === 0 ? (
+          <EmptyState
+            icon={Building2}
+            title="No outlets yet"
+            description="Add the first outlet. Every client, invoice and stock item belongs to one."
+            action={{ label: 'Add outlet', onClick: () => setIsAddModalOpen(true) }}
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="ledger">
+              <thead>
+                <tr>
+                  <th scope="col">Outlet</th>
+                  <th scope="col" className="text-right" title="Counted per outlet: a manager on two outlets counts in both">
+                    Users
+                  </th>
+                  <th scope="col" className="text-right">Clients</th>
+                  <th scope="col" className="text-right">Subscriptions</th>
+                  <th scope="col" className="text-right">Allocations</th>
+                  <th scope="col">Status</th>
+                  <th scope="col" data-nolabel className="w-px text-right"><span className="sr-only">Actions</span></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              </thead>
+              <tbody>
+                {outlets.map((outlet) => (
+                  <tr key={outlet.outlet_id} className={cn(!outlet.is_active && 'row-void')}>
+                    <td>
+                      <div className="inline-block max-w-full align-top">
+                        <span className={cn('block font-semibold', outlet.is_active ? 'text-ink' : 'text-void')}>
+                          {outlet.outlet_name}
+                        </span>
+                        <span className="block text-sm text-ink-muted">
+                          <span className="serial">{outlet.outlet_code}</span>
+                          {outlet.city ? ` · ${outlet.city}` : ''}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="tabular text-right">{n(outlet.user_count)}</td>
+                    <td className="tabular text-right">{n(outlet.client_count)}</td>
+                    <td className="tabular text-right">{n(outlet.active_subscription_count)}</td>
+                    <td className="tabular text-right">{n(outlet.allocated_inventory_count)}</td>
+                    <td>
+                      {outlet.is_active ? <Badge variant="final">Active</Badge> : <Badge variant="void">Inactive</Badge>}
+                    </td>
+                    <td>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditModal(outlet)}
+                          disabled={loadingEditId !== null}
+                          isLoading={loadingEditId === outlet.outlet_id}
+                          aria-label={`Edit ${outlet.outlet_name}`}
+                        >
+                          {loadingEditId !== outlet.outlet_id && <Pencil className="h-4 w-4" aria-hidden="true" />}
+                          Edit
+                        </Button>
+                        {outlet.is_active ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openToggleModal(outlet, 'deactivate')}
+                            className="text-danger hover:bg-danger-tint hover:text-danger"
+                            aria-label={`Deactivate ${outlet.outlet_name}`}
+                          >
+                            <Power className="h-4 w-4" aria-hidden="true" />
+                            Deactivate
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openToggleModal(outlet, 'activate')}
+                            className="text-brand-primary hover:text-brand-primaryDark"
+                            aria-label={`Activate ${outlet.outlet_name}`}
+                          >
+                            <Power className="h-4 w-4" aria-hidden="true" />
+                            Activate
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* Add Outlet Modal */}
       <AddEditOutletModal
@@ -367,54 +374,23 @@ export default function OutletsManagementPage() {
 
       {/* Edit Outlet Modal */}
       <AddEditOutletModal
-        isOpen={isEditModalOpen}
-        onClose={() => {
-          setIsEditModalOpen(false);
-          setSelectedOutlet(null);
-        }}
+        isOpen={editingOutlet !== null}
+        onClose={() => setEditingOutlet(null)}
         onSubmit={handleEditOutlet}
-        outlet={selectedOutlet}
+        outlet={editingOutlet}
         mode="edit"
       />
 
       {/* Toggle Status Confirmation */}
       <ConfirmationModal
         isOpen={isToggleModalOpen}
-        onClose={() => {
-          setIsToggleModalOpen(false);
-          setSelectedOutlet(null);
-          setDeactivateWarning('');
-        }}
+        onClose={closeToggleModal}
         onConfirm={handleToggleStatus}
-        title={toggleAction === 'activate' ? 'Activate Outlet' : 'Deactivate Outlet'}
-        message={
-          toggleAction === 'activate'
-            ? `Are you sure you want to activate ${selectedOutlet?.outlet_name}?`
-            : deactivateWarning
-              ? `${deactivateWarning}\n\nPlease resolve these issues before deactivating.`
-              : `Are you sure you want to deactivate ${selectedOutlet?.outlet_name}?\n\nThis outlet will no longer be accessible.`
-        }
+        title={toggleAction === 'activate' ? 'Activate outlet?' : 'Deactivate outlet?'}
+        message={toggleMessage}
         confirmText={toggleAction === 'activate' ? 'Activate' : 'Deactivate'}
         variant={deactivateWarning ? 'warning' : toggleAction === 'activate' ? 'info' : 'danger'}
-      />
-
-      {/* Delete Confirmation */}
-      <ConfirmationModal
-        isOpen={isDeleteModalOpen}
-        onClose={() => {
-          setIsDeleteModalOpen(false);
-          setSelectedOutlet(null);
-          setDeleteWarning('');
-        }}
-        onConfirm={handleDeleteOutlet}
-        title="Delete Outlet Permanently"
-        message={
-          deleteWarning
-            ? `${deleteWarning}\n\nPlease remove all linked data before deleting.`
-            : `Are you sure you want to permanently delete ${selectedOutlet?.outlet_name}?\n\nThis action cannot be undone.`
-        }
-        confirmText="Delete"
-        variant={deleteWarning ? 'warning' : 'danger'}
+        confirmDisabled={toggleAction === 'deactivate' && (checkingDeactivate || !!deactivateWarning)}
       />
     </div>
   );

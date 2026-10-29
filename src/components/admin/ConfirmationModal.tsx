@@ -1,22 +1,40 @@
-import { X } from 'lucide-react';
+import { useEffect, useId, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AlertTriangle, Info } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
+import { Alert } from '@/components/ui/Alert';
+import { useDialog } from '@/components/ui/Modal';
+import { cn } from '@/utils/cn';
 
 // ================================================================
 // CONFIRMATION MODAL (REUSABLE)
 // ================================================================
-// Generic confirmation dialog for destructive actions
+// Generic confirmation dialog for destructive actions, built on the
+// same accessible behaviour as ConfirmDialog (portal, focus trap,
+// Escape, focus restored; initial focus on Cancel).
+// onConfirm may be async: the modal awaits it, disables its buttons while
+// it runs, and shows any thrown error inline instead of swallowing it.
 // ================================================================
 
 interface ConfirmationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<unknown>;
   title: string;
   message: string;
   confirmText?: string;
   cancelText?: string;
   variant?: 'danger' | 'warning' | 'info';
   isLoading?: boolean;
+  /** Keep the confirm button disabled (e.g. a blocking warning is shown). */
+  confirmDisabled?: boolean;
 }
+
+const tone = {
+  danger: { ring: 'bg-danger-tint text-danger', button: 'danger' as const, Icon: AlertTriangle },
+  warning: { ring: 'bg-partial-tint text-partial', button: 'primary' as const, Icon: AlertTriangle },
+  info: { ring: 'bg-info-tint text-info', button: 'primary' as const, Icon: Info },
+};
 
 export function ConfirmationModal({
   isOpen,
@@ -28,55 +46,82 @@ export function ConfirmationModal({
   cancelText = 'Cancel',
   variant = 'danger',
   isLoading = false,
+  confirmDisabled = false,
 }: ConfirmationModalProps) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const working = busy || isLoading;
+  const panelRef = useDialog(isOpen, onClose, !working);
+  const titleId = useId();
+  const msgId = useId();
+
+  useEffect(() => {
+    if (isOpen) setError(null);
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const variantStyles = {
-    danger: 'bg-red-600 hover:bg-red-700',
-    warning: 'bg-orange-600 hover:bg-orange-700',
-    info: 'bg-brand-primary hover:bg-brand-primaryDark',
+  const handleConfirm = async () => {
+    if (working || confirmDisabled) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onConfirm();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Action failed');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white  rounded-lg shadow-xl max-w-md w-full">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b ">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <button
-            onClick={onClose}
-            disabled={isLoading}
-            className="text-brand-text/60 hover:text-brand-text"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+  const t = tone[variant];
 
-        {/* Body */}
-        <div className="p-6">
-          <p className="text-brand-text whitespace-pre-line">
-            {message}
-          </p>
-        </div>
+  return createPortal(
+    <div className="fixed inset-0 z-[60] overflow-y-auto">
+      <div
+        className="fixed inset-0 bg-scrim/45 backdrop-blur-[2px] animate-fade-in"
+        onClick={!working ? onClose : undefined}
+        aria-hidden="true"
+      />
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div
+          ref={panelRef}
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={msgId}
+          tabIndex={-1}
+          className="relative w-full max-w-md rounded-sheet bg-white p-6 shadow-dialog animate-scale-in focus:outline-none"
+        >
+          <div className="flex gap-4">
+            <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-full', t.ring)}>
+              <t.Icon className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-lg font-semibold text-ink">{title}</h2>
+              <p id={msgId} className="mt-1 whitespace-pre-line text-sm text-ink-muted">{message}</p>
+            </div>
+          </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-3 p-4 border-t ">
-          <button
-            onClick={onClose}
-            disabled={isLoading}
-            className="px-4 py-2 border border-brand-border rounded-md hover:bg-brand-bg disabled:opacity-50"
-          >
-            {cancelText}
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={isLoading}
-            className={`px-4 py-2 text-white rounded-md ${variantStyles[variant]} disabled:opacity-50`}
-          >
-            {isLoading ? 'Processing...' : confirmText}
-          </button>
+          {error && <Alert variant="error" className="mt-4">{error}</Alert>}
+
+          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={onClose} disabled={working} data-autofocus>
+              {cancelText}
+            </Button>
+            <Button
+              type="button"
+              variant={t.button}
+              onClick={handleConfirm}
+              isLoading={working}
+              disabled={confirmDisabled}
+            >
+              {working ? 'Working…' : confirmText}
+            </Button>
+          </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

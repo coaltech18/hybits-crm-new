@@ -1,21 +1,38 @@
-import { useState, useEffect } from 'react';
-import { Settings, Edit, Lock, Clock } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Pencil, Lock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import {
   getSettings,
   updateSetting,
+  LOCKED_SETTINGS,
   type SystemSetting,
+  type SettingValue,
 } from '@/services/systemSettingsService';
 import { SettingEditModal } from '@/components/admin/SettingEditModal';
+import { settingLabel, formatSettingValue } from '@/components/admin/settingLabel';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { TableSkeleton } from '@/components/ui/Spinner';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 // ================================================================
 // SYSTEM SETTINGS PAGE (ADMIN ONLY)
 // ================================================================
-// Manage system configuration with audit logging
+// Stored configuration values. Informational only: nothing in the app or
+// the database reads these yet, and changes are not history-logged.
 // ================================================================
 
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
 export default function SystemSettingsPage() {
+  useDocumentTitle('System settings');
+
   const { user } = useAuth();
+  const userId = user?.id;
   const [settings, setSettings] = useState<SystemSetting[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -24,29 +41,36 @@ export default function SystemSettingsPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedSetting, setSelectedSetting] = useState<SystemSetting | null>(null);
 
-  useEffect(() => {
-    loadSettings();
-  }, [user]);
+  // Only the latest load may write state
+  const requestId = useRef(0);
 
-  async function loadSettings() {
-    if (!user?.id) return;
+  const loadSettings = useCallback(async () => {
+    if (!userId) return;
+    const req = ++requestId.current;
 
     try {
       setLoading(true);
       setError(null);
-      const data = await getSettings(user.id);
-      setSettings(data);
+      const data = await getSettings(userId);
+      if (req === requestId.current) setSettings(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load settings');
+      if (req === requestId.current) {
+        setError(err instanceof Error ? err.message : 'Failed to load settings');
+      }
     } finally {
-      setLoading(false);
+      if (req === requestId.current) setLoading(false);
     }
-  }
+  }, [userId]);
 
-  async function handleUpdateSetting(key: string, value: any) {
-    if (!user?.id) return;
+  // Keyed on the user id so token refreshes don't refetch or reset the modal
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
 
-    await updateSetting(user.id, key, value);
+  async function handleUpdateSetting(key: string, value: SettingValue) {
+    if (!userId) return;
+
+    await updateSetting(userId, key, value);
     await loadSettings();
   }
 
@@ -55,18 +79,7 @@ export default function SystemSettingsPage() {
     setIsEditModalOpen(true);
   }
 
-  const isLockedSetting = (key: string) => {
-    return key === 'inventory_negative_stock_tolerance';
-  };
-
-  const formatValue = (value: any) => {
-    if (typeof value === 'string') {
-      if (value === 'true') return 'Enabled';
-      if (value === 'false') return 'Disabled';
-      return value;
-    }
-    return JSON.stringify(value);
-  };
+  const isLockedSetting = (key: string) => LOCKED_SETTINGS.includes(key);
 
   const getSettingCategory = (key: string) => {
     if (key.startsWith('inventory_')) return 'Inventory';
@@ -83,143 +96,128 @@ export default function SystemSettingsPage() {
     return acc;
   }, {} as Record<string, SystemSetting[]>);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto"></div>
-          <p className="mt-4 text-brand-text/70">Loading settings...</p>
-        </div>
-      </div>
-    );
-  }
+  const first = loading && settings.length === 0;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold flex items-center gap-2">
-          <Settings className="w-8 h-8" />
-          System Settings
-        </h1>
-        <p className="text-brand-text/70 mt-1">
-          Manage system configuration and feature toggles
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        title="System settings"
+        description="Stored configuration values. Informational for now: nothing reads them yet."
+      />
 
-      {error && (
-        <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      )}
+      {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
-      {/* Warning Banner */}
-      <div className="p-4 bg-brand-primary/10 border border-brand-border rounded">
-        <p className="text-sm text-brand-text">
-          <strong>⚠️ Warning:</strong> Changing system settings may affect application behavior.
-          All changes are logged and can be audited. Locked settings cannot be modified for
-          production safety.
-        </p>
-      </div>
+      <Alert variant="info" className="mb-6">
+        <strong>Not yet enforced.</strong> No part of the app reads these values today, so changing them
+        does not change how invoices, payments or subscriptions behave. Only the last change (time and
+        user) is kept; there is no change history. Locked settings cannot be changed.
+      </Alert>
 
-      {/* Settings by Category */}
-      {Object.entries(groupedSettings).map(([category, categorySettings]) => (
-        <div
-          key={category}
-          className="bg-white rounded-lg border border-brand-border overflow-hidden"
-        >
-          {/* Category Header */}
-          <div className="p-4 bg-brand-bg border-b border-brand-border">
-            <h2 className="text-lg font-semibold">{category}</h2>
-          </div>
-
-          {/* Settings Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-brand-bg border-b border-brand-border">
-                <tr>
-                  <th className="text-left py-3 px-4 font-medium w-1/4">Setting</th>
-                  <th className="text-left py-3 px-4 font-medium w-1/3">Description</th>
-                  <th className="text-left py-3 px-4 font-medium w-1/6">Current Value</th>
-                  <th className="text-left py-3 px-4 font-medium w-1/6">Last Updated</th>
-                  <th className="text-right py-3 px-4 font-medium w-1/12">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-brand-border">
-                {categorySettings.map((setting) => {
-                  const locked = isLockedSetting(setting.key);
-
-                  return (
-                    <tr
-                      key={setting.key}
-                      className={`hover:bg-brand-primary/5 ${locked ? 'bg-brand-bg' : ''
-                        }`}
-                    >
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-sm font-medium">{setting.key}</span>
-                          {locked && (
-                            <span title="Locked setting">
-                              <Lock className="w-4 h-4 text-brand-text/60" />
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 text-sm text-brand-text/70">
-                        {setting.description || '-'}
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-brand-primary/20 text-brand-primary">
-                          {formatValue(setting.value)}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-sm text-brand-text/70">
-                        <div className="flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {new Date(setting.updated_at).toLocaleDateString()}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center justify-end">
-                          <button
-                            onClick={() => openEditModal(setting)}
-                            disabled={locked}
-                            className="p-1.5 text-brand-primary hover:bg-brand-primary/10 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                            title={locked ? 'Setting is locked' : 'Edit setting'}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
+      <div className="space-y-6">
+        {first ? (
+          <section className="sheet overflow-hidden" aria-label="Loading settings">
+            <TableSkeleton rows={5} cols={4} />
+          </section>
+        ) : settings.length === 0 && !error ? (
+          <section className="sheet">
+            <EmptyState
+              title="No settings stored"
+              description="The system_settings table is empty. Settings are added by database migrations."
+            />
+          </section>
+        ) : (
+          Object.entries(groupedSettings).map(([category, categorySettings]) => (
+            <section key={category} className="sheet overflow-hidden" aria-labelledby={`cat-${category}`}>
+              <h2 id={`cat-${category}`} className="border-b border-rule px-5 py-4 text-lg font-semibold text-ink">
+                {category}
+              </h2>
+              <div className="overflow-x-auto">
+                <table className="ledger">
+                  <thead>
+                    <tr>
+                      <th scope="col" className="w-[30%]">Setting</th>
+                      <th scope="col">Description</th>
+                      <th scope="col">Value</th>
+                      <th scope="col">Last updated</th>
+                      <th scope="col" data-nolabel className="w-px text-right"><span className="sr-only">Actions</span></th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
+                  </thead>
+                  <tbody>
+                    {categorySettings.map((setting) => {
+                      const locked = isLockedSetting(setting.key);
+                      const label = settingLabel(setting.key);
+                      return (
+                        <tr key={setting.key}>
+                          <td>
+                            <div className="inline-block max-w-full align-top">
+                              <div className="font-semibold text-ink">{label}</div>
+                              <div className="serial mt-0.5 text-xs text-ink-muted">{setting.key}</div>
+                            </div>
+                          </td>
+                          <td className="min-w-[14rem] text-ink-muted">{setting.description || '—'}</td>
+                          <td className="tabular whitespace-nowrap font-semibold text-ink">
+                            {formatSettingValue(setting.value)}
+                          </td>
+                          <td className="whitespace-nowrap text-ink-muted">
+                            <div>
+                              <div className="tabular">{fmtDate(setting.updated_at)}</div>
+                              {setting.updated_by && (
+                                <div className="mt-0.5 text-sm">
+                                  by {setting.updated_by_name || 'an unknown user'}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="text-right">
+                            {locked ? (
+                              <Badge variant="void">
+                                <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                                Locked
+                              </Badge>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEditModal(setting)}
+                                aria-label={`Edit ${label}`}
+                              >
+                                <Pencil className="h-4 w-4" aria-hidden="true" />
+                                Edit
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ))
+        )}
 
-      {/* Info Box */}
-      <div className="bg-brand-primary/10 border border-brand-primary/30 rounded p-4">
-        <h3 className="font-semibold text-brand-text mb-2">
-          ℹ️ About System Settings
-        </h3>
-        <ul className="text-sm text-brand-text space-y-1 list-disc list-inside">
-          <li>
-            <strong>Locked Settings:</strong> Cannot be modified for production safety and data
-            integrity
-          </li>
-          <li>
-            <strong>Audit Trail:</strong> All changes are logged with user ID and timestamp
-          </li>
-          <li>
-            <strong>Boolean Values:</strong> Use "true" or "false" for enable/disable toggles
-          </li>
-          <li>
-            <strong>Numeric Values:</strong> Ensure values are within acceptable ranges
-          </li>
-        </ul>
+        <section className="sheet px-5 py-4" aria-labelledby="about-settings">
+          <h2 id="about-settings" className="text-lg font-semibold text-ink">About these settings</h2>
+          <dl className="mt-3 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="font-semibold text-ink">Locked settings</dt>
+              <dd className="text-ink-muted">Cannot be changed, for production safety and data integrity.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-ink">Last change only</dt>
+              <dd className="text-ink-muted">Each setting records when it was last updated and by whom; earlier values are not kept.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-ink">On/off values</dt>
+              <dd className="text-ink-muted">Choose Enabled or Disabled.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-ink">Numeric values</dt>
+              <dd className="text-ink-muted">Whole numbers only (days: 0 to 365).</dd>
+            </div>
+          </dl>
+        </section>
       </div>
 
       {/* Edit Setting Modal */}

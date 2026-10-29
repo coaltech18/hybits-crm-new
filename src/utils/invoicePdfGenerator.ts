@@ -1,9 +1,11 @@
-import jsPDF from 'jspdf';
+import jsPDF, { GState } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { Invoice, InvoiceItem, ClientGstType } from '@/types';
+import type { Invoice, InvoiceItem, InvoiceStatus, ClientGstType } from '@/types';
 import { COMPANY_PROFILE, DEFAULT_TERMS_AND_CONDITIONS } from '@/config/companyProfile';
 import { DEFAULT_HSN_CODE } from '@/config/gstConstants';
 import { getInvoiceById } from '@/services/invoiceService';
+import { roundCurrency } from '@/utils/format';
+import { formatDate as formatDisplayDate } from '@/utils/billingDate';
 
 // ================================================================
 // INVOICE PDF GENERATOR (INR ONLY)
@@ -21,42 +23,65 @@ interface CompanyDetails {
     email: string;
 }
 
+/** How the document is labelled: only issued statuses print as a tax invoice. */
+type PdfMode = 'draft' | 'final' | 'cancelled';
+
 interface InvoicePDFData {
     invoice: Invoice;
     companyDetails: CompanyDetails;
-    isDraft?: boolean;
+    /** Defaults to the mode derived from invoice.status. */
+    mode?: PdfMode;
 }
+
+function getPdfMode(status: InvoiceStatus): PdfMode {
+    if (status === 'finalized' || status === 'partially_paid' || status === 'paid') return 'final';
+    if (status === 'cancelled') return 'cancelled';
+    return 'draft';
+}
+
+const PDF_NUMBER_FORMATTER = new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+});
 
 /**
  * Format currency for PDF display (INR ONLY)
- * 
+ *
  * NOTE: jsPDF's default fonts (Helvetica, Courier, Times) only support Latin-1 characters.
  * Unicode symbols like ₹ are NOT supported, causing broken rendering.
  * Solution: Use "Rs." prefix which is universally supported.
- * 
+ *
  * @param amount - The amount to format
  * @returns Formatted currency string (e.g., "Rs. 1,234.56")
  */
 function formatPdfCurrency(amount: number): string {
-    const formattedNumber = new Intl.NumberFormat('en-IN', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    }).format(amount);
-
-    return `Rs. ${formattedNumber}`;
+    return `Rs. ${PDF_NUMBER_FORMATTER.format(amount)}`;
 }
 
 /**
- * Format date for PDF display
+ * Make text safe for jsPDF's built-in fonts (WinAnsi / Latin-1 only).
+ * Maps common typographic characters to ASCII and drops the rest, so
+ * nothing renders as mojibake.
+ */
+function pdfSafe(value: string | number | null | undefined): string {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/\u20B9/g, 'Rs.')
+        .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+        .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+        .replace(/[\u2013\u2014\u2212]/g, '-')
+        .replace(/[\u2022\u2023\u25E6\u2043\u2219]/g, '-')
+        .replace(/\u2026/g, '...')
+        .replace(/[\u00A0\u2007\u202F]/g, ' ')
+        .replace(/[^\n\r\t -\u00FF]/g, '');
+}
+
+/**
+ * Format date for PDF display. YYYY-MM-DD values are read as local dates.
  */
 function formatDate(dateString: string | null): string {
     if (!dateString) return '-';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-    });
+    return formatDisplayDate(dateString, 'short');
 }
 
 /**
@@ -75,17 +100,21 @@ function getGstTypeLabel(gstType: ClientGstType | null | undefined): string {
     }
 }
 
+function isIgstSupply(gstType: ClientGstType | null | undefined): boolean {
+    return gstType === 'sez' || gstType === 'export';
+}
+
 /**
- * Calculate GST breakup based on client GST type
- * Returns { cgst, sgst, igst } - database values (no recalculation)
+ * Calculate GST breakup based on client GST type.
+ * CGST is half the stored tax; SGST is the remainder, so the two always
+ * add up to tax_total exactly.
  */
 function calculateGstBreakup(
     taxTotal: number,
     gstType: ClientGstType | null | undefined
 ): { cgst: number; sgst: number; igst: number } {
-    // Domestic: Split into CGST + SGST (50/50)
-    // SEZ/Export: IGST only
-    if (gstType === 'sez' || gstType === 'export') {
+    // SEZ/Export: IGST only (also when zero-rated)
+    if (isIgstSupply(gstType)) {
         return {
             cgst: 0,
             sgst: 0,
@@ -94,62 +123,101 @@ function calculateGstBreakup(
     }
 
     // Domestic or null (default to domestic)
+    const cgst = roundCurrency(taxTotal / 2);
     return {
-        cgst: Math.round((taxTotal / 2) * 100) / 100,
-        sgst: Math.round((taxTotal / 2) * 100) / 100,
+        cgst,
+        sgst: roundCurrency(taxTotal - cgst),
         igst: 0,
     };
 }
 
+/** Draw the status watermark and footer on every page, above the content. */
+function decoratePages(doc: jsPDF, mode: PdfMode): void {
+    // jsPDF 4 has these at runtime; the stale @types/jspdf (v1) in node_modules
+    // shadows them in the jsPDF type, so declare the few we need.
+    const pages = doc as unknown as {
+        getNumberOfPages(): number;
+        saveGraphicsState(): unknown;
+        restoreGraphicsState(): unknown;
+        setGState(state: GState): unknown;
+    };
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const pageCount = pages.getNumberOfPages();
+    const watermark = mode === 'draft' ? 'DRAFT' : mode === 'cancelled' ? 'CANCELLED' : null;
+
+    for (let page = 1; page <= pageCount; page++) {
+        doc.setPage(page);
+
+        if (watermark) {
+            pages.saveGraphicsState();
+            pages.setGState(new GState({ opacity: 0.12 }));
+            doc.setFontSize(mode === 'cancelled' ? 64 : 72);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(mode === 'cancelled' ? 200 : 120, mode === 'cancelled' ? 0 : 120, mode === 'cancelled' ? 0 : 120);
+            doc.text(watermark, pageWidth / 2, pageHeight / 2, { align: 'center', angle: 45 });
+            pages.restoreGraphicsState();
+        }
+
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'italic');
+        doc.setTextColor(160, 160, 160);
+        doc.text('This is a system generated invoice. No signature required.', 14, pageHeight - 10);
+        doc.text(`Page ${page} of ${pageCount}`, pageWidth - 14, pageHeight - 10, { align: 'right' });
+    }
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'normal');
+}
+
 /**
  * Generate Invoice PDF
- * 
+ *
  * @param data - Invoice data from database
  * @returns PDF blob for download
  */
 export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
-    const { invoice, companyDetails, isDraft = false } = data;
+    const { invoice, companyDetails } = data;
+    const mode = data.mode ?? getPdfMode(invoice.status);
     const doc = new jsPDF();
 
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const leftX = 14;
     const rightX = pageWidth - 14;
+    const contentWidth = rightX - leftX;
     let y = 20;
 
-    // ================================================================
-    // DRAFT WATERMARK (if applicable)
-    // ================================================================
-    if (isDraft) {
-        doc.setFontSize(48);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(240, 240, 240); // Very light gray (~8% visual opacity)
-        const centerX = pageWidth / 2;
-        const centerY = pageHeight / 2;
-        doc.text('DRAFT', centerX, centerY, {
-            align: 'center',
-            angle: 45,
+    /** Write wrapped text and advance y by the number of lines. */
+    const writeWrapped = (text: string, width: number, lineHeight: number) => {
+        const lines: string[] = doc.splitTextToSize(pdfSafe(text), width);
+        lines.forEach((line) => {
+            doc.text(line, leftX, y);
+            y += lineHeight;
         });
-        // Reset
-        doc.setTextColor(0, 0, 0);
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(10);
-    }
+    };
+
+    // Issued invoices print the party as it was at finalization (042 snapshot)
+    const billTo = {
+        name: invoice.client_name_snap ?? invoice.clients?.name,
+        gstin: invoice.client_gstin_snap ?? invoice.clients?.gstin,
+        address: invoice.client_address_snap ?? invoice.clients?.billing_address,
+        gstType: invoice.client_gst_type_snap ?? invoice.clients?.gst_type,
+    };
 
     // ================================================================
     // HEADER: Company Details (From)
     // ================================================================
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
-    doc.text(companyDetails.name, leftX, y);
+    doc.text(pdfSafe(companyDetails.name), leftX, y);
     y += 7;
 
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text(companyDetails.address, leftX, y);
-    y += 5;
+    writeWrapped(companyDetails.address, contentWidth * 0.6, 5);
 
-    doc.text(`GSTIN: ${companyDetails.gstin}`, leftX, y);
+    doc.text(`GSTIN: ${pdfSafe(companyDetails.gstin)}`, leftX, y);
     y += 5;
 
     // Conditional contact line — never show dashes
@@ -159,32 +227,34 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     ].filter(Boolean);
 
     if (contactParts.length > 0) {
-        doc.text(contactParts.join(' | '), leftX, y);
+        doc.text(pdfSafe(contactParts.join(' | ')), leftX, y);
         y += 5;
     }
 
     // Outlet branch reference
     if (invoice.outlets) {
         doc.setFont('helvetica', 'bold');
-        doc.text(`Outlet: ${invoice.outlets.code || ''} / ${invoice.outlets.name || ''}`, leftX, y);
+        writeWrapped(`Outlet: ${invoice.outlets.code || ''} / ${invoice.outlets.name || ''}`, contentWidth * 0.6, 5);
         doc.setFont('helvetica', 'normal');
-        y += 5;
     }
 
     // ================================================================
     // INVOICE TITLE & NUMBER (right-aligned box)
     // ================================================================
     y += 12;
-    doc.setFontSize(15);
+    doc.setFontSize(mode === 'cancelled' ? 12 : 15);
     doc.setFont('helvetica', 'bold');
-    const invoiceTitle = isDraft ? 'DRAFT INVOICE' : 'TAX INVOICE';
+    const invoiceTitle =
+        mode === 'final' ? 'TAX INVOICE' : mode === 'cancelled' ? 'CANCELLED - NOT A VALID TAX INVOICE' : 'DRAFT INVOICE';
+    if (mode === 'cancelled') doc.setTextColor(200, 0, 0);
     doc.text(invoiceTitle, pageWidth / 2, y, { align: 'center' });
+    doc.setTextColor(0, 0, 0);
 
     // Invoice details on right side — positioned relative to title
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     const invoiceDetails = [
-        `Invoice No: ${invoice.invoice_number}`,
+        `Invoice No: ${pdfSafe(invoice.invoice_number)}`,
         `Date: ${formatDate(invoice.issued_at || invoice.created_at)}`,
         `Type: ${invoice.invoice_type.charAt(0).toUpperCase() + invoice.invoice_type.slice(1)}`,
     ];
@@ -210,32 +280,28 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     y += 7;
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
-    doc.text(invoice.clients?.name || 'N/A', leftX, y);
-    y += 6;
+    writeWrapped(billTo.name || 'N/A', contentWidth, 5);
+    y += 1;
 
-    if (invoice.clients?.billing_address) {
-        const addressLines = doc.splitTextToSize(invoice.clients.billing_address, 80);
-        addressLines.forEach((line: string) => {
-            doc.text(line, leftX, y);
-            y += 5;
-        });
+    if (billTo.address) {
+        writeWrapped(billTo.address, 80, 5);
         y += 1; // small gap after address block
     }
 
-    if (invoice.clients?.gstin) {
-        doc.text(`GSTIN: ${invoice.clients.gstin}`, leftX, y);
+    if (billTo.gstin) {
+        doc.text(`GSTIN: ${pdfSafe(billTo.gstin)}`, leftX, y);
         y += 6;
     }
 
     if (invoice.clients?.phone) {
-        doc.text(`Phone: ${invoice.clients.phone}`, leftX, y);
+        doc.text(`Phone: ${pdfSafe(invoice.clients.phone)}`, leftX, y);
         y += 6;
     }
 
     // GST Type
     y += 2;
     doc.setFont('helvetica', 'bold');
-    doc.text(`GST Type: ${getGstTypeLabel(invoice.clients?.gst_type)}`, leftX, y);
+    doc.text(`GST Type: ${getGstTypeLabel(billTo.gstType)}`, leftX, y);
     doc.setFont('helvetica', 'normal');
     y += 8;
 
@@ -254,12 +320,12 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
         y += 7;
 
         doc.setFont('helvetica', 'normal');
-        doc.text(`${invoice.events.event_name} - ${formatDate(invoice.events.event_date)}`, leftX, y);
-        y += 6;
+        writeWrapped(`${invoice.events.event_name} - ${formatDate(invoice.events.event_date)}`, contentWidth, 5);
+        y += 1;
 
         if (invoice.events.event_type) {
-            doc.text(`Type: ${invoice.events.event_type}`, leftX, y);
-            y += 6;
+            writeWrapped(`Type: ${invoice.events.event_type}`, contentWidth, 5);
+            y += 1;
         }
 
         y += 4; // breathing room before table
@@ -279,7 +345,7 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     const tableData = items.map((item, index) => [
         (index + 1).toString(),
         DEFAULT_HSN_CODE,
-        item.description,
+        pdfSafe(item.description),
         item.quantity.toString(),
         formatPdfCurrency(item.unit_price),
         formatPdfCurrency(item.line_total),
@@ -290,7 +356,7 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
 
     autoTable(doc, {
         startY: y,
-        head: [['#', 'HSN', 'Description', 'Qty', 'Rate', 'Amount', 'Tax %', 'Tax', 'Total']],
+        head: [['#', 'HSN', 'Description', 'Qty', 'Unit Price', 'Amount', 'Tax %', 'Tax', 'Total']],
         body: tableData,
         theme: 'grid',
         headStyles: {
@@ -318,7 +384,7 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     });
 
     // Get Y position after table
-    y = (doc as any).lastAutoTable.finalY + 10;
+    y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 10;
 
     // ================================================================
     // BANK DETAILS (LEFT) + TOTALS (RIGHT) — SIDE BY SIDE
@@ -329,8 +395,9 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     // ================================================================
 
     // Calculate GST breakup
-    const gstType = invoice.clients?.gst_type;
+    const gstType = billTo.gstType;
     const gstBreakup = calculateGstBreakup(invoice.tax_total, gstType);
+    const igst = isIgstSupply(gstType);
 
     // Pre-calculate height needed for both sections
     const bank = COMPANY_PROFILE.bankDetails;
@@ -340,7 +407,7 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     const bankSectionHeight = bank ? 15 + (bankFieldCount * 5) : 0; // title + fields
 
     // Totals: Subtotal + GST lines + Total Tax + Grand Total
-    const totalsLineCount = gstBreakup.igst > 0 ? 4 : 5; // IGST path = 4 lines, CGST+SGST path = 5
+    const totalsLineCount = igst ? 4 : 5; // IGST path = 4 lines, CGST+SGST path = 5
     const totalsSectionHeight = (totalsLineCount * 6) + 15; // lines + grand total spacing
 
     const requiredHeight = Math.max(bankSectionHeight, totalsSectionHeight) + 10;
@@ -406,7 +473,7 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
 
     // GST Breakup
     totalsY += 6;
-    if (gstBreakup.igst > 0) {
+    if (igst) {
         doc.text('IGST:', totalsStartX, totalsY);
         doc.text(formatPdfCurrency(gstBreakup.igst), totalsValueX, totalsY, { align: 'right' });
     } else {
@@ -443,14 +510,18 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     // ================================================================
     // TERMS & CONDITIONS (Page 2 — Bullet-Point Rendering)
     // ================================================================
-    // - Fallback to DEFAULT_TERMS_AND_CONDITIONS if invoice has none
+    // - Only legacy NULL terms fall back to DEFAULT_TERMS_AND_CONDITIONS;
+    //   terms the user deliberately cleared print no T&C page
     // - Always starts on a new page for clean separation
     // - Each bullet is an ATOMIC block (never splits across pages)
     // - Unicode bullets (\u2022) are sanitized to '-' for jsPDF Latin-1
     // ================================================================
-    const tcText = invoice.terms_and_conditions || DEFAULT_TERMS_AND_CONDITIONS;
+    const tcText =
+        invoice.terms_and_conditions === null || invoice.terms_and_conditions === undefined
+            ? DEFAULT_TERMS_AND_CONDITIONS
+            : invoice.terms_and_conditions;
 
-    if (tcText) {
+    if (tcText.trim()) {
         // Always start T&C on a new page
         doc.addPage();
         y = 20;
@@ -484,11 +555,8 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
             .filter((line: string) => !/^terms\s*[&]\s*conditions$/i.test(line));
 
         bullets.forEach((bullet: string) => {
-            // Sanitize Unicode bullets to Latin-1 compatible dash
             // jsPDF Helvetica only supports Latin-1 (U+0000–U+00FF)
-            const displayText = bullet
-                .replace(/[\u2022\u2023\u25E6\u2043\u2219]/g, '-') // bullet variants → dash
-                .replace(/[^\x00-\xFF]/g, ''); // strip any remaining non-Latin-1
+            const displayText = pdfSafe(bullet);
 
             // Wrap text to available width
             const wrappedLines: string[] = doc.splitTextToSize(displayText, textMaxWidth);
@@ -523,59 +591,45 @@ export function generateInvoicePDF(data: InvoicePDFData): jsPDF {
     }
 
     // ================================================================
-    // FOOTER
+    // WATERMARK + FOOTER on every page (drawn last so tables can't hide it)
     // ================================================================
-    y += 14;
-
-    // Ensure footer fits on the page
-    if (y > pageHeight - 20) {
-        doc.addPage();
-        y = 20;
-    }
-
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'italic');
-    doc.setTextColor(160, 160, 160);
-    doc.text('This is a system generated invoice.', leftX, y);
-
-    y += 4;
-    doc.text('No signature required.', leftX, y);
+    decoratePages(doc, mode);
 
     return doc;
 }
 
 /**
  * Download invoice as PDF
- * 
- * Always re-fetches the full invoice (with items) to guarantee
- * line items are present even when called from the list page.
- * 
+ *
+ * Re-fetches the full invoice (with items) when they are not loaded,
+ * e.g. when called from the list page.
+ *
  * @param invoice - Invoice object (items may or may not be loaded)
+ * @throws Error when the invoice cannot be loaded
  */
 export async function downloadInvoicePDF(invoice: Invoice): Promise<void> {
-    // Re-fetch full invoice with items to guarantee data completeness
     let fullInvoice: Invoice = invoice;
     if (!invoice.invoice_items || invoice.invoice_items.length === 0) {
         const fetched = await getInvoiceById(invoice.id);
-        if (fetched) {
-            fullInvoice = fetched;
-        } else {
-            console.error(`[PDF] Could not fetch invoice ${invoice.invoice_number}`);
+        if (!fetched) {
+            throw new Error('Could not load invoice for PDF');
         }
+        fullInvoice = fetched;
     }
 
     const companyDetails: CompanyDetails = {
         name: COMPANY_PROFILE.legalName,
         address: COMPANY_PROFILE.address,
-        gstin: COMPANY_PROFILE.gstin,
+        gstin: fullInvoice.supplier_gstin_snap || COMPANY_PROFILE.gstin,
         phone: COMPANY_PROFILE.phone,
         email: COMPANY_PROFILE.email,
     };
 
-    const isDraft = fullInvoice.status === 'draft';
-    const doc = generateInvoicePDF({ invoice: fullInvoice, companyDetails, isDraft });
+    const mode = getPdfMode(fullInvoice.status);
+    const doc = generateInvoicePDF({ invoice: fullInvoice, companyDetails, mode });
 
-    // Download the PDF
-    const prefix = isDraft ? 'Draft_Invoice' : 'Invoice';
-    doc.save(`${prefix}_${fullInvoice.invoice_number}.pdf`);
+    // Download the PDF ('/' and other reserved characters are not valid in file names)
+    const prefix = mode === 'draft' ? 'Draft_Invoice' : mode === 'cancelled' ? 'Cancelled_Invoice' : 'Invoice';
+    const safeNumber = (fullInvoice.invoice_number || fullInvoice.id).replace(/[\\/:*?"<>|]/g, '-');
+    doc.save(`${prefix}_${safeNumber}.pdf`);
 }

@@ -1,4 +1,7 @@
 import { supabase } from '@/lib/supabase';
+import { toCsv } from '@/utils/csv';
+import { roundCurrency } from '@/utils/format';
+import { applyOutletFilter, fetchAllRows, getUserRoleAndOutlets } from '@/services/reportService';
 import type {
     GSTWorkingReportRow,
     GSTWorkingExportRow,
@@ -14,230 +17,161 @@ import type {
 // Sheets: Domestic, SEZ, Export
 // ================================================================
 
+type GSTView = 'gst_working_domestic' | 'gst_working_sez' | 'gst_working_export';
+
 /**
- * Get user role and assigned outlets (for managers)
+ * The SEZ and Export views alias the HSN column as `hsn_code`, Domestic as
+ * `hsn_sac_code`. Normalise so every sheet reads `hsn_sac_code`.
  */
-async function getUserRoleAndOutlets(userId: string): Promise<{
-    role: string;
-    outletIds: string[] | null;
-}> {
-    const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('role')
-        .eq('id', userId)
-        .maybeSingle();
-
-    if (!profile) {
-        throw new Error('User profile not found');
-    }
-
-    // Managers: Get assigned outlets
-    if (profile.role === 'manager') {
-        const { data: assignments } = await supabase
-            .from('user_outlet_assignments')
-            .select('outlet_id')
-            .eq('user_id', userId);
-
-        const outletIds = assignments?.map(a => a.outlet_id) || [];
-        return { role: profile.role, outletIds };
-    }
-
-    // Admin/Accountant: All outlets
-    return { role: profile.role, outletIds: null };
+function normalizeHsn<T extends GSTWorkingReportRow>(row: T & { hsn_code?: string | null }): T {
+    return { ...row, hsn_sac_code: row.hsn_sac_code ?? row.hsn_code ?? '' };
 }
 
-/**
- * Apply outlet filter based on role
- */
-function applyOutletFilter(
-    query: any,
-    roleData: { role: string; outletIds: string[] | null },
+async function getGSTSheet<T extends GSTWorkingReportRow>(
+    view: GSTView,
+    userId: string,
     filters: GSTReportFilters
-) {
-    // Manager: Filter by assigned outlets
-    if (roleData.role === 'manager' && roleData.outletIds) {
-        if (roleData.outletIds.length > 0) {
-            query = query.in('outlet_id', roleData.outletIds);
-        } else {
-            // No outlets assigned, return empty result
-            return null;
+): Promise<T[]> {
+    const roleData = await getUserRoleAndOutlets(userId);
+
+    const rows = await fetchAllRows<T & { hsn_code?: string | null }>(() => {
+        let query = applyOutletFilter(
+            supabase
+                .from(view)
+                .select('*')
+                .order('invoice_date', { ascending: false })
+                .order('invoice_id'),
+            roleData,
+            filters
+        );
+        if (query === null) return null;
+
+        // Apply date filters
+        if (filters.date_from) {
+            query = query.gte('invoice_date', filters.date_from);
         }
-    }
+        if (filters.date_to) {
+            query = query.lte('invoice_date', filters.date_to);
+        }
 
-    // Admin/Accountant with outlet filter
-    if (filters.outlet_id && ['admin', 'accountant'].includes(roleData.role)) {
-        query = query.eq('outlet_id', filters.outlet_id);
-    }
+        return query;
+    });
 
-    return query;
+    return rows.map(row => normalizeHsn<T>(row));
 }
 
 // ================================================================
-// DOMESTIC GST REPORT
+// SHEETS
 // ================================================================
 
-export async function getGSTDomesticReport(
+export function getGSTDomesticReport(
     userId: string,
     filters: GSTReportFilters
 ): Promise<GSTWorkingReportRow[]> {
-    const roleData = await getUserRoleAndOutlets(userId);
-
-    let query = supabase
-        .from('gst_working_domestic')
-        .select('*')
-        .order('invoice_date', { ascending: false });
-
-    // Apply outlet filter
-    query = applyOutletFilter(query, roleData, filters);
-    if (query === null) return [];
-
-    // Apply date filters
-    if (filters.date_from) {
-        query = query.gte('invoice_date', filters.date_from);
-    }
-    if (filters.date_to) {
-        query = query.lte('invoice_date', filters.date_to);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-        throw new Error(error.message);
-    }
-
-    return (data || []) as GSTWorkingReportRow[];
+    return getGSTSheet<GSTWorkingReportRow>('gst_working_domestic', userId, filters);
 }
 
-export async function getGSTDomesticTotals(
-    userId: string,
-    filters: GSTReportFilters
-): Promise<GSTWorkingTotalsRow | null> {
-    const data = await getGSTDomesticReport(userId, filters);
-
-    if (data.length === 0) return null;
-
-    return {
-        outlet_id: filters.outlet_id || 'all',
-        total_taxable_value: data.reduce((sum, row) => sum + row.taxable_value, 0),
-        total_igst: data.reduce((sum, row) => sum + row.igst, 0),
-        total_cgst: data.reduce((sum, row) => sum + row.cgst, 0),
-        total_sgst: data.reduce((sum, row) => sum + row.sgst, 0),
-        grand_total: data.reduce((sum, row) => sum + row.total, 0),
-    };
-}
-
-// ================================================================
-// SEZ GST REPORT
-// ================================================================
-
-export async function getGSTSEZReport(
+export function getGSTSEZReport(
     userId: string,
     filters: GSTReportFilters
 ): Promise<GSTWorkingReportRow[]> {
-    const roleData = await getUserRoleAndOutlets(userId);
-
-    let query = supabase
-        .from('gst_working_sez')
-        .select('*')
-        .order('invoice_date', { ascending: false });
-
-    // Apply outlet filter
-    query = applyOutletFilter(query, roleData, filters);
-    if (query === null) return [];
-
-    // Apply date filters
-    if (filters.date_from) {
-        query = query.gte('invoice_date', filters.date_from);
-    }
-    if (filters.date_to) {
-        query = query.lte('invoice_date', filters.date_to);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-        throw new Error(error.message);
-    }
-
-    return (data || []) as GSTWorkingReportRow[];
+    return getGSTSheet<GSTWorkingReportRow>('gst_working_sez', userId, filters);
 }
 
-export async function getGSTSEZTotals(
-    userId: string,
-    filters: GSTReportFilters
-): Promise<GSTWorkingTotalsRow | null> {
-    const data = await getGSTSEZReport(userId, filters);
-
-    if (data.length === 0) return null;
-
-    return {
-        outlet_id: filters.outlet_id || 'all',
-        total_taxable_value: data.reduce((sum, row) => sum + row.taxable_value, 0),
-        total_igst: data.reduce((sum, row) => sum + row.igst, 0),
-        total_cgst: data.reduce((sum, row) => sum + row.cgst, 0),
-        total_sgst: data.reduce((sum, row) => sum + row.sgst, 0),
-        grand_total: data.reduce((sum, row) => sum + row.total, 0),
-    };
-}
-
-// ================================================================
-// EXPORT GST REPORT
-// ================================================================
-
-export async function getGSTExportReport(
+export function getGSTExportReport(
     userId: string,
     filters: GSTReportFilters
 ): Promise<GSTWorkingExportRow[]> {
-    const roleData = await getUserRoleAndOutlets(userId);
-
-    let query = supabase
-        .from('gst_working_export')
-        .select('*')
-        .order('invoice_date', { ascending: false });
-
-    // Apply outlet filter
-    query = applyOutletFilter(query, roleData, filters);
-    if (query === null) return [];
-
-    // Apply date filters
-    if (filters.date_from) {
-        query = query.gte('invoice_date', filters.date_from);
-    }
-    if (filters.date_to) {
-        query = query.lte('invoice_date', filters.date_to);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-        throw new Error(error.message);
-    }
-
-    return (data || []) as GSTWorkingExportRow[];
+    return getGSTSheet<GSTWorkingExportRow>('gst_working_export', userId, filters);
 }
 
-export async function getGSTExportTotals(
-    userId: string,
-    filters: GSTReportFilters
-): Promise<GSTWorkingTotalsRow | null> {
-    const data = await getGSTExportReport(userId, filters);
+// ================================================================
+// TOTALS (computed from the fetched sheet; no second round trip)
+// ================================================================
 
+const sum = (rows: GSTWorkingReportRow[], pick: (row: GSTWorkingReportRow) => number) =>
+    roundCurrency(rows.reduce((acc, row) => acc + (Number(pick(row)) || 0), 0));
+
+export function computeGSTTotals(
+    data: GSTWorkingReportRow[],
+    outletId?: string
+): GSTWorkingTotalsRow | null {
     if (data.length === 0) return null;
 
     return {
-        outlet_id: filters.outlet_id || 'all',
-        total_taxable_value: data.reduce((sum, row) => sum + row.taxable_value, 0),
-        total_igst: data.reduce((sum, row) => sum + row.igst, 0),
-        total_cgst: data.reduce((sum, row) => sum + row.cgst, 0),
-        total_sgst: data.reduce((sum, row) => sum + row.sgst, 0),
-        grand_total: data.reduce((sum, row) => sum + row.total, 0),
+        outlet_id: outletId || 'all',
+        total_taxable_value: sum(data, row => row.taxable_value),
+        total_igst: sum(data, row => row.igst),
+        total_cgst: sum(data, row => row.cgst),
+        total_sgst: sum(data, row => row.sgst),
+        grand_total: sum(data, row => row.total),
     };
+}
+
+/** RATE cell: the per-invoice label when the view provides one (mixed rates), else the single rate. */
+export function formatGSTRate(row: GSTWorkingReportRow): string {
+    return row.rate_label || `${row.rate}%`;
 }
 
 // ================================================================
 // CSV EXPORT FUNCTIONS
 // ================================================================
-// Match accountant's Excel format EXACTLY
+// Match accountant's Excel format EXACTLY. Every cell goes through
+// @/utils/csv (quoting + formula-injection neutralising).
+
+/** Amount cell with 2 decimals; negative amounts stay numeric (not neutralised as text). */
+const amt = (value: number): string | number => {
+    const n = Number(value) || 0;
+    return n < 0 ? roundCurrency(n) : n.toFixed(2);
+};
+
+function buildGSTCsv<T extends GSTWorkingReportRow>(
+    headers: string[],
+    data: T[],
+    totals: GSTWorkingTotalsRow | null,
+    extra?: (row: T) => string
+): string {
+    const rows: (string | number)[][] = data.map(row => {
+        const cells: (string | number)[] = [
+            row.invoice_date,
+            row.invoice_number,
+            row.party_name,
+            row.gst_number,
+            row.hsn_sac_code,
+            amt(row.as_per_your_invoice),
+            amt(row.taxable_value),
+            formatGSTRate(row),
+            amt(row.igst),
+            amt(row.cgst),
+            amt(row.sgst),
+            amt(row.total),
+        ];
+        if (extra) cells.push(extra(row));
+        return cells;
+    });
+
+    // Total row
+    if (totals) {
+        const totalRow: (string | number)[] = [
+            '',
+            '',
+            'Total',
+            '',
+            '',
+            '',
+            amt(totals.total_taxable_value),
+            '',
+            amt(totals.total_igst),
+            amt(totals.total_cgst),
+            amt(totals.total_sgst),
+            amt(totals.grand_total),
+        ];
+        if (extra) totalRow.push('');
+        rows.push(totalRow);
+    }
+
+    return toCsv(headers, rows);
+}
 
 /**
  * Export Domestic GST Report to CSV
@@ -249,57 +183,24 @@ export function exportGSTDomesticCSV(
     data: GSTWorkingReportRow[],
     totals: GSTWorkingTotalsRow | null
 ): string {
-    // Headers matching Excel exactly
-    const headers = [
-        'Invoice Date',
-        'Invoice Number',
-        'Party Name',
-        'GST NUMBER',
-        'HSN/SAC CODE',
-        'As per your Invoice',
-        'Taxable Value',
-        'RATE',
-        'IGST',
-        'CGST',
-        'SGST',
-        'TOTAL',
-    ];
-
-    // Data rows
-    const rows = data.map(row => [
-        row.invoice_date,
-        row.invoice_number,
-        `"${row.party_name.replace(/"/g, '""')}"`, // Escape quotes
-        row.gst_number,
-        row.hsn_sac_code,
-        row.as_per_your_invoice.toFixed(2),
-        row.taxable_value.toFixed(2),
-        `${row.rate}%`,
-        row.igst.toFixed(2),
-        row.cgst.toFixed(2),
-        row.sgst.toFixed(2),
-        row.total.toFixed(2),
-    ]);
-
-    // Total row
-    if (totals) {
-        rows.push([
-            '',
-            '',
-            'Total',
-            '',
-            '',
-            '',
-            totals.total_taxable_value.toFixed(2),
-            '',
-            totals.total_igst.toFixed(2),
-            totals.total_cgst.toFixed(2),
-            totals.total_sgst.toFixed(2),
-            totals.grand_total.toFixed(2),
-        ]);
-    }
-
-    return [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+    return buildGSTCsv(
+        [
+            'Invoice Date',
+            'Invoice Number',
+            'Party Name',
+            'GST NUMBER',
+            'HSN/SAC CODE',
+            'As per your Invoice',
+            'Taxable Value',
+            'RATE',
+            'IGST',
+            'CGST',
+            'SGST',
+            'TOTAL',
+        ],
+        data,
+        totals
+    );
 }
 
 /**
@@ -310,57 +211,24 @@ export function exportGSTSEZCSV(
     data: GSTWorkingReportRow[],
     totals: GSTWorkingTotalsRow | null
 ): string {
-    // Headers matching Excel exactly
-    const headers = [
-        'Invoice Date',
-        'Invoice Number',
-        'Party Name',
-        'GST NUMBER',
-        'HSN CODE',
-        'As per your Invoice',
-        'Taxable Value',
-        'RATE',
-        'IGST',
-        'CGST',
-        'SGST',
-        'TOTAL',
-    ];
-
-    // Data rows
-    const rows = data.map(row => [
-        row.invoice_date,
-        row.invoice_number,
-        `"${row.party_name.replace(/"/g, '""')}"`,
-        row.gst_number,
-        row.hsn_sac_code,
-        row.as_per_your_invoice.toFixed(2),
-        row.taxable_value.toFixed(2),
-        `${row.rate}%`,
-        row.igst.toFixed(2),
-        row.cgst.toFixed(2),
-        row.sgst.toFixed(2),
-        row.total.toFixed(2),
-    ]);
-
-    // Total row
-    if (totals) {
-        rows.push([
-            '',
-            '',
-            'Total',
-            '',
-            '',
-            '',
-            totals.total_taxable_value.toFixed(2),
-            '',
-            totals.total_igst.toFixed(2),
-            totals.total_cgst.toFixed(2),
-            totals.total_sgst.toFixed(2),
-            totals.grand_total.toFixed(2),
-        ]);
-    }
-
-    return [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+    return buildGSTCsv(
+        [
+            'Invoice Date',
+            'Invoice Number',
+            'Party Name',
+            'GST NUMBER',
+            'HSN CODE',
+            'As per your Invoice',
+            'Taxable Value',
+            'RATE',
+            'IGST',
+            'CGST',
+            'SGST',
+            'TOTAL',
+        ],
+        data,
+        totals
+    );
 }
 
 /**
@@ -371,58 +239,24 @@ export function exportGSTExportCSV(
     data: GSTWorkingExportRow[],
     totals: GSTWorkingTotalsRow | null
 ): string {
-    // Headers matching Excel exactly
-    const headers = [
-        'Invoice Date',
-        'Invoice Number',
-        'Party Name',
-        'GST NUMBER',
-        'HSN CODE',
-        'As per your Invoice',
-        'Taxable Value',
-        'RATE',
-        'IGST',
-        'CGST',
-        'SGST',
-        'TOTAL',
-        'Currency',
-    ];
-
-    // Data rows
-    const rows = data.map(row => [
-        row.invoice_date,
-        row.invoice_number,
-        `"${row.party_name.replace(/"/g, '""')}"`,
-        row.gst_number,
-        row.hsn_sac_code,
-        row.as_per_your_invoice.toFixed(2),
-        row.taxable_value.toFixed(2),
-        `${row.rate}%`,
-        row.igst.toFixed(2),
-        row.cgst.toFixed(2),
-        row.sgst.toFixed(2),
-        row.total.toFixed(2),
-        row.currency,
-    ]);
-
-    // Total row
-    if (totals) {
-        rows.push([
-            '',
-            '',
-            'Total',
-            '',
-            '',
-            '',
-            totals.total_taxable_value.toFixed(2),
-            '',
-            totals.total_igst.toFixed(2),
-            totals.total_cgst.toFixed(2),
-            totals.total_sgst.toFixed(2),
-            totals.grand_total.toFixed(2),
-            '',
-        ]);
-    }
-
-    return [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+    return buildGSTCsv(
+        [
+            'Invoice Date',
+            'Invoice Number',
+            'Party Name',
+            'GST NUMBER',
+            'HSN CODE',
+            'As per your Invoice',
+            'Taxable Value',
+            'RATE',
+            'IGST',
+            'CGST',
+            'SGST',
+            'TOTAL',
+            'Currency',
+        ],
+        data,
+        totals,
+        row => row.currency
+    );
 }

@@ -4,8 +4,10 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
-import { Spinner } from '@/components/ui/Spinner';
+import { Skeleton } from '@/components/ui/Spinner';
+import { FactWell, ModalActions, PickList, PickRow, PickedReference } from '../ModalParts';
 import { supabase } from '@/lib/supabase';
+import { ilikePattern } from '@/utils/query';
 import { allocateInventoryV2 } from '@/services/inventoryMovementServiceV2';
 
 // ================================================================
@@ -65,67 +67,65 @@ export default function AllocateItemModal({
         }
     }, [isOpen]);
 
+    // Debounced search; a stale response (older keystroke) is ignored.
     useEffect(() => {
-        if (searchQuery.trim() && referenceType) {
-            const timer = setTimeout(() => searchReferences(), 300);
-            return () => clearTimeout(timer);
-        } else {
+        const query = searchQuery.trim();
+        if (!query || !referenceType) {
             setSearchResults([]);
-        }
-    }, [searchQuery, referenceType]);
-
-    async function searchReferences() {
-        if (!searchQuery.trim() || !referenceType) return;
-
-        try {
-            setSearchLoading(true);
-
-            if (referenceType === 'subscription') {
-                const { data } = await supabase
-                    .from('subscriptions')
-                    .select('id, client_id, outlet_id, status, clients(name)')
-                    .eq('outlet_id', outletId)
-                    .eq('is_active', true)
-                    .not('clients', 'is', null)
-                    .limit(10);
-
-                const filtered = (data || []).filter(
-                    (s: any) => s.clients?.name?.toLowerCase().includes(searchQuery.toLowerCase())
-                );
-
-                setSearchResults(
-                    filtered.map((s: any) => ({
-                        id: s.id,
-                        name: s.clients?.name || 'Unknown',
-                        status: s.status,
-                    }))
-                );
-            } else if (referenceType === 'event') {
-                const { data } = await supabase
-                    .from('events')
-                    .select('id, event_name, outlet_id, status')
-                    .eq('outlet_id', outletId)
-                    .ilike('event_name', `%${searchQuery}%`)
-                    .eq('is_active', true)
-                    .limit(10);
-
-                setSearchResults(
-                    (data || []).map((e: any) => ({
-                        id: e.id,
-                        name: e.event_name,
-                        status: e.status,
-                    }))
-                );
-            }
-        } catch (err) {
-            console.error('Search failed:', err);
-        } finally {
             setSearchLoading(false);
+            return;
         }
-    }
+
+        let stale = false;
+        const timer = setTimeout(async () => {
+            setSearchLoading(true);
+            try {
+                let results: ReferenceResult[] = [];
+                if (referenceType === 'subscription') {
+                    const { data, error: fetchError } = await supabase
+                        .from('subscriptions')
+                        .select('id, status, clients!inner(name)')
+                        .eq('outlet_id', outletId)
+                        .eq('status', 'active')
+                        .ilike('clients.name', ilikePattern(query))
+                        .limit(10);
+                    if (fetchError) throw fetchError;
+                    results = (data || []).map((s) => {
+                        const client = s.clients as { name?: string } | { name?: string }[] | null;
+                        const name = Array.isArray(client) ? client[0]?.name : client?.name;
+                        return { id: s.id, name: name || 'Unknown', status: s.status };
+                    });
+                } else {
+                    const { data, error: fetchError } = await supabase
+                        .from('events')
+                        .select('id, event_name, status')
+                        .eq('outlet_id', outletId)
+                        .eq('status', 'planned')
+                        .ilike('event_name', ilikePattern(query))
+                        .limit(10);
+                    if (fetchError) throw fetchError;
+                    results = (data || []).map((e) => ({ id: e.id, name: e.event_name, status: e.status }));
+                }
+                if (!stale) setSearchResults(results);
+            } catch (err) {
+                if (!stale) {
+                    setSearchResults([]);
+                    setError(err instanceof Error ? err.message : 'Search failed');
+                }
+            } finally {
+                if (!stale) setSearchLoading(false);
+            }
+        }, 300);
+
+        return () => {
+            stale = true;
+            clearTimeout(timer);
+        };
+    }, [searchQuery, referenceType, outletId]);
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (loading) return;
         setError(null);
 
         if (!referenceType) {
@@ -172,21 +172,24 @@ export default function AllocateItemModal({
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Allocate Items">
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Send dishes"
+            description="Pieces move from available stock to a subscription or event."
+            dismissable={!loading}
+        >
             <form onSubmit={handleSubmit} className="space-y-4">
                 {error && <Alert variant="error">{error}</Alert>}
 
-                {/* Item Info */}
-                <div className="bg-muted p-4 rounded">
-                    <p className="text-sm text-muted-foreground">Item</p>
-                    <p className="font-semibold">{itemName}</p>
-                    <p className="text-sm text-muted-foreground mt-2">Available Stock</p>
-                    <p className="text-lg font-bold text-green-600">{availableQuantity}</p>
-                </div>
+                <FactWell
+                    eyebrow="Item"
+                    title={itemName}
+                    facts={[{ label: 'Available', value: availableQuantity, tone: 'final' }]}
+                />
 
-                {/* Reference Type */}
                 <Select
-                    label="Allocate To"
+                    label="Send to"
                     value={referenceType}
                     onChange={(e) => {
                         setReferenceType(e.target.value as 'subscription' | 'event' | '');
@@ -196,97 +199,90 @@ export default function AllocateItemModal({
                     }}
                     required
                 >
-                    <option value="">Select Type</option>
+                    <option value="">Select subscription or event</option>
                     <option value="subscription">Subscription</option>
                     <option value="event">Event</option>
                 </Select>
 
-                {/* Reference Search */}
                 {referenceType && !selectedReference && (
                     <div>
                         <Input
-                            label={referenceType === 'subscription' ? 'Search by client name' : 'Search by event name'}
+                            type="search"
+                            label={referenceType === 'subscription' ? 'Find by client name' : 'Find by event name'}
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Type to search..."
+                            placeholder="Start typing…"
+                            helperText={
+                                referenceType === 'subscription'
+                                    ? 'Active subscriptions at this outlet.'
+                                    : 'Planned events at this outlet.'
+                            }
+                            autoComplete="off"
                         />
 
                         {searchLoading && (
-                            <div className="flex items-center justify-center py-4">
-                                <Spinner />
+                            <div className="mt-2 space-y-2" aria-busy="true">
+                                <Skeleton className="h-9" />
+                                <Skeleton className="h-9" />
                             </div>
                         )}
 
                         {searchResults.length > 0 && (
-                            <div className="border rounded divide-y mt-2 max-h-48 overflow-y-auto">
+                            <PickList label="Matching references">
                                 {searchResults.map((result) => (
-                                    <button
-                                        type="button"
+                                    <PickRow
                                         key={result.id}
-                                        onClick={() => {
+                                        title={result.name}
+                                        meta={result.status}
+                                        onPick={() => {
                                             setSelectedReference(result);
                                             setSearchQuery('');
                                             setSearchResults([]);
                                         }}
-                                        className="w-full text-left p-3 hover:bg-muted transition-colors text-sm"
-                                    >
-                                        <p className="font-medium">{result.name}</p>
-                                        <p className="text-xs text-muted-foreground capitalize">{result.status}</p>
-                                    </button>
+                                    />
                                 ))}
-                            </div>
+                            </PickList>
                         )}
                     </div>
                 )}
 
-                {/* Selected Reference */}
                 {selectedReference && (
-                    <div className="bg-brand-primary/10 p-3 rounded flex items-center justify-between">
-                        <div>
-                            <p className="text-sm text-muted-foreground capitalize">{referenceType}</p>
-                            <p className="font-medium">{selectedReference.name}</p>
-                        </div>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setSelectedReference(null)}
-                        >
-                            Change
-                        </Button>
-                    </div>
+                    <PickedReference
+                        kind={referenceType}
+                        name={selectedReference.name}
+                        onChange={() => setSelectedReference(null)}
+                    />
                 )}
 
-                {/* Quantity */}
                 <Input
                     type="number"
-                    label="Quantity to Allocate"
+                    inputMode="numeric"
+                    label="Pieces to send"
                     value={quantity}
                     onChange={(e) => setQuantity(e.target.value)}
                     min="1"
                     max={availableQuantity}
                     required
                     disabled={!selectedReference}
-                    placeholder={selectedReference ? `Max: ${availableQuantity}` : 'Select a reference first'}
+                    placeholder={selectedReference ? `Up to ${availableQuantity}` : 'Pick a subscription or event first'}
+                    className="tabular"
                 />
 
-                {/* Notes */}
                 <Input
-                    label="Notes (optional)"
+                    label="Notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Optional notes"
+                    helperText="Optional"
                 />
 
-                {/* Buttons */}
-                <div className="flex justify-end gap-2 pt-4">
+                <ModalActions>
                     <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
                         Cancel
                     </Button>
-                    <Button type="submit" disabled={loading || !selectedReference}>
-                        {loading ? 'Allocating...' : 'Allocate'}
+                    <Button type="submit" isLoading={loading} disabled={!selectedReference}>
+                        {loading ? 'Sending…' : 'Send dishes'}
                     </Button>
-                </div>
+                </ModalActions>
             </form>
         </Modal>
     );

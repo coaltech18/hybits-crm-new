@@ -1,257 +1,73 @@
-# Hybits CRM - Billing & Subscription Management
+# Hybits CRM
 
-Production-grade B2B billing & accounting system built with React, TypeScript, and Supabase.
+The private billing and operations web app of Hybits Solutions Pvt Ltd, a sterilised-dishware rental business in Bengaluru.
+It keeps the client register per outlet, raises GST tax invoices (PDF), records payments, tracks every dish sent out and returned, runs stock audits, and produces revenue, aging and GST working reports.
 
-## ✅ Current Status
+## Stack
 
-**Development Environment**: Running smoothly on `http://localhost:3000`
-- All dependencies installed and working
-- No compilation or runtime errors
-- Modern, responsive UI with Tailwind CSS
-- All core components and layouts functional
+- **Frontend:** React 18, TypeScript 5 (strict), React Router 6, Vite 5, Tailwind CSS 3, lucide-react icons
+- **Charts and exports:** Recharts, jsPDF + jspdf-autotable (invoice PDF), CSV built in the browser
+- **Backend:** Supabase (Postgres, PostgREST, Auth). There is no app server: the browser talks to Supabase directly, and security is enforced in the database (row-level security, triggers, locked-down RPCs)
+- **Hosting:** Render.com static site
 
-## 🎯 Project Overview
+## Local setup
 
-Hybits is a multi-outlet billing system designed for B2B operations with two distinct billing flows:
-
-1. **Corporate Subscriptions** - Recurring monthly billing for corporate clients
-2. **Event Billing** - One-time invoicing for weddings, functions, and events
-
-## 🏗️ Architecture
-
-### Tech Stack
-
-- **Frontend**: React 18 + TypeScript + Tailwind CSS
-- **Backend**: Supabase (PostgreSQL + Row Level Security)
-- **Build Tool**: Vite
-- **Routing**: React Router v6
-- **Icons**: Lucide React
-
-### Phase-Based Development
-
-The system is being built in phases to ensure stability and production-readiness:
-
-#### ✅ Phase 1: Authentication, Roles & Outlets
-- User authentication with Supabase Auth
-- Role-based access control (Admin, Manager, Accountant)
-- Multi-outlet support with strict isolation
-- Database tables: `user_profiles`, `outlets`, `user_outlet_assignments`
-
-#### ✅ Phase 2: Clients (CURRENT)
-- Client management with corporate/event separation
-- Outlet-based client isolation
-- Role-based CRUD operations
-- GSTIN validation for corporate clients
-- Database table: `clients`
-
-#### 🔜 Phase 3: Subscriptions (Corporate Flow)
-#### 🔜 Phase 4: Events (Event Flow)
-#### 🔜 Phase 5: Invoices (Subscription + Event)
-#### 🔜 Phase 6: Payments & Accounting
-#### 🔜 Phase 7: Reports (Combined + Outlet-wise)
-#### 🔜 Phase 8: Inventory
-#### 🔜 Phase 9: Admin Utilities
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js 18+ and npm
-- Supabase account
-- Git
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd hybits-crm-new
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   ```
-   
-   Edit `.env` and add your Supabase credentials:
-   ```
-   VITE_SUPABASE_URL=your_supabase_project_url
-   VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-   ```
-
-4. **Run database migrations**
-   
-   Execute the SQL files in order in your Supabase SQL editor:
-   - `supabase/001_phase1_auth_roles_outlets.sql`
-   - `supabase/002_phase2_clients.sql`
-
-5. **Create first admin user**
-   
-   a. Sign up via Supabase Auth dashboard or use SQL:
-   ```sql
-   -- This creates the auth.users entry
-   -- Do this via Supabase dashboard: Authentication → Users → Invite User
-   ```
-   
-   b. After user is created in auth.users, add to user_profiles:
-   ```sql
-   INSERT INTO user_profiles (id, email, full_name, role)
-   VALUES (
-     'auth-user-uuid-from-auth-users-table',
-     'admin@yourcompany.com',
-     'Admin User',
-     'admin'
-   );
-   ```
-
-6. **Create sample outlets (optional)**
-   ```sql
-   INSERT INTO outlets (name, code, city, state, gstin)
-   VALUES 
-     ('Mumbai Office', 'HYB-MUM-01', 'Mumbai', 'Maharashtra', '27AABCU9603R1ZV'),
-     ('Delhi Office', 'HYB-DEL-01', 'New Delhi', 'Delhi', '07AABCU9603R1ZV');
-   ```
-
-7. **Start development server**
-   ```bash
-   npm run dev
-   ```
-   
-   Open [http://localhost:3000](http://localhost:3000)
-
-## 👥 User Roles
-
-### Admin
-- Full system access
-- Can see all outlets
-- Manage users, outlets, clients, subscriptions, events
-- Access to all reports
-
-### Manager
-- Outlet-restricted access
-- Can only see/manage data for assigned outlets
-- Manage clients, subscriptions, events, inventory
-- Cannot access accounting or cross-outlet reports
-
-### Accountant
-- Read-only access to operational data
-- Can view all outlets
-- Full access to invoices, payments, accounting module
-- Can generate combined and outlet-wise reports
-
-## 📊 Database Schema
-
-### Core Tables (Phase 1)
-- `user_profiles` - User authorization and business identity
-- `outlets` - Business locations/branches
-- `user_outlet_assignments` - Manager-to-outlet mapping
-
-### Clients (Phase 2)
-- `clients` - Client database with corporate/event separation
-
-### Future Tables (Phase 3+)
-- `subscriptions` - Corporate recurring billing
-- `subscription_items` - Line items for subscriptions
-- `events` - One-time event records
-- `event_items` - Line items for events
-- `invoices` - Unified invoice table
-- `payments` - Payment tracking
-- `inventory_items` - Product/service catalog
-
-## 🔐 Security
-
-### Row Level Security (RLS)
-All tables use PostgreSQL RLS policies to enforce:
-- Outlet isolation for managers
-- Read-only access for accountants
-- Full access for admins
-
-### Authentication
-- JWT-based authentication via Supabase Auth
-- Secure password hashing
-- Session management with automatic token refresh
-
-### Audit Trail
-- `created_by` fields track user actions
-- `created_at` and `updated_at` timestamps on all records
-- Soft deletes via `is_active` flags (no hard deletes)
-
-## 📝 Development Guidelines
-
-### Code Structure
-```
-src/
-├── components/       # Reusable UI components
-│   ├── ui/          # Base components (Button, Input, etc.)
-│   └── layouts/     # Layout components (Sidebar, MainLayout)
-├── contexts/        # React contexts (AuthContext)
-├── lib/             # Third-party library configurations
-├── pages/           # Page components organized by feature
-├── routes/          # Route definitions and guards
-├── services/        # API service layer
-├── types/           # TypeScript type definitions
-└── utils/           # Utility functions
-```
-
-### Naming Conventions
-- Components: PascalCase (`ClientsPage.tsx`)
-- Files: camelCase for utilities, PascalCase for components
-- Functions: camelCase (`getClients`)
-- Types/Interfaces: PascalCase (`Client`, `UserProfile`)
-
-### Best Practices
-- Always use TypeScript strict mode
-- Implement proper error handling
-- Use React hooks effectively
-- Follow role-based access patterns
-- Never bypass RLS policies
-- Document complex business logic
-
-## 🧪 Testing
+Requires Node.js 18 or newer and access to a Supabase project.
 
 ```bash
-# Run type checking
-npm run build
-
-# Run linter
-npm run lint
+npm ci
+cp .env.example .env      # then fill in the two values below
+npm run dev               # http://localhost:3000
 ```
 
-## 📦 Build for Production
+`.env` needs:
 
-```bash
-npm run build
-```
+| Variable | Where to find it |
+|---|---|
+| `VITE_SUPABASE_URL` | Supabase dashboard → Project Settings → API → Project URL |
+| `VITE_SUPABASE_ANON_KEY` | Supabase dashboard → Project Settings → API → anon public key |
 
-The build output will be in the `dist` directory.
+Never put the `service_role` key in `.env`; everything in a `VITE_*` variable ends up in the browser bundle.
 
-## 🐛 Troubleshooting
+## Scripts
 
-### Common Issues
+| Command | What it does |
+|---|---|
+| `npm run dev` | Vite dev server on port 3000 |
+| `npm run build` | `tsc && vite build`; output goes to `build/` (not `dist/`) |
+| `npm run preview` | Serve the production build locally |
+| `npm run lint` | ESLint over `src/`, zero warnings allowed |
+| `npm run type-check` | `tsc --noEmit` |
 
-**Issue**: Login fails with "User profile not found"
-- **Solution**: Ensure user exists in both `auth.users` and `user_profiles` tables
+`npm test` and `npm run test:ui` call Playwright, but **there is no Playwright config and there are no tests**, so they do nothing useful. The project has no automated tests and no CI.
 
-**Issue**: Manager sees no clients
-- **Solution**: Verify manager is assigned to an outlet in `user_outlet_assignments` table
+## Database setup
 
-**Issue**: RLS policy errors
-- **Solution**: Check that all migrations have been run in correct order
+1. Apply the SQL files in `supabase/` **by hand in the Supabase SQL editor**, in the order given in [`supabase/MIGRATION_ORDER.md`](supabase/MIGRATION_ORDER.md). The database does not record which files have run, so that file is the source of truth. Note the special cases it lists: the two `013` files, the deprecated `030` (do not run), and the `030a`/`035a` enum files that must run alone first.
+2. **042 (`042_bug_fixes.sql`) and 043 (`043_security_hardening.sql`) are the latest.** Run 042, then 043. Each is one transaction: if a statement fails, nothing is applied. Read the NOTICE messages they print (e.g. skipped indexes because of duplicate data, cancelled invoices with active payments to check by hand). The current frontend expects both.
+3. After a migration, run its verify script if there is one (`038_verify.sql`, `040_041_verify.sql`, `042_verify.sql`, `043_verify.sql`). They run inside `BEGIN … ROLLBACK` and leave the database unchanged. 042/043 verify need permission to insert into `auth.users` (the standard SQL editor has it).
+4. `supabase/data_reset.sql` is a destructive dev tool, not a migration. Never run it against production.
+5. Users are created in Supabase Dashboard → Authentication → Users, followed by a `user_profiles` row (role `admin`, `manager` or `accountant`). The app cannot create logins.
+6. In Supabase → Authentication → URL Configuration, add `<your-site-origin>/reset-password` (and the local `http://localhost:3000/reset-password` if needed) to the redirect allow-list, or the "Forgot password?" emails will not land on the reset page.
 
-## 📄 License
+## Deployment (Render)
 
-Proprietary - All rights reserved
+`render.yaml` defines a static site:
 
-## 👨‍💻 Development Team
+- build command `npm ci && npm run build`, publish directory `./build`,
+- a catch-all rewrite of `/*` to `/index.html` so deep links work on refresh,
+- security headers on every path: Content-Security-Policy (self, Google Fonts and `*.supabase.co` only, no framing), `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS, and immutable caching for `/assets/*`,
+- PR previews off (they would run branch code against the production database).
 
-Built by CoAl Tech for Hybits
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` must be set in the Render dashboard (Environment). Vite bakes them in at **build** time, so after changing either you must trigger a new build, not just a redeploy. If they are missing, the site loads as a blank page.
 
----
+## Documentation
 
-**Current Status**: Phase 2 Complete (Clients Module)
-**Next Phase**: Phase 3 - Subscriptions (Corporate Flow)
+- [`docs/SOFTWARE_OVERVIEW.md`](docs/SOFTWARE_OVERVIEW.md): the full product map (roles, every module, security model, reports, migrations, known gaps)
+- [`docs/APPLICATION_WORKFLOW.md`](docs/APPLICATION_WORKFLOW.md): plain-English guide to the day-to-day workflows
+- [`docs/INVENTORY_GUIDE_AND_PLAN.md`](docs/INVENTORY_GUIDE_AND_PLAN.md): how the dishware stock module works
+- [`docs/RELEASE_NOTES_2026-10.md`](docs/RELEASE_NOTES_2026-10.md): what changed in the October 2026 release and the owner actions it needs
+- [`PRODUCT.md`](PRODUCT.md): users, purpose and product constraints
+- [`DESIGN.md`](DESIGN.md): the visual design system
+- [`supabase/MIGRATION_ORDER.md`](supabase/MIGRATION_ORDER.md): migration run order and verify scripts
+- `docs/archive/`: historical planning documents (superseded)

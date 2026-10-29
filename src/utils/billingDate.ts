@@ -1,4 +1,7 @@
 import type { BillingCycle } from '@/types';
+import { todayISO, toLocalISODate, parseLocalISODate } from '@/utils/date';
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ================================================================
 // BILLING DATE CALCULATION UTILITIES
@@ -24,34 +27,28 @@ export function calculateNextBillingDate(
   billingCycle: BillingCycle,
   billingDay?: number
 ): string {
-  const date = typeof startDate === 'string' ? new Date(startDate) : new Date(startDate);
-  
+  // Local calendar arithmetic only; never round-trip through UTC.
+  const date =
+    typeof startDate === 'string' ? parseLocalISODate(startDate) : new Date(startDate.getTime());
+
   switch (billingCycle) {
     case 'daily':
-      date.setDate(date.getDate() + 1);
-      break;
-      
+      return toLocalISODate(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1));
+
     case 'weekly':
-      date.setDate(date.getDate() + 7);
-      break;
-      
+      return toLocalISODate(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7));
+
     case 'monthly':
       if (!billingDay || billingDay < 1 || billingDay > 28) {
         throw new Error('Billing day must be between 1 and 28 for monthly billing');
       }
-      
-      // Add one month
-      date.setMonth(date.getMonth() + 1);
-      
-      // Set to billing day (safe 1-28 range works for all months)
-      date.setDate(billingDay);
-      break;
-      
+      // Build from parts so Jan 31 + 1 month is never rolled into March.
+      // billingDay <= 28 cannot overflow; the constructor handles year rollover.
+      return toLocalISODate(new Date(date.getFullYear(), date.getMonth() + 1, billingDay));
+
     default:
       throw new Error(`Invalid billing cycle: ${billingCycle}`);
   }
-  
-  return date.toISOString().split('T')[0]; // Return YYYY-MM-DD
 }
 
 /**
@@ -68,8 +65,7 @@ export function calculateNextBillingDateFromToday(
   billingCycle: BillingCycle,
   billingDay?: number
 ): string {
-  const today = new Date();
-  return calculateNextBillingDate(today, billingCycle, billingDay);
+  return calculateNextBillingDate(getTodayISO(), billingCycle, billingDay);
 }
 
 /**
@@ -112,20 +108,18 @@ export function formatBillingCycle(
  * @returns true if date is before today
  */
 export function isDateInPast(date: string | Date): boolean {
-  const checkDate = typeof date === 'string' ? new Date(date) : date;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0); // Reset to start of day
-  checkDate.setHours(0, 0, 0, 0);
-  return checkDate < today;
+  // YYYY-MM-DD strings compare correctly as text. Never mutates the input.
+  const iso = typeof date === 'string' ? date.slice(0, 10) : toLocalISODate(date);
+  return iso < getTodayISO();
 }
 
 /**
  * Get today's date as ISO string (YYYY-MM-DD)
  * 
- * @returns ISO date string
+ * @returns Local (not UTC) date string
  */
 export function getTodayISO(): string {
-  return new Date().toISOString().split('T')[0];
+  return todayISO();
 }
 
 /**
@@ -136,8 +130,13 @@ export function getTodayISO(): string {
  * @returns Formatted date string
  */
 export function formatDate(date: string | Date, format: 'short' | 'long' = 'short'): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  
+  const d =
+    typeof date === 'string'
+      ? ISO_DATE_RE.test(date)
+        ? parseLocalISODate(date)
+        : new Date(date)
+      : date;
+
   if (format === 'long') {
     return d.toLocaleDateString('en-IN', {
       day: '2-digit',

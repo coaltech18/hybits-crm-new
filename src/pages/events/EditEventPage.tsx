@@ -1,15 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { getEventById, updateEvent } from '@/services/eventService';
 import type { Event, UpdateEventInput } from '@/types';
-import { Card } from '@/components/ui/Card';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { StatusBadge } from '@/components/ui/StatusStamp';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { DateInput } from '@/components/ui/DateInput';
+import { Textarea } from '@/components/ui/Textarea';
 import { Alert } from '@/components/ui/Alert';
-import { Spinner } from '@/components/ui/Spinner';
+import { Skeleton } from '@/components/ui/Spinner';
 
 export default function EditEventPage() {
   const { id } = useParams<{ id: string }>();
@@ -18,7 +21,7 @@ export default function EditEventPage() {
   const { showToast } = useToast();
 
   // Dynamic document title
-  const [pageTitle, setPageTitle] = useState('Edit Event');
+  const [pageTitle, setPageTitle] = useState('Edit event');
   useDocumentTitle(pageTitle);
 
   const [event, setEvent] = useState<Event | null>(null);
@@ -30,19 +33,23 @@ export default function EditEventPage() {
   const [formData, setFormData] = useState<UpdateEventInput>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    loadEvent();
-  }, [id]);
+  // Only the latest load may write state (the :id can change while a load is in flight).
+  const requestId = useRef(0);
 
-  async function loadEvent() {
+  const loadEvent = useCallback(async () => {
     if (!id) return;
+    const req = ++requestId.current;
 
     try {
       setLoading(true);
+      setError(null);
+      setErrors({});
+      setEvent(null);
       const data = await getEventById(id);
+      if (req !== requestId.current) return;
 
       if (!data) {
-        setError('Event not found');
+        setError('Event not found or you do not have access');
         return;
       }
 
@@ -54,17 +61,23 @@ export default function EditEventPage() {
         event_name: data.event_name,
         event_type: data.event_type || '',
         event_date: data.event_date,
-        guest_count: data.guest_count || undefined,
+        guest_count: data.guest_count ?? null,
         notes: data.notes || '',
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load event');
+      if (req === requestId.current) {
+        setError(err instanceof Error ? err.message : 'Failed to load event');
+      }
     } finally {
-      setLoading(false);
+      if (req === requestId.current) setLoading(false);
     }
-  }
+  }, [id]);
 
-  function handleChange(field: keyof UpdateEventInput, value: any) {
+  useEffect(() => {
+    loadEvent();
+  }, [loadEvent]);
+
+  function handleChange<K extends keyof UpdateEventInput>(field: K, value: UpdateEventInput[K]) {
     setFormData((prev) => ({ ...prev, [field]: value }));
     // Clear error for this field
     if (errors[field]) {
@@ -83,8 +96,15 @@ export default function EditEventPage() {
       newErrors.event_name = 'Event name is required';
     }
 
-    if (formData.guest_count !== undefined && formData.guest_count <= 0) {
-      newErrors.guest_count = 'Guest count must be greater than 0';
+    if (formData.event_date !== undefined && !formData.event_date) {
+      newErrors.event_date = 'Event date is required';
+    }
+
+    if (
+      formData.guest_count != null &&
+      (!Number.isInteger(formData.guest_count) || formData.guest_count <= 0)
+    ) {
+      newErrors.guest_count = 'Guest count must be a whole number greater than 0';
     }
 
     setErrors(newErrors);
@@ -94,7 +114,7 @@ export default function EditEventPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!validateForm() || !user?.id || !id) return;
+    if (submitting || !validateForm() || !user?.id || !id) return;
 
     try {
       setSubmitting(true);
@@ -112,18 +132,28 @@ export default function EditEventPage() {
     }
   }
 
+  const backTo = { to: `/events/${id}`, label: 'Event' };
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Spinner size="lg" />
+      <div className="mx-auto max-w-3xl" role="status" aria-label="Loading event">
+        <PageHeader back={backTo} title="Edit event" />
+        <div className="sheet space-y-5 p-5 sm:p-6">
+          <Skeleton className="h-5 w-32" />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-10" />)}
+          </div>
+          <Skeleton className="h-20" />
+        </div>
       </div>
     );
   }
 
   if (!event) {
     return (
-      <div className="max-w-2xl mx-auto">
-        <Alert variant="error">Event not found</Alert>
+      <div className="mx-auto max-w-3xl">
+        <PageHeader back={{ to: '/events', label: 'Events' }} title="Edit event" />
+        <Alert variant="error">{error || 'Event not found'}</Alert>
       </div>
     );
   }
@@ -131,115 +161,119 @@ export default function EditEventPage() {
   const canEdit = event.status === 'planned';
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Edit Event</h1>
-        <p className="text-muted-foreground mt-1">
-          Update event: {event.event_name}
-        </p>
-      </div>
+    <div className="mx-auto max-w-3xl">
+      <PageHeader
+        back={{ to: `/events/${id}`, label: event.event_name }}
+        title="Edit event"
+        description={event.event_name}
+      />
 
-      {error && <Alert variant="error">{error}</Alert>}
+      {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
       {!canEdit && (
-        <Alert variant="warning">
+        <Alert variant="warning" className="mb-6">
           This event cannot be edited because it is {event.status}.
         </Alert>
       )}
 
-      <Card>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Read-only fields */}
-          <div className="space-y-4 p-4 bg-muted rounded-lg">
-            <h3 className="font-semibold text-sm text-muted-foreground">Event Info (Read-only)</h3>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Client</label>
-                <p className="text-sm">{event.clients?.name}</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Outlet</label>
-                <p className="text-sm">{event.outlets?.name}</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Status</label>
-                <p className="text-sm capitalize">{event.status}</p>
-              </div>
+      <form onSubmit={handleSubmit} className="sheet">
+        <div className="space-y-6 p-5 sm:p-6">
+          {/* Booking (fixed once created) */}
+          <section aria-labelledby="booking-h" className="space-y-4">
+            <div>
+              <h2 id="booking-h" className="text-lg font-semibold text-ink">Booking</h2>
+              <p className="text-sm text-ink-muted">The client and outlet cannot be changed after an event is created.</p>
             </div>
-          </div>
+            <dl className="grid grid-cols-1 gap-4 rounded-lg bg-paper-sunk px-4 py-3 sm:grid-cols-3">
+              <div className="min-w-0">
+                <dt className="text-sm text-ink-muted">Client</dt>
+                <dd className="truncate font-medium text-ink">{event.clients?.name}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-sm text-ink-muted">Outlet</dt>
+                <dd className="truncate font-medium text-ink">{event.outlets?.name}</dd>
+              </div>
+              <div>
+                <dt className="text-sm text-ink-muted">Status</dt>
+                <dd className="mt-0.5"><StatusBadge kind="event" status={event.status} /></dd>
+              </div>
+            </dl>
+          </section>
 
           {canEdit && (
             <>
-              {/* Event Name */}
-              <Input
-                label="Event Name"
-                value={formData.event_name}
-                onChange={(e) => handleChange('event_name', e.target.value)}
-                error={errors.event_name}
-                required
-              />
+              {/* Event */}
+              <section aria-labelledby="event-h" className="space-y-4 border-t border-rule pt-6">
+                <h2 id="event-h" className="text-lg font-semibold text-ink">Event</h2>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="md:col-span-2">
+                    <Input
+                      label="Event name"
+                      value={formData.event_name}
+                      onChange={(e) => handleChange('event_name', e.target.value)}
+                      error={errors.event_name}
+                      required
+                    />
+                  </div>
 
-              {/* Event Type */}
-              <Input
-                label="Event Type (Optional)"
-                value={formData.event_type}
-                onChange={(e) => handleChange('event_type', e.target.value)}
-              />
+                  <Input
+                    label="Event type (optional)"
+                    value={formData.event_type}
+                    onChange={(e) => handleChange('event_type', e.target.value)}
+                  />
 
-              {/* Event Date */}
-              <Input
-                label="Event Date"
-                type="date"
-                value={formData.event_date}
-                onChange={(e) => handleChange('event_date', e.target.value)}
-                required
-              />
+                  <DateInput
+                    label="Event date"
+                    value={formData.event_date ?? ''}
+                    onChange={(e) => handleChange('event_date', e.target.value)}
+                    error={errors.event_date}
+                    required
+                  />
 
-              {/* Guest Count */}
-              <Input
-                label="Guest Count (Optional)"
-                type="number"
-                min={1}
-                value={formData.guest_count || ''}
-                onChange={(e) => handleChange('guest_count', parseInt(e.target.value) || undefined)}
-                error={errors.guest_count}
-              />
+                  {/* Guest count (empty clears it) */}
+                  <Input
+                    label="Guest count (optional)"
+                    type="number"
+                    min={1}
+                    step={1}
+                    inputMode="numeric"
+                    value={formData.guest_count ?? ''}
+                    onChange={(e) =>
+                      handleChange('guest_count', e.target.value === '' ? null : Number(e.target.value))
+                    }
+                    error={errors.guest_count}
+                    helperText="Leave empty to clear it."
+                  />
+                </div>
+              </section>
 
               {/* Notes */}
-              <div>
-                <label className="block text-sm font-medium mb-2">Notes (Optional)</label>
-                <textarea
+              <section aria-labelledby="notes-h" className="space-y-4 border-t border-rule pt-6">
+                <h2 id="notes-h" className="text-lg font-semibold text-ink">Notes</h2>
+                <Textarea
+                  label="Notes (optional)"
                   value={formData.notes || ''}
                   onChange={(e) => handleChange('notes', e.target.value)}
                   rows={3}
-                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="Additional notes about this event"
+                  placeholder="Venue, timings, anything the dispatch team should know"
                 />
-              </div>
+              </section>
             </>
           )}
+        </div>
 
-          {/* Actions */}
-          <div className="flex gap-3 justify-end pt-4 border-t">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => navigate(`/events/${id}`)}
-              disabled={submitting}
-            >
-              Cancel
+        {/* Sticky action bar */}
+        <div className="sticky bottom-0 flex justify-end gap-3 rounded-b-sheet border-t border-rule bg-white/95 px-5 py-3 backdrop-blur sm:px-6">
+          <Button type="button" variant="outline" onClick={() => navigate(`/events/${id}`)} disabled={submitting}>
+            {canEdit ? 'Cancel' : 'Back to event'}
+          </Button>
+          {canEdit && (
+            <Button type="submit" isLoading={submitting} disabled={submitting}>
+              {submitting ? 'Saving…' : 'Save changes'}
             </Button>
-            {canEdit && (
-              <Button type="submit" disabled={submitting}>
-                {submitting ? 'Saving...' : 'Save Changes'}
-              </Button>
-            )}
-          </div>
-        </form>
-      </Card>
+          )}
+        </div>
+      </form>
     </div>
   );
 }

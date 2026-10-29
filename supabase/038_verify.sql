@@ -40,6 +40,9 @@ BEGIN
     RAISE EXCEPTION 'FY in number wrong: got %, expected INV/2025-26/NNNN', v_number;
   END IF;
 
+  -- 042: a draft needs at least one line item to be finalized
+  INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, line_total, tax_rate, tax_amount)
+  VALUES (v_id, 'Verify line', 1, 100, 100, 18, 18);
   UPDATE invoices SET status = 'finalized' WHERE id = v_id;
   SELECT issued_at INTO v_issued FROM invoices WHERE id = v_id;
 
@@ -53,6 +56,9 @@ BEGIN
   VALUES ('subscription', v_client, v_outlet, 'draft', 100, 18, 118)
   RETURNING id INTO v_id;
 
+  -- 042: a draft needs at least one line item to be finalized
+  INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, line_total, tax_rate, tax_amount)
+  VALUES (v_id, 'Verify line', 1, 100, 100, 18, 18);
   UPDATE invoices SET status = 'finalized' WHERE id = v_id;
   SELECT issued_at INTO v_issued FROM invoices WHERE id = v_id;
 

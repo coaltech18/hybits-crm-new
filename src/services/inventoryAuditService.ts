@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { countErrorMessage } from '@/utils/query';
 
 // ================================================================
 // INVENTORY AUDIT SERVICE
@@ -73,7 +74,7 @@ export interface CreateAuditInput {
 
 export interface UpdateCountInput {
     line_item_id: string;
-    physical_quantity: number;
+    physical_quantity: number | null; // null clears the count (line back to 'pending')
 }
 
 export interface UpdateReasonInput {
@@ -92,14 +93,85 @@ export interface ApproveAuditInput {
 // ================================================================
 
 async function getUserRole(userId: string): Promise<string> {
-    const { data } = await supabase
+    const { data, error } = await supabase
         .from('user_profiles')
         .select('role')
         .eq('id', userId)
         .maybeSingle();
 
+    if (error) throw new Error(error.message);
     return data?.role || '';
 }
+
+/** Admins and managers may work on audits (RLS/RPCs enforce outlet scope). */
+async function assertAuditWriter(userId: string, action: string): Promise<void> {
+    const role = await getUserRole(userId);
+    if (role !== 'admin' && role !== 'manager') {
+        throw new Error(`Only admins and managers can ${action}`);
+    }
+}
+
+// Row of view inventory_audit_summary (026)
+interface AuditSummaryRow extends Omit<Audit, 'id'> {
+    audit_id: string;
+}
+
+function mapAudit(row: AuditSummaryRow): Audit {
+    return {
+        id: row.audit_id,
+        outlet_id: row.outlet_id,
+        outlet_name: row.outlet_name,
+        outlet_code: row.outlet_code,
+        period: row.period,
+        status: row.status,
+        items_total: row.items_total,
+        items_counted: row.items_counted,
+        variance_positive: row.variance_positive,
+        variance_negative: row.variance_negative,
+        created_by: row.created_by,
+        created_by_name: row.created_by_name,
+        approved_by: row.approved_by,
+        approved_by_name: row.approved_by_name,
+        rejection_reason: row.rejection_reason,
+        created_at: row.created_at,
+        submitted_at: row.submitted_at,
+        approved_at: row.approved_at,
+        progress_percentage: row.progress_percentage,
+        status_label: row.status_label,
+    };
+}
+
+type LineItemRow = Omit<AuditLineItem, 'item_name' | 'item_category' | 'item_unit'> & {
+    inventory_items?: { name?: string; category?: string; unit?: string } | null;
+};
+
+function mapLineItem(row: LineItemRow): AuditLineItem {
+    return {
+        id: row.id,
+        audit_id: row.audit_id,
+        inventory_item_id: row.inventory_item_id,
+        item_name: row.inventory_items?.name,
+        item_category: row.inventory_items?.category,
+        item_unit: row.inventory_items?.unit,
+        system_quantity: row.system_quantity,
+        physical_quantity: row.physical_quantity,
+        variance: row.variance,
+        reason_code: row.reason_code,
+        notes: row.notes,
+        status: row.status,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    };
+}
+
+const LINE_ITEM_SELECT = `
+      *,
+      inventory_items:inventory_item_id (
+        name,
+        category,
+        unit
+      )
+    `;
 
 // ================================================================
 // AUDIT CRUD
@@ -141,28 +213,7 @@ export async function getAudits(
 
     if (error) throw new Error(error.message);
 
-    return (data || []).map((row: any) => ({
-        id: row.audit_id,
-        outlet_id: row.outlet_id,
-        outlet_name: row.outlet_name,
-        outlet_code: row.outlet_code,
-        period: row.period,
-        status: row.status,
-        items_total: row.items_total,
-        items_counted: row.items_counted,
-        variance_positive: row.variance_positive,
-        variance_negative: row.variance_negative,
-        created_by: row.created_by,
-        created_by_name: row.created_by_name,
-        approved_by: row.approved_by,
-        approved_by_name: row.approved_by_name,
-        rejection_reason: row.rejection_reason,
-        created_at: row.created_at,
-        submitted_at: row.submitted_at,
-        approved_at: row.approved_at,
-        progress_percentage: row.progress_percentage,
-        status_label: row.status_label,
-    }));
+    return ((data || []) as AuditSummaryRow[]).map(mapAudit);
 }
 
 /**
@@ -181,28 +232,7 @@ export async function getAuditById(
     if (error) throw new Error(error.message);
     if (!data) throw new Error('Audit not found');
 
-    return {
-        id: data.audit_id,
-        outlet_id: data.outlet_id,
-        outlet_name: data.outlet_name,
-        outlet_code: data.outlet_code,
-        period: data.period,
-        status: data.status,
-        items_total: data.items_total,
-        items_counted: data.items_counted,
-        variance_positive: data.variance_positive,
-        variance_negative: data.variance_negative,
-        created_by: data.created_by,
-        created_by_name: data.created_by_name,
-        approved_by: data.approved_by,
-        approved_by_name: data.approved_by_name,
-        rejection_reason: data.rejection_reason,
-        created_at: data.created_at,
-        submitted_at: data.submitted_at,
-        approved_at: data.approved_at,
-        progress_percentage: data.progress_percentage,
-        status_label: data.status_label,
-    };
+    return mapAudit(data as AuditSummaryRow);
 }
 
 /**
@@ -214,35 +244,19 @@ export async function getAuditLineItems(
 ): Promise<AuditLineItem[]> {
     const { data, error } = await supabase
         .from('inventory_audit_line_items')
-        .select(`
-      *,
-      inventory_items:inventory_item_id (
-        name,
-        category,
-        unit
-      )
-    `)
+        .select(LINE_ITEM_SELECT)
         .eq('audit_id', auditId)
-        .order('created_at');
+        .order('id'); // stable; every line shares one created_at
 
     if (error) throw new Error(error.message);
 
-    return (data || []).map((row: any) => ({
-        id: row.id,
-        audit_id: row.audit_id,
-        inventory_item_id: row.inventory_item_id,
-        item_name: row.inventory_items?.name,
-        item_category: row.inventory_items?.category,
-        item_unit: row.inventory_items?.unit,
-        system_quantity: row.system_quantity,
-        physical_quantity: row.physical_quantity,
-        variance: row.variance,
-        reason_code: row.reason_code,
-        notes: row.notes,
-        status: row.status,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    }));
+    // Sort by item name (then id) so the count sheet keeps its order across saves.
+    return ((data || []) as LineItemRow[])
+        .map(mapLineItem)
+        .sort(
+            (a, b) =>
+                (a.item_name || '').localeCompare(b.item_name || '') || a.id.localeCompare(b.id)
+        );
 }
 
 /**
@@ -253,11 +267,7 @@ export async function createAudit(
     userId: string,
     input: CreateAuditInput
 ): Promise<{ audit: Audit; lineItems: AuditLineItem[] }> {
-    const role = await getUserRole(userId);
-
-    if (role === 'accountant') {
-        throw new Error('Accountants cannot create audits');
-    }
+    await assertAuditWriter(userId, 'create audits');
 
     // Call the database function
     const { data, error } = await supabase
@@ -286,13 +296,18 @@ export async function canCreateAudit(
     outletId: string,
     period: string
 ): Promise<{ canCreate: boolean; reason?: string }> {
-    // Check if audit already exists
-    const { data: existing } = await supabase
+    // Check if a live audit already exists. A REJECTED audit does not block
+    // its period: it can be audited again (migration 042).
+    const { data: existing, error: existingError } = await supabase
         .from('inventory_audits')
         .select('id, status')
         .eq('outlet_id', outletId)
         .eq('period', period)
+        .neq('status', 'rejected')
+        .limit(1)
         .maybeSingle();
+
+    if (existingError) throw new Error(existingError.message);
 
     if (existing) {
         return {
@@ -302,12 +317,15 @@ export async function canCreateAudit(
     }
 
     // Check if there's an active audit
-    const { data: active } = await supabase
+    const { data: active, error: activeError } = await supabase
         .from('inventory_audits')
         .select('id, period')
         .eq('outlet_id', outletId)
         .in('status', ['counting', 'review', 'pending_approval'])
+        .limit(1)
         .maybeSingle();
+
+    if (activeError) throw new Error(activeError.message);
 
     if (active) {
         return {
@@ -320,14 +338,19 @@ export async function canCreateAudit(
 }
 
 /**
- * Check if there's an active audit for an outlet
+ * Count open audits (counting / review / pending approval), optionally for one outlet.
+ * RLS scopes managers to their assigned outlets.
  */
-export async function hasActiveAudit(outletId: string): Promise<boolean> {
-    const { data, error } = await supabase
-        .rpc('check_active_audit', { p_outlet_id: outletId });
+export async function countActiveAudits(outletId?: string): Promise<number> {
+    let query = supabase
+        .from('inventory_audits')
+        .select('id', { count: 'exact', head: true })
+        .in('status', ['counting', 'review', 'pending_approval']);
+    if (outletId) query = query.eq('outlet_id', outletId);
 
-    if (error) return false;
-    return data as boolean;
+    const { count, error, status } = await query;
+    if (error) throw new Error(countErrorMessage(error, status, 'open audits'));
+    return count ?? 0;
 }
 
 // ================================================================
@@ -341,13 +364,9 @@ export async function updateCount(
     userId: string,
     input: UpdateCountInput
 ): Promise<AuditLineItem> {
-    const role = await getUserRole(userId);
+    await assertAuditWriter(userId, 'update counts');
 
-    if (role === 'accountant') {
-        throw new Error('Accountants cannot update counts');
-    }
-
-    if (input.physical_quantity < 0) {
+    if (input.physical_quantity !== null && input.physical_quantity < 0) {
         throw new Error('Physical quantity cannot be negative');
     }
 
@@ -355,69 +374,16 @@ export async function updateCount(
         .from('inventory_audit_line_items')
         .update({
             physical_quantity: input.physical_quantity,
-            status: 'counted',
+            status: input.physical_quantity === null ? 'pending' : 'counted',
         })
         .eq('id', input.line_item_id)
-        .select(`
-      *,
-      inventory_items:inventory_item_id (
-        name,
-        category,
-        unit
-      )
-    `)
+        .select(LINE_ITEM_SELECT)
         .maybeSingle();
 
     if (error) throw new Error(error.message);
     if (!data) throw new Error('Line item not found');
 
-    return {
-        id: data.id,
-        audit_id: data.audit_id,
-        inventory_item_id: data.inventory_item_id,
-        item_name: data.inventory_items?.name,
-        item_category: data.inventory_items?.category,
-        item_unit: data.inventory_items?.unit,
-        system_quantity: data.system_quantity,
-        physical_quantity: data.physical_quantity,
-        variance: data.variance,
-        reason_code: data.reason_code,
-        notes: data.notes,
-        status: data.status,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-    };
-}
-
-/**
- * Update multiple counts at once
- */
-export async function updateCounts(
-    userId: string,
-    inputs: UpdateCountInput[]
-): Promise<void> {
-    const role = await getUserRole(userId);
-
-    if (role === 'accountant') {
-        throw new Error('Accountants cannot update counts');
-    }
-
-    // Update each count
-    for (const input of inputs) {
-        if (input.physical_quantity < 0) {
-            throw new Error('Physical quantity cannot be negative');
-        }
-
-        const { error } = await supabase
-            .from('inventory_audit_line_items')
-            .update({
-                physical_quantity: input.physical_quantity,
-                status: 'counted',
-            })
-            .eq('id', input.line_item_id);
-
-        if (error) throw new Error(error.message);
-    }
+    return mapLineItem(data as LineItemRow);
 }
 
 /**
@@ -427,53 +393,24 @@ export async function updateVarianceReason(
     userId: string,
     input: UpdateReasonInput
 ): Promise<AuditLineItem> {
-    const role = await getUserRole(userId);
-
-    if (role === 'accountant') {
-        throw new Error('Accountants cannot update variance reasons');
-    }
-
-    if (!input.reason_code) {
-        throw new Error('Reason code is required');
-    }
+    await assertAuditWriter(userId, 'update variance reasons');
 
     const { data, error } = await supabase
         .from('inventory_audit_line_items')
         .update({
-            reason_code: input.reason_code,
-            notes: input.notes,
-            status: 'reviewed',
+            reason_code: input.reason_code || null,
+            notes: input.notes || null,
+            // 'reviewed' only once a reason is set; a notes-only edit leaves the status alone
+            ...(input.reason_code ? { status: 'reviewed' } : {}),
         })
         .eq('id', input.line_item_id)
-        .select(`
-      *,
-      inventory_items:inventory_item_id (
-        name,
-        category,
-        unit
-      )
-    `)
+        .select(LINE_ITEM_SELECT)
         .maybeSingle();
 
     if (error) throw new Error(error.message);
     if (!data) throw new Error('Line item not found');
 
-    return {
-        id: data.id,
-        audit_id: data.audit_id,
-        inventory_item_id: data.inventory_item_id,
-        item_name: data.inventory_items?.name,
-        item_category: data.inventory_items?.category,
-        item_unit: data.inventory_items?.unit,
-        system_quantity: data.system_quantity,
-        physical_quantity: data.physical_quantity,
-        variance: data.variance,
-        reason_code: data.reason_code,
-        notes: data.notes,
-        status: data.status,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-    };
+    return mapLineItem(data as LineItemRow);
 }
 
 // ================================================================
@@ -491,11 +428,7 @@ export async function submitAudit(
     autoApproved: boolean;
     movementsCreated: number;
 }> {
-    const role = await getUserRole(userId);
-
-    if (role === 'accountant') {
-        throw new Error('Accountants cannot submit audits');
-    }
+    await assertAuditWriter(userId, 'submit audits');
 
     const { data, error } = await supabase
         .rpc('submit_inventory_audit', {
@@ -505,8 +438,8 @@ export async function submitAudit(
 
     if (error) throw new Error(error.message);
 
-    const result = data as any[];
-    const row = result?.[0] || data;
+    type SubmitRow = { audit_id: string; auto_approved: boolean; movements_created: number };
+    const row = (Array.isArray(data) ? data[0] : data) as SubmitRow | null;
 
     const audit = await getAuditById(userId, auditId);
 
@@ -545,8 +478,8 @@ export async function approveAudit(
 
     if (error) throw new Error(error.message);
 
-    const result = data as any[];
-    const row = result?.[0] || data;
+    type ApproveRow = { audit_id: string; success: boolean; movements_created: number };
+    const row = (Array.isArray(data) ? data[0] : data) as ApproveRow | null;
 
     const audit = await getAuditById(userId, auditId);
 
@@ -564,11 +497,7 @@ export async function cancelAudit(
     userId: string,
     auditId: string
 ): Promise<void> {
-    const role = await getUserRole(userId);
-
-    if (role === 'accountant') {
-        throw new Error('Accountants cannot cancel audits');
-    }
+    await assertAuditWriter(userId, 'cancel audits');
 
     // Check audit status
     const audit = await getAuditById(userId, auditId);
@@ -593,25 +522,17 @@ export async function cancelAudit(
 /**
  * Get pending approvals count (for admin dashboard)
  */
-export async function getPendingApprovalsCount(
-    _userId: string
-): Promise<number> {
-    const { count, error } = await supabase
+export async function getPendingApprovalsCount(outletId?: string): Promise<number> {
+    let query = supabase
         .from('inventory_audits')
         .select('id', { count: 'exact', head: true })
         .eq('status', 'pending_approval');
+    if (outletId) query = query.eq('outlet_id', outletId);
 
-    if (error) return 0;
+    const { count, error, status } = await query;
+
+    if (error) throw new Error(countErrorMessage(error, status, 'pending approvals'));
     return count || 0;
-}
-
-/**
- * Get audits pending approval
- */
-export async function getPendingApprovals(
-    userId: string
-): Promise<Audit[]> {
-    return getAudits(userId, { status: 'pending_approval' });
 }
 
 // ================================================================

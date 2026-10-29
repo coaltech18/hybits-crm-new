@@ -1,18 +1,29 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSearchParams } from 'react-router-dom';
-import { getInventoryMovements } from '@/services/inventoryMovementService';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import {
+  getInventoryMovements,
+  getInventoryMovementsPage,
+  istDateTimeParts,
+} from '@/services/inventoryMovementService';
 import { getInventoryItems } from '@/services/inventoryService';
-import type { InventoryMovement, InventoryItem, MovementType } from '@/types';
+import type { InventoryMovement, InventoryItem, MovementType, MovementFilters } from '@/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { Spinner } from '@/components/ui/Spinner';
+import { TableSkeleton } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
-import { Input } from '@/components/ui/Input';
+import { DateInput } from '@/components/ui/DateInput';
 import { Select } from '@/components/ui/Select';
-import { History, Download } from 'lucide-react';
-import Papa from 'papaparse';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { History, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { objectsToCsv, downloadCsv } from '@/utils/csv';
+import { todayISO } from '@/utils/date';
+import { cn } from '@/utils/cn';
+import { movementTypeLabel } from '@/components/inventory/movementLabels';
+import { MovementBadge, SignedQty, ReferenceCell } from './StockParts';
+import { MOVEMENT_FILTER_OPTIONS, istWhen, pcs } from './stockDisplay';
 
 // ================================================================
 // INVENTORY MOVEMENTS PAGE
@@ -20,16 +31,22 @@ import Papa from 'papaparse';
 // CRITICAL RULES:
 // - Read-only for all roles
 // - All data from DB (inventory_movements_with_details view)
-// - CSV export matches table data exactly
+// - On-screen list is paged; CSV export fetches every matching row
 // - Manager sees assigned outlets only (RLS enforced)
 // ================================================================
 
+const PAGE_SIZE = 50;
+
 export default function InventoryMovementsPage() {
+  useDocumentTitle('Stock movements');
   const { user, outlets } = useAuth();
   const [searchParams] = useSearchParams();
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Filters
@@ -43,144 +60,116 @@ export default function InventoryMovementsPage() {
   const showOutletFilter = userRole === 'admin' || userRole === 'accountant';
   const availableOutlets = outlets || [];
 
+  const buildFilters = useCallback((): MovementFilters => {
+    const filters: MovementFilters = {};
+    if (outletId) filters.outlet_id = outletId;
+    if (itemId) filters.inventory_item_id = itemId;
+    if (movementType) filters.movement_type = movementType;
+    if (dateFrom) filters.date_from = dateFrom;
+    if (dateTo) filters.date_to = dateTo;
+    return filters;
+  }, [outletId, itemId, movementType, dateFrom, dateTo]);
+
   useEffect(() => {
-    loadItems();
+    if (!user?.id) return;
+    getInventoryItems(user.id, { is_active: 'all' })
+      .then(setItems)
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? `Failed to load items: ${err.message}` : 'Failed to load items')
+      );
   }, [user?.id]);
 
+  // Back to the first page whenever a filter changes.
   useEffect(() => {
-    loadData();
-  }, [user?.id, outletId, itemId, movementType, dateFrom, dateTo]);
+    setPage(0);
+  }, [outletId, itemId, movementType, dateFrom, dateTo]);
 
-  async function loadItems() {
+  useEffect(() => {
     if (!user?.id) return;
+    let stale = false;
 
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const result = await getInventoryMovementsPage(buildFilters(), page, PAGE_SIZE);
+        if (!stale) {
+          setMovements(result.rows);
+          setTotal(result.total);
+        }
+      } catch (err) {
+        if (!stale) setError(err instanceof Error ? err.message : 'Failed to load movements');
+      } finally {
+        if (!stale) setLoading(false);
+      }
+    })();
+
+    return () => {
+      stale = true;
+    };
+  }, [user?.id, buildFilters, page]);
+
+  async function exportToCSV() {
+    if (!user?.id || exporting) return;
     try {
-      const data = await getInventoryItems(user.id, { is_active: true });
-      setItems(data);
+      setExporting(true);
+      const all = await getInventoryMovements(user.id, buildFilters());
+      const rows = all.map((m) => {
+        const { date, time } = istDateTimeParts(m.created_at);
+        return {
+          Date: date,
+          Time: time,
+          Item: m.item_name || '',
+          Category: m.item_category || '',
+          Outlet: m.outlet_name || '',
+          'Movement Type': movementTypeLabel(m.movement_type),
+          Quantity: m.quantity,
+          'Reference Type': m.reference_type,
+          'Reference Name': m.reference_name || '',
+          Notes: m.notes || '',
+          'Created By': m.created_by_name || '',
+        };
+      });
+      downloadCsv(`inventory-movements-${todayISO()}.csv`, objectsToCsv(rows));
     } catch (err) {
-      console.error('Failed to load items:', err);
-    }
-  }
-
-  async function loadData() {
-    if (!user?.id) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      const filters: any = {};
-      if (outletId) filters.outlet_id = outletId;
-      if (itemId) filters.inventory_item_id = itemId;
-      if (movementType) filters.movement_type = movementType;
-      if (dateFrom) filters.date_from = dateFrom;
-      if (dateTo) filters.date_to = dateTo;
-
-      const data = await getInventoryMovements(user.id, filters);
-      setMovements(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load movements');
+      setError(err instanceof Error ? `Export failed: ${err.message}` : 'Export failed');
     } finally {
-      setLoading(false);
+      setExporting(false);
     }
   }
 
-  function getMovementTypeBadge(type: MovementType) {
-    const colors: Record<MovementType, string> = {
-      stock_in: 'bg-green-100 text-green-800',
-      allocation: 'bg-brand-primary/20 text-brand-primary',
-      return: 'bg-purple-100 text-purple-800',
-      damage: 'bg-orange-100 text-orange-800',
-      loss: 'bg-red-100 text-red-800',
-      adjustment: 'bg-yellow-100 text-yellow-800',
-    };
-
-    const labels: Record<MovementType, string> = {
-      stock_in: 'Added',
-      allocation: 'Sent Out',
-      return: 'Returned',
-      damage: 'Damaged',
-      loss: 'Lost',
-      adjustment: 'Adjustment',
-    };
-
-    return (
-      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${colors[type]}`}>
-        {labels[type] || type.replace('_', ' ').toUpperCase()}
-      </span>
-    );
-  }
-
-  function exportToCSV() {
-    const csvData = movements.map(m => ({
-      Date: new Date(m.created_at).toLocaleDateString(),
-      Time: new Date(m.created_at).toLocaleTimeString(),
-      Item: m.item_name || '',
-      Category: m.item_category || '',
-      Outlet: m.outlet_name || '',
-      'Movement Type': m.movement_type,
-      Quantity: m.quantity,
-      'Reference Type': m.reference_type,
-      'Reference Name': m.reference_name || '',
-      Notes: m.notes || '',
-      'Created By': m.created_by_name || '',
-    }));
-
-    const csv = Papa.unparse(csvData);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `inventory-movements-${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }
-
-  if (loading && movements.length === 0) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const firstLoad = loading && movements.length === 0;
+  const hasFilters = Boolean(outletId || itemId || movementType || dateFrom || dateTo);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <History className="w-8 h-8" />
-            Inventory Movements
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Complete movement history (read-only)
-          </p>
-        </div>
+    <div>
+      <PageHeader
+        title="Stock movements"
+        description="Every piece added, sent out, returned or written off. The ledger can’t be edited."
+        actions={
+          total > 0 && (
+            <Button type="button" variant="outline" onClick={exportToCSV} disabled={exporting}>
+              <Download className="h-4 w-4" aria-hidden="true" />
+              {exporting ? 'Exporting…' : 'Export CSV'}
+            </Button>
+          )
+        }
+      />
 
-        {movements.length > 0 && (
-          <Button onClick={exportToCSV}>
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </Button>
-        )}
-      </div>
-
-      {error && <Alert variant="error">{error}</Alert>}
+      {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
       {/* Filters */}
-      <Card>
-        <h3 className="font-semibold mb-4">Filters</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <Card padding="sm" className="mb-6">
+        <div
+          className={cn(
+            'grid grid-cols-1 gap-4 sm:grid-cols-2',
+            showOutletFilter ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
+          )}
+        >
           {showOutletFilter && (
-            <Select
-              label="Outlet"
-              value={outletId}
-              onChange={(e) => setOutletId(e.target.value)}
-            >
-              <option value="">All Outlets</option>
+            <Select label="Outlet" value={outletId} onChange={(e) => setOutletId(e.target.value)}>
+              <option value="">All outlets</option>
               {availableOutlets.map((outlet) => (
                 <option key={outlet.id} value={outlet.id}>
                   {outlet.name}
@@ -189,12 +178,8 @@ export default function InventoryMovementsPage() {
             </Select>
           )}
 
-          <Select
-            label="Item"
-            value={itemId}
-            onChange={(e) => setItemId(e.target.value)}
-          >
-            <option value="">All Items</option>
+          <Select label="Item" value={itemId} onChange={(e) => setItemId(e.target.value)}>
+            <option value="">All items</option>
             {items.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name} ({item.category})
@@ -203,125 +188,152 @@ export default function InventoryMovementsPage() {
           </Select>
 
           <Select
-            label="Movement Type"
+            label="Movement"
             value={movementType}
             onChange={(e) => setMovementType(e.target.value as MovementType | '')}
           >
-            <option value="">All Types</option>
-            <option value="stock_in">Added</option>
-            <option value="allocation">Sent Out</option>
-            <option value="return">Returned</option>
-            <option value="damage">Damaged</option>
-            <option value="loss">Lost</option>
-            <option value="adjustment">Adjustment</option>
+            <option value="">All movements</option>
+            {MOVEMENT_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </Select>
 
-          <Input
-            type="date"
-            label="From Date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-          />
+          <DateInput label="From" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
 
-          <Input
-            type="date"
-            label="To Date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-          />
-
-          {(outletId || itemId || movementType || dateFrom || dateTo) && (
-            <div className="flex items-end">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setOutletId('');
-                  setItemId('');
-                  setMovementType('');
-                  setDateFrom('');
-                  setDateTo('');
-                }}
-              >
-                Clear Filters
-              </Button>
-            </div>
-          )}
+          <DateInput label="To" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         </div>
+
+        {hasFilters && (
+          <div className="mt-3 flex justify-end border-t border-rule pt-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setOutletId('');
+                setItemId('');
+                setMovementType('');
+                setDateFrom('');
+                setDateTo('');
+              }}
+            >
+              Clear filters
+            </Button>
+          </div>
+        )}
       </Card>
 
-      {/* Movements Table */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">Movement History</h3>
-          <p className="text-sm text-muted-foreground">{movements.length} movements</p>
+      {/* Movements ledger */}
+      <section className="sheet overflow-hidden" aria-labelledby="movements-h" aria-busy={loading || undefined}>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-rule px-5 py-4">
+          <div className="min-w-0">
+            <h2 id="movements-h" className="text-lg font-semibold text-ink">Ledger</h2>
+            <p className="text-sm text-ink-muted">
+              Newest first. + and − show the change to available stock; unsigned rows moved pieces between other buckets.
+            </p>
+          </div>
+          {!firstLoad && total > 0 && (
+            <p className="tabular shrink-0 text-sm text-ink-muted">
+              {pcs(page * PAGE_SIZE + 1)}–{pcs(page * PAGE_SIZE + movements.length)} of {pcs(total)} movements
+            </p>
+          )}
         </div>
 
-        {movements.length === 0 ? (
-          <div className="text-center py-12">
-            <History className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <p className="text-muted-foreground">No movements found</p>
-          </div>
+        {firstLoad ? (
+          <TableSkeleton rows={8} cols={6} />
+        ) : movements.length === 0 ? (
+          <EmptyState
+            icon={History}
+            title={hasFilters ? 'No movements match these filters' : 'No movements recorded yet'}
+            description={
+              hasFilters
+                ? 'Widen the date range or clear the filters.'
+                : 'Stock added, sent out, returned or written off will appear here.'
+            }
+          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b">
+          <div className={cn('overflow-x-auto transition-opacity', loading && 'opacity-60')}>
+            <table className="ledger">
+              <thead>
                 <tr>
-                  <th className="text-left py-3 px-4">Date/Time</th>
-                  <th className="text-left py-3 px-4">Item</th>
-                  {showOutletFilter && <th className="text-left py-3 px-4">Outlet</th>}
-                  <th className="text-left py-3 px-4">Type</th>
-                  <th className="text-right py-3 px-4">Quantity</th>
-                  <th className="text-left py-3 px-4">Reference</th>
-                  <th className="text-left py-3 px-4">Notes</th>
-                  <th className="text-left py-3 px-4">User</th>
+                  <th scope="col">Item</th>
+                  <th scope="col">When · by</th>
+                  <th scope="col">Movement</th>
+                  <th scope="col" className="text-right">Qty</th>
+                  <th scope="col">Reference</th>
+                  <th scope="col">Notes</th>
                 </tr>
               </thead>
               <tbody>
-                {movements.map((movement) => (
-                  <tr key={movement.id} className="border-b hover:bg-muted/50">
-                    <td className="py-3 px-4 text-sm">
-                      <div>
-                        <p>{new Date(movement.created_at).toLocaleDateString()}</p>
-                        <p className="text-muted-foreground text-xs">
-                          {new Date(movement.created_at).toLocaleTimeString()}
-                        </p>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div>
-                        <p className="font-medium text-sm">{movement.item_name}</p>
-                        <p className="text-xs text-muted-foreground">{movement.item_category}</p>
-                      </div>
-                    </td>
-                    {showOutletFilter && (
-                      <td className="py-3 px-4 text-sm">{movement.outlet_name}</td>
-                    )}
-                    <td className="py-3 px-4">{getMovementTypeBadge(movement.movement_type)}</td>
-                    <td className="text-right py-3 px-4 font-semibold">{movement.quantity}</td>
-                    <td className="py-3 px-4 text-sm">
-                      {movement.reference_type !== 'manual' && (
-                        <div>
-                          <Badge variant="default">{movement.reference_type}</Badge>
-                          {movement.reference_name && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {movement.reference_name}
-                            </p>
-                          )}
+                {movements.map((movement) => {
+                  const when = istWhen(movement.created_at);
+                  return (
+                    <tr key={movement.id}>
+                      <td className="min-w-[10rem]">
+                        <div className="inline-block max-w-full align-top">
+                          <div className="font-semibold text-ink">{movement.item_name}</div>
+                          <div className="text-xs text-ink-muted">
+                            {[movement.item_category, showOutletFilter ? movement.outlet_name : null].filter(Boolean).join(' · ')}
+                          </div>
                         </div>
-                      )}
-                      {movement.reference_type === 'manual' && (
-                        <span className="text-muted-foreground">Manual</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-sm">{movement.notes || '-'}</td>
-                    <td className="py-3 px-4 text-sm">{movement.created_by_name || '-'}</td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="whitespace-nowrap">
+                        <div>
+                          <div className="text-ink">
+                            {when.date} <span className="tabular text-ink-muted">{when.time}</span>
+                          </div>
+                          <div className="text-xs text-ink-muted">{movement.created_by_name || '—'}</div>
+                        </div>
+                      </td>
+                      <td><MovementBadge type={movement.movement_type} /></td>
+                      <td className="cell-emph text-right"><SignedQty movement={movement} /></td>
+                      <td className="min-w-[10rem]"><ReferenceCell movement={movement} /></td>
+                      <td className="max-w-[16rem] truncate text-ink-muted" title={movement.notes || undefined}>
+                        {movement.notes || '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
-      </Card>
+
+        {pageCount > 1 && (
+          <nav
+            aria-label="Pages"
+            className="flex flex-wrap items-center justify-between gap-3 border-t border-rule px-5 py-3"
+          >
+            <span className="tabular text-sm text-ink-muted">
+              Page {page + 1} of {pcs(pageCount)}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page === 0 || loading}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page + 1 >= pageCount || loading}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
+          </nav>
+        )}
+      </section>
     </div>
   );
 }

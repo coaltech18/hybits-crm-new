@@ -15,4 +15,12 @@ module.exports = {
       { allowConstantExport: true },
     ],
   },
+  overrides: [
+    {
+      // Provider + hook pairs, shared field helpers and the entry file:
+      // fast refresh falls back to a full reload here, which is fine.
+      files: ['src/contexts/*.tsx', 'src/components/ui/Input.tsx', 'src/components/ui/Modal.tsx', 'src/components/ui/DateInput.tsx', 'src/main.tsx'],
+      rules: { 'react-refresh/only-export-components': 'off' },
+    },
+  ],
 };

@@ -1,21 +1,33 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays, CalendarPlus } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { getEvents, completeEvent, cancelEvent } from '@/services/eventService';
+import { getEvents, completeEvent } from '@/services/eventService';
 import { getClients } from '@/services/clientService';
-import type { Event, EventStatus, Client } from '@/types';
+import type { Event, EventStatus, EventFilters, Client } from '@/types';
 import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { Spinner } from '@/components/ui/Spinner';
+import { Button, LinkButton } from '@/components/ui/Button';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { StatusBadge } from '@/components/ui/StatusStamp';
+import { TableSkeleton } from '@/components/ui/Spinner';
 import { Alert } from '@/components/ui/Alert';
 import { Select } from '@/components/ui/Select';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { formatDate } from '@/utils/billingDate';
+import { todayISO } from '@/utils/date';
+import { cn } from '@/utils/cn';
+
+// ================================================================
+// EVENTS — one-off bookings. Ledger split (presentation only) into
+// upcoming and past at today's date, in the order the service
+// returned them. One visible action per row: complete a planned
+// event once its date has arrived; everything else lives on detail.
+// ================================================================
+
+const count = (n: number) => new Intl.NumberFormat('en-IN').format(n);
 
 export default function EventsPage() {
   useDocumentTitle('Events');
@@ -28,285 +40,297 @@ export default function EventsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const canManage = user?.role === 'admin' || user?.role === 'manager';
+
   // Filters
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<EventStatus | ''>('');
+  const hasFilters = !!(selectedClient || selectedStatus);
 
   // Action states
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Cancelling lives on the event detail page; the list only offers Complete.
   const [confirmAction, setConfirmAction] = useState<{
-    type: 'complete' | 'cancel';
     eventId: string;
     eventName: string;
+    eventDate: string;
   } | null>(null);
 
-  useEffect(() => {
-    if (!isAuthReady) return;
-    loadData();
-  }, [isAuthReady, user?.id, selectedClient, selectedStatus]);
+  // Only the latest events request may write state
+  const requestIdRef = useRef(0);
+  const userId = user?.id;
 
-  async function loadData() {
-    if (!user?.id) return;
+  const loadEvents = useCallback(async () => {
+    if (!userId) return;
+    const requestId = ++requestIdRef.current;
 
     try {
       setLoading(true);
       setError(null);
 
-      const filters: any = {};
+      const filters: EventFilters = {};
       if (selectedClient) filters.client_id = selectedClient;
       if (selectedStatus) filters.status = selectedStatus;
 
-      const [eventsData, clientsData] = await Promise.all([
-        getEvents(user.id, filters),
-        getClients(user.id, { client_type: 'event' }),
-      ]);
-
-      setEvents(eventsData);
-      setClients(clientsData);
+      const eventsData = await getEvents(userId, filters);
+      if (requestId === requestIdRef.current) setEvents(eventsData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load events');
+      if (requestId === requestIdRef.current) {
+        setError(err instanceof Error ? err.message : 'Failed to load events');
+      }
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
-  }
+  }, [userId, selectedClient, selectedStatus]);
 
-  async function handleAction(action: 'complete' | 'cancel', eventId: string) {
-    if (!user?.id) return;
+  useEffect(() => {
+    if (!isAuthReady) return;
+    loadEvents();
+  }, [isAuthReady, loadEvents]);
+
+  // Client filter options: load once per user
+  useEffect(() => {
+    if (!isAuthReady || !userId) return;
+    let stale = false;
+    getClients(userId, { client_type: 'event' })
+      .then((data) => {
+        if (!stale) setClients(data);
+      })
+      .catch((err: unknown) => {
+        if (!stale) setError(err instanceof Error ? err.message : 'Failed to load clients');
+      });
+    return () => {
+      stale = true;
+    };
+  }, [isAuthReady, userId]);
+
+  async function handleComplete(eventId: string) {
+    if (!user?.id || actionLoading) return;
 
     try {
       setActionLoading(eventId);
-
-      if (action === 'complete') {
-        await completeEvent(user.id, eventId);
-        showToast('Event marked as completed', 'success');
-      } else if (action === 'cancel') {
-        await cancelEvent(user.id, eventId);
-        showToast('Event cancelled', 'success');
-      }
+      await completeEvent(user.id, eventId);
+      showToast('Event marked as completed', 'success');
 
       setConfirmAction(null);
-      await loadData();
+      await loadEvents();
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : `Failed to ${action} event`;
+      const errorMessage = err instanceof Error ? err.message : 'Failed to complete event';
       showToast(errorMessage, 'error');
     } finally {
       setActionLoading(null);
     }
   }
 
-  function getStatusBadge(status: EventStatus) {
-    const variants = {
-      planned: 'default' as const,
-      completed: 'success' as const,
-      cancelled: 'secondary' as const,
-      archived: 'secondary' as const,
-    };
-    return <Badge variant={variants[status]}>{status.toUpperCase()}</Badge>;
+  const today = todayISO();
+
+  const completeMessage = confirmAction
+    ? `Mark "${confirmAction.eventName}" as completed? The event will be ready for invoicing.` +
+      (confirmAction.eventDate > today
+        ? ` Note: this event is dated ${formatDate(confirmAction.eventDate)}, which is in the future.`
+        : '')
+    : '';
+
+  // Presentation only: split the loaded rows at today's date, keeping their order.
+  const upcoming = events.filter((e) => e.event_date >= today);
+  const past = events.filter((e) => e.event_date < today);
+  const first = loading && events.length === 0;
+
+  function renderRow(event: Event) {
+    const quiet = event.status === 'cancelled';
+    const showComplete = canManage && event.status === 'planned' && event.event_date <= today;
+    return (
+      <tr key={event.id} className={cn(quiet && 'row-void')}>
+        <td className="max-w-[18rem]">
+          <div className="inline-block max-w-full align-top">
+            <Link
+              to={`/events/${event.id}`}
+              className={cn('font-semibold hover:text-brand-primary', quiet ? 'text-void' : 'text-ink')}
+            >
+              {event.event_name}
+            </Link>
+            {event.event_type && <div className="truncate text-xs text-ink-muted">{event.event_type}</div>}
+          </div>
+        </td>
+        <td className="whitespace-nowrap">{formatDate(event.event_date)}</td>
+        <td className="max-w-[16rem]">
+          <div className="min-w-0">
+            <div className="truncate">{event.clients?.name || 'Unknown client'}</div>
+            <div className="truncate text-xs text-ink-muted">{event.outlets?.name || 'Unknown outlet'}</div>
+          </div>
+        </td>
+        <td className="text-right">{event.guest_count ? count(event.guest_count) : <span className="text-ink-faint">—</span>}</td>
+        <td><StatusBadge kind="event" status={event.status} /></td>
+        {canManage && (
+          <td className="text-right">
+            {showComplete && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setConfirmAction({
+                    eventId: event.id,
+                    eventName: event.event_name,
+                    eventDate: event.event_date,
+                  })
+                }
+                disabled={actionLoading === event.id}
+              >
+                Complete
+              </Button>
+            )}
+          </td>
+        )}
+      </tr>
+    );
   }
 
-  if (loading && events.length === 0) {
+  function groupRow(label: string, n: number) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Spinner size="lg" />
-      </div>
+      <tr className="hover:!bg-transparent">
+        <th
+          scope="colgroup"
+          colSpan={canManage ? 6 : 5}
+          className="border-b border-rule bg-paper px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted"
+        >
+          {label} <span className="tabular font-medium normal-case tracking-normal">· {count(n)}</span>
+        </th>
+      </tr>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Events</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage one-time event bookings
-          </p>
-        </div>
-        {user?.role !== 'accountant' && (
-          <Link to="/events/add">
-            <Button>+ Add Event</Button>
-          </Link>
-        )}
-      </div>
+    <div>
+      <PageHeader
+        title="Events"
+        description="One-off bookings such as weddings and functions, with the dishware sent to each."
+        actions={
+          canManage && (
+            <LinkButton to="/events/add">
+              <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+              New event
+            </LinkButton>
+          )
+        }
+      />
 
-      {/* Filters */}
-      <Card>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Select
-            label="Client"
-            value={selectedClient}
-            onChange={(e) => setSelectedClient(e.target.value)}
-          >
-            <option value="">All Clients</option>
-            {clients.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.name}
-              </option>
-            ))}
-          </Select>
+      {/* Filters stay mounted while the ledger reloads */}
+      <Card padding="sm" className="mb-6">
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="w-full sm:w-64">
+            <Select label="Client" value={selectedClient} onChange={(e) => setSelectedClient(e.target.value)}>
+              <option value="">All clients</option>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}
+                </option>
+              ))}
+            </Select>
+          </div>
 
-          <Select
-            label="Status"
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value as EventStatus | '')}
-          >
-            <option value="">All Statuses</option>
-            <option value="planned">Planned</option>
-            <option value="completed">Completed</option>
-            <option value="cancelled">Cancelled</option>
-          </Select>
+          <div className="w-full sm:w-48">
+            <Select
+              label="Status"
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value as EventStatus | '')}
+            >
+              <option value="">All statuses</option>
+              <option value="planned">Planned</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </Select>
+          </div>
 
-          {(selectedClient || selectedStatus) && (
-            <div className="flex items-end">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSelectedClient('');
-                  setSelectedStatus('');
-                }}
-              >
-                Clear Filters
-              </Button>
-            </div>
+          {hasFilters && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setSelectedClient('');
+                setSelectedStatus('');
+              }}
+            >
+              Clear filters
+            </Button>
           )}
         </div>
       </Card>
 
-      {/* Error */}
-      {error && <Alert variant="error">{error}</Alert>}
+      {error && <Alert variant="error" className="mb-6">{error}</Alert>}
 
-      {/* Events Table */}
-      {events.length === 0 ? (
-        <Card>
+      {!first && events.length > 0 && (
+        <p className="mb-3 text-sm text-ink-muted">
+          <span className="tabular font-semibold text-ink">{count(events.length)}</span>{' '}
+          {events.length === 1 ? 'event' : 'events'}
+          {' · '}
+          <span className="tabular font-semibold text-ink">{count(upcoming.length)}</span> upcoming
+        </p>
+      )}
+
+      {first ? (
+        <Card padding="none">
+          <TableSkeleton rows={6} cols={5} />
+        </Card>
+      ) : events.length === 0 ? (
+        <Card padding="none">
           <EmptyState
             icon={CalendarDays}
-            title="No events found"
-            description={user?.role !== 'accountant' ? "Create your first event booking." : "No events match your current filters."}
-            action={user?.role !== 'accountant' ? { label: 'Add Event', onClick: () => navigate('/events/add') } : undefined}
+            title={hasFilters ? 'No events match these filters' : 'No events yet'}
+            description={
+              hasFilters
+                ? 'Try another client or status, or clear the filters.'
+                : canManage
+                  ? 'Book an event for an event client, then send dishware to it from the event page.'
+                  : 'No events have been booked yet.'
+            }
+            action={canManage && !hasFilters ? { label: 'New event', onClick: () => navigate('/events/add') } : undefined}
           />
         </Card>
       ) : (
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b">
+        <Card padding="none" className="overflow-hidden">
+          <div className="overflow-x-auto" aria-busy={loading}>
+            <table className={cn('ledger', loading && 'opacity-60')}>
+              <thead>
                 <tr>
-                  <th className="text-left py-3 px-4">Event Name</th>
-                  <th className="text-left py-3 px-4">Client</th>
-                  <th className="text-left py-3 px-4">Event Type</th>
-                  <th className="text-left py-3 px-4">Event Date</th>
-                  <th className="text-left py-3 px-4">Outlet</th>
-                  <th className="text-right py-3 px-4">Guests</th>
-                  <th className="text-left py-3 px-4">Status</th>
-                  <th className="text-center py-3 px-4">Actions</th>
+                  <th scope="col">Event</th>
+                  <th scope="col">Date</th>
+                  <th scope="col">Client</th>
+                  <th scope="col" className="text-right">Guests</th>
+                  <th scope="col">Status</th>
+                  {canManage && (
+                    <th scope="col" data-nolabel className="w-px text-right">
+                      <span className="sr-only">Action</span>
+                    </th>
+                  )}
                 </tr>
               </thead>
-              <tbody>
-                {events.map((event) => (
-                  <tr key={event.id} className="border-b hover:bg-muted/50">
-                    <td className="py-3 px-4">
-                      <Link
-                        to={`/events/${event.id}`}
-                        className="text-brand-primary hover:underline font-medium"
-                      >
-                        {event.event_name}
-                      </Link>
-                    </td>
-                    <td className="py-3 px-4 text-sm">
-                      {event.clients?.name || 'Unknown Client'}
-                    </td>
-                    <td className="py-3 px-4 text-sm">
-                      {event.event_type || '-'}
-                    </td>
-                    <td className="py-3 px-4 text-sm">
-                      {formatDate(event.event_date)}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-muted-foreground">
-                      {event.outlets?.name || 'Unknown Outlet'}
-                    </td>
-                    <td className="py-3 px-4 text-right text-sm">
-                      {event.guest_count || '-'}
-                    </td>
-                    <td className="py-3 px-4">{getStatusBadge(event.status)}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-center gap-2">
-                        {user?.role !== 'accountant' && (
-                          <>
-                            {event.status === 'planned' && (
-                              <>
-                                <Link to={`/events/${event.id}/edit`}>
-                                  <Button variant="outline" size="sm">
-                                    Edit
-                                  </Button>
-                                </Link>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setConfirmAction({
-                                      type: 'complete',
-                                      eventId: event.id,
-                                      eventName: event.event_name,
-                                    })
-                                  }
-                                  disabled={actionLoading === event.id}
-                                >
-                                  Complete
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setConfirmAction({
-                                      type: 'cancel',
-                                      eventId: event.id,
-                                      eventName: event.event_name,
-                                    })
-                                  }
-                                  disabled={actionLoading === event.id}
-                                >
-                                  Cancel
-                                </Button>
-                              </>
-                            )}
-                          </>
-                        )}
-                        <Link to={`/events/${event.id}`}>
-                          <Button variant="ghost" size="sm">
-                            View
-                          </Button>
-                        </Link>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
+              {upcoming.length > 0 && (
+                <tbody>
+                  {groupRow('Upcoming', upcoming.length)}
+                  {upcoming.map(renderRow)}
+                </tbody>
+              )}
+              {past.length > 0 && (
+                <tbody>
+                  {groupRow('Past', past.length)}
+                  {past.map(renderRow)}
+                </tbody>
+              )}
             </table>
           </div>
         </Card>
       )}
 
-      {/* Confirmation Dialog - Complete */}
+      {/* Confirmation dialog: complete */}
       <ConfirmDialog
-        isOpen={confirmAction?.type === 'complete'}
-        title="Complete Event?"
-        message={`Are you sure you want to mark "${confirmAction?.eventName}" as completed? The event will be ready for invoicing.`}
-        confirmLabel="Yes, Complete"
+        isOpen={!!confirmAction}
+        title="Complete event?"
+        message={completeMessage}
+        confirmLabel="Complete event"
         variant="info"
         isLoading={!!actionLoading}
-        onConfirm={() => confirmAction && handleAction('complete', confirmAction.eventId)}
-        onCancel={() => setConfirmAction(null)}
-      />
-
-      {/* Confirmation Dialog - Cancel */}
-      <ConfirmDialog
-        isOpen={confirmAction?.type === 'cancel'}
-        title="Cancel Event?"
-        message={`Are you sure you want to cancel "${confirmAction?.eventName}"? This action cannot be undone.`}
-        confirmLabel="Yes, Cancel Event"
-        variant="danger"
-        isLoading={!!actionLoading}
-        onConfirm={() => confirmAction && handleAction('cancel', confirmAction.eventId)}
+        onConfirm={() => confirmAction && handleComplete(confirmAction.eventId)}
         onCancel={() => setConfirmAction(null)}
       />
     </div>

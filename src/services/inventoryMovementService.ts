@@ -1,438 +1,138 @@
 import { supabase } from '@/lib/supabase';
-import type {
-  InventoryMovement,
-  CreateStockInInput,
-  AllocateInventoryInput,
-  ReturnInventoryInput,
-  MarkDamageInput,
-  MarkLossInput,
-  AdjustInventoryInput,
-  MovementFilters,
-} from '@/types';
+import { addDaysISO, parseLocalISODate } from '@/utils/date';
+import type { InventoryMovement, MovementFilters } from '@/types';
 
 // ================================================================
-// INVENTORY MOVEMENT SERVICE (SOURCE OF TRUTH)
+// INVENTORY MOVEMENT READS
 // ================================================================
-// RESPONSIBILITY: ONLY place where stock changes are initiated
-// Every change = INSERT into inventory_movements
-// NEVER updates inventory_items directly - DB triggers handle that
+// Stock changes are written only through inventoryMovementServiceV2
+// (INSERT into inventory_movements; DB triggers update the buckets).
+// This file holds the read side of the ledger.
+//
+// The V1 writers (createStockIn, allocateInventory, returnInventory,
+// markDamage, markLoss, adjustInventory) were removed: they had no
+// callers and bypassed reason_code.
 // ================================================================
+
+/** Rows PostgREST returns per request (supabase/config.toml max_rows). */
+export const PAGE_SIZE_MAX = 1000;
 
 /**
- * Get user role
+ * Start of a calendar day in IST as a UTC timestamp, for timestamptz filters.
+ * A bare 'YYYY-MM-DD' would be read as UTC midnight.
  */
-async function getUserRole(userId: string): Promise<string> {
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+export function istDayStartISO(isoDate: string): string {
+  return new Date(`${isoDate.slice(0, 10)}T00:00:00+05:30`).toISOString();
+}
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
+/** Start of the IST day AFTER `isoDate`, for an inclusive 'to' date used with .lt(). */
+export function istNextDayStartISO(isoDate: string): string {
+  return istDayStartISO(addDaysISO(1, parseLocalISODate(isoDate)));
+}
 
-  return profile.role;
+const IST_PARTS = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Kolkata',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** Locale-independent IST date and time of a timestamp: { date: 'YYYY-MM-DD', time: 'HH:mm' }. */
+export function istDateTimeParts(ts: string): { date: string; time: string } {
+  const p = Object.fromEntries(IST_PARTS.formatToParts(new Date(ts)).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+}
+
+/** 'YYYY-MM-DD HH:mm' in IST, for CSV exports. */
+export function formatISTDateTime(ts: string): string {
+  const { date, time } = istDateTimeParts(ts);
+  return `${date} ${time}`;
+}
+
+interface PagedResult<T> {
+  data: T[] | null;
+  error: { message: string } | null;
 }
 
 /**
- * Get inventory movements with filters
- * 
- * @param userId - Current user ID
- * @param filters - Optional filters
- * @returns List of movements (RLS applies)
+ * Fetch every row of a query in PAGE_SIZE_MAX chunks, so exports and totals are
+ * not silently truncated at max_rows. `build(from, to)` must apply a stable order.
+ */
+export async function fetchAllRows<T>(
+  build: (from: number, to: number) => PromiseLike<PagedResult<T>>
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE_MAX) {
+    const { data, error } = await build(from, from + PAGE_SIZE_MAX - 1);
+    if (error) throw new Error(error.message);
+    const chunk = data || [];
+    all.push(...chunk);
+    if (chunk.length < PAGE_SIZE_MAX) return all;
+  }
+}
+
+type MovementRow = InventoryMovement & { movement_id?: string };
+
+/** The view exposes movement_id (and id from migration 042); normalise to id. */
+function normaliseMovement(row: MovementRow): InventoryMovement {
+  return { ...row, id: row.id ?? (row.movement_id as string) };
+}
+
+function buildMovementQuery(filters: MovementFilters, withCount = false) {
+  let query = supabase
+    .from('inventory_movements_with_details')
+    .select('*', withCount ? { count: 'exact' } : undefined)
+    .order('created_at', { ascending: false })
+    .order('movement_id', { ascending: false });
+
+  if (filters.outlet_id) query = query.eq('outlet_id', filters.outlet_id);
+  if (filters.inventory_item_id) query = query.eq('inventory_item_id', filters.inventory_item_id);
+  if (filters.movement_type) query = query.eq('movement_type', filters.movement_type);
+  if (filters.reference_type) query = query.eq('reference_type', filters.reference_type);
+  if (filters.reference_id) query = query.eq('reference_id', filters.reference_id);
+  if (filters.date_from) query = query.gte('created_at', istDayStartISO(filters.date_from));
+  if (filters.date_to) query = query.lt('created_at', istNextDayStartISO(filters.date_to));
+
+  return query;
+}
+
+/**
+ * Get ALL inventory movements matching the filters (paged internally).
+ *
+ * @param _userId - Current user ID (RLS scopes rows)
+ * @param filters - Optional filters; dates are IST calendar days, both inclusive
  */
 export async function getInventoryMovements(
   _userId: string,
   filters: MovementFilters = {}
 ): Promise<InventoryMovement[]> {
-  let query = supabase
-    .from('inventory_movements_with_details')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  // Apply filters
-  if (filters.outlet_id) {
-    query = query.eq('outlet_id', filters.outlet_id);
-  }
-
-  if (filters.inventory_item_id) {
-    query = query.eq('inventory_item_id', filters.inventory_item_id);
-  }
-
-  if (filters.movement_type) {
-    query = query.eq('movement_type', filters.movement_type);
-  }
-
-  if (filters.reference_type) {
-    query = query.eq('reference_type', filters.reference_type);
-  }
-
-  if (filters.reference_id) {
-    query = query.eq('reference_id', filters.reference_id);
-  }
-
-  if (filters.date_from) {
-    query = query.gte('created_at', filters.date_from);
-  }
-
-  if (filters.date_to) {
-    query = query.lte('created_at', filters.date_to);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  return data || [];
+  const rows = await fetchAllRows<MovementRow>((from, to) =>
+    buildMovementQuery(filters).range(from, to)
+  );
+  return rows.map(normaliseMovement);
 }
 
 /**
- * Create stock in movement
- * 
- * CRITICAL: DB trigger will:
- * - Update available_quantity and total_quantity
- * - Validate user permissions
- * - Prevent negative stock
- * 
- * @param userId - Current user ID
- * @param input - Stock in details
- * @returns Created movement
+ * Get one page of movements plus the total match count, for on-screen lists.
+ *
+ * @param page - zero-based page index
  */
-export async function createStockIn(
-  userId: string,
-  input: CreateStockInInput
-): Promise<InventoryMovement> {
-  const role = await getUserRole(userId);
-
-  // Accountants cannot create movements
-  if (role === 'accountant') {
-    throw new Error('Accountants cannot create stock movements');
-  }
-
-  // Validate quantity is positive
-  if (input.quantity <= 0) {
-    throw new Error('Quantity must be greater than zero');
-  }
-
-  // Insert movement (DB trigger will update inventory_items)
-  const { data, error } = await supabase
-    .from('inventory_movements')
-    .insert({
-      outlet_id: input.outlet_id,
-      inventory_item_id: input.inventory_item_id,
-      movement_type: 'stock_in',
-      quantity: input.quantity,
-      reference_type: 'manual',
-      reference_id: null,
-      notes: input.notes || null,
-      created_by: userId,
-    })
-    .select()
-    .maybeSingle();
-
-  if (error) {
-    // Surface DB error directly (e.g., outlet mismatch, invalid item)
-    throw new Error(error.message);
-  }
-
-  return data;
-}
-
-/**
- * Allocate inventory to subscription or event
- * 
- * CRITICAL: DB trigger will:
- * - Validate available stock (prevents negative)
- * - Update available_quantity (decrease) and allocated_quantity (increase)
- * - Validate reference exists
- * 
- * @param userId - Current user ID
- * @param input - Allocation details
- * @returns Created movement
- */
-export async function allocateInventory(
-  userId: string,
-  input: AllocateInventoryInput
-): Promise<InventoryMovement> {
-  const role = await getUserRole(userId);
-
-  // Accountants cannot create movements
-  if (role === 'accountant') {
-    throw new Error('Accountants cannot allocate inventory');
-  }
-
-  // Validate quantity is positive
-  if (input.quantity <= 0) {
-    throw new Error('Quantity must be greater than zero');
-  }
-
-  // Validate reference type
-  if (!['subscription', 'event'].includes(input.reference_type)) {
-    throw new Error('Reference type must be subscription or event');
-  }
-
-  // Insert movement (DB trigger validates availability and updates quantities)
-  const { data, error } = await supabase
-    .from('inventory_movements')
-    .insert({
-      outlet_id: input.outlet_id,
-      inventory_item_id: input.inventory_item_id,
-      movement_type: 'allocation',
-      quantity: input.quantity,
-      reference_type: input.reference_type,
-      reference_id: input.reference_id,
-      notes: input.notes || null,
-      created_by: userId,
-    })
-    .select()
-    .maybeSingle();
-
-  if (error) {
-    // Surface DB error directly (e.g., "Insufficient stock available")
-    throw new Error(error.message);
-  }
-
-  return data;
-}
-
-/**
- * Return inventory from subscription or event
- * 
- * CRITICAL: DB trigger will:
- * - Validate allocation exists
- * - Validate not returning more than allocated
- * - Update available_quantity (increase) and allocated_quantity (decrease)
- * 
- * @param userId - Current user ID
- * @param input - Return details
- * @returns Created movement
- */
-export async function returnInventory(
-  userId: string,
-  input: ReturnInventoryInput
-): Promise<InventoryMovement> {
-  const role = await getUserRole(userId);
-
-  // Accountants cannot create movements
-  if (role === 'accountant') {
-    throw new Error('Accountants cannot return inventory');
-  }
-
-  // Validate quantity is positive
-  if (input.quantity <= 0) {
-    throw new Error('Quantity must be greater than zero');
-  }
-
-  // Validate reference type
-  if (!['subscription', 'event'].includes(input.reference_type)) {
-    throw new Error('Reference type must be subscription or event');
-  }
-
-  // Insert movement (DB trigger validates allocation and updates quantities)
-  const { data, error } = await supabase
-    .from('inventory_movements')
-    .insert({
-      outlet_id: input.outlet_id,
-      inventory_item_id: input.inventory_item_id,
-      movement_type: 'return',
-      quantity: input.quantity,
-      reference_type: input.reference_type,
-      reference_id: input.reference_id,
-      notes: input.notes || null,
-      created_by: userId,
-    })
-    .select()
-    .maybeSingle();
-
-  if (error) {
-    // Surface DB error directly (e.g., "Cannot return more than outstanding")
-    throw new Error(error.message);
-  }
-
-  return data;
-}
-
-/**
- * Mark inventory as damaged
- * 
- * CRITICAL: DB trigger will:
- * - Validate allocation exists
- * - Update damaged_quantity (increase) and allocated_quantity (decrease)
- * - Notes are MANDATORY
- * 
- * @param userId - Current user ID
- * @param input - Damage details (notes required)
- * @returns Created movement
- */
-export async function markDamage(
-  userId: string,
-  input: MarkDamageInput
-): Promise<InventoryMovement> {
-  const role = await getUserRole(userId);
-
-  // Accountants cannot create movements
-  if (role === 'accountant') {
-    throw new Error('Accountants cannot mark damage');
-  }
-
-  // Validate quantity is positive
-  if (input.quantity <= 0) {
-    throw new Error('Quantity must be greater than zero');
-  }
-
-  // Validate notes are provided
-  if (!input.notes || input.notes.trim() === '') {
-    throw new Error('Notes are required when marking damage');
-  }
-
-  // Validate reference type
-  if (!['subscription', 'event'].includes(input.reference_type)) {
-    throw new Error('Reference type must be subscription or event');
-  }
-
-  // Insert movement (DB trigger validates allocation and updates quantities)
-  const { data, error } = await supabase
-    .from('inventory_movements')
-    .insert({
-      outlet_id: input.outlet_id,
-      inventory_item_id: input.inventory_item_id,
-      movement_type: 'damage',
-      quantity: input.quantity,
-      reference_type: input.reference_type,
-      reference_id: input.reference_id,
-      notes: input.notes,
-      created_by: userId,
-    })
-    .select()
-    .maybeSingle();
-
-  if (error) {
-    // Surface DB error directly
-    throw new Error(error.message);
-  }
-
-  return data;
-}
-
-/**
- * Mark inventory as lost
- * 
- * CRITICAL: DB trigger will:
- * - Validate allocation exists
- * - Update lost_quantity (increase), allocated_quantity (decrease), total_quantity (decrease)
- * - Notes are MANDATORY
- * 
- * @param userId - Current user ID
- * @param input - Loss details (notes required)
- * @returns Created movement
- */
-export async function markLoss(
-  userId: string,
-  input: MarkLossInput
-): Promise<InventoryMovement> {
-  const role = await getUserRole(userId);
-
-  // Accountants cannot create movements
-  if (role === 'accountant') {
-    throw new Error('Accountants cannot mark loss');
-  }
-
-  // Validate quantity is positive
-  if (input.quantity <= 0) {
-    throw new Error('Quantity must be greater than zero');
-  }
-
-  // Validate notes are provided
-  if (!input.notes || input.notes.trim() === '') {
-    throw new Error('Notes are required when marking loss');
-  }
-
-  // Validate reference type
-  if (!['subscription', 'event'].includes(input.reference_type)) {
-    throw new Error('Reference type must be subscription or event');
-  }
-
-  // Insert movement (DB trigger validates allocation and updates quantities)
-  const { data, error } = await supabase
-    .from('inventory_movements')
-    .insert({
-      outlet_id: input.outlet_id,
-      inventory_item_id: input.inventory_item_id,
-      movement_type: 'loss',
-      quantity: input.quantity,
-      reference_type: input.reference_type,
-      reference_id: input.reference_id,
-      notes: input.notes,
-      created_by: userId,
-    })
-    .select()
-    .maybeSingle();
-
-  if (error) {
-    // Surface DB error directly
-    throw new Error(error.message);
-  }
-
-  return data;
-}
-
-/**
- * Adjust inventory (ADMIN ONLY)
- * 
- * CRITICAL: DB trigger will:
- * - Validate user is ADMIN (non-admins will be rejected)
- * - Validate notes are provided (mandatory)
- * - Update available_quantity and total_quantity
- * - Log adjustment for audit
- * 
- * @param userId - Current user ID (must be admin)
- * @param input - Adjustment details (notes mandatory)
- * @returns Created movement
- */
-export async function adjustInventory(
-  userId: string,
-  input: AdjustInventoryInput
-): Promise<InventoryMovement> {
-  const role = await getUserRole(userId);
-
-  // ADMIN ONLY - DB trigger will also validate this
-  if (role !== 'admin') {
-    throw new Error('Only admins can perform inventory adjustments');
-  }
-
-  // Validate quantity is positive (even for adjustments)
-  if (input.quantity <= 0) {
-    throw new Error('Adjustment quantity must be greater than zero');
-  }
-
-  // Validate notes are provided (MANDATORY for adjustments)
-  if (!input.notes || input.notes.trim() === '') {
-    throw new Error('Notes are MANDATORY for inventory adjustments (explain the reason)');
-  }
-
-  // Insert movement (DB trigger validates admin role and notes)
-  const { data, error } = await supabase
-    .from('inventory_movements')
-    .insert({
-      outlet_id: input.outlet_id,
-      inventory_item_id: input.inventory_item_id,
-      movement_type: 'adjustment',
-      quantity: input.quantity,
-      reference_type: 'manual',
-      reference_id: null,
-      notes: input.notes,
-      created_by: userId,
-    })
-    .select()
-    .maybeSingle();
-
-  if (error) {
-    // Surface DB error directly (e.g., "Only admins can perform adjustments")
-    throw new Error(error.message);
-  }
-
-  return data;
+export async function getInventoryMovementsPage(
+  filters: MovementFilters,
+  page: number,
+  pageSize: number
+): Promise<{ rows: InventoryMovement[]; total: number }> {
+  const from = page * pageSize;
+  const { data, error, count } = await buildMovementQuery(filters, true).range(
+    from,
+    from + pageSize - 1
+  );
+  if (error) throw new Error(error.message);
+  return {
+    rows: ((data || []) as MovementRow[]).map(normaliseMovement),
+    total: count ?? 0,
+  };
 }

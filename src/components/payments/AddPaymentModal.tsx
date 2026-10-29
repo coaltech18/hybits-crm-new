@@ -1,13 +1,17 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
 import { createPayment } from '@/services/paymentService';
 import type { Invoice, PaymentMethod } from '@/types';
-import { Card } from '@/components/ui/Card';
+import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { DateInput } from '@/components/ui/DateInput';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 import { Alert } from '@/components/ui/Alert';
 import { formatCurrency, roundCurrency, settleBalance, SETTLEMENT_TOLERANCE } from '@/utils/format';
+import { todayISO, toLocalISODate } from '@/utils/date';
 
 interface AddPaymentModalProps {
   invoice: Invoice;
@@ -23,19 +27,31 @@ export default function AddPaymentModal({
   onSuccess,
 }: AddPaymentModalProps) {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [submitting, setSubmitting] = useState(false);
+  // Synchronous guard: `submitting` state is not updated until re-render,
+  // so a fast double click could otherwise record the payment twice.
+  const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Local (IST) calendar dates; toISOString() would give the UTC date.
+  const [today] = useState(todayISO);
+  const minDate = invoice.issued_at ? toLocalISODate(new Date(invoice.issued_at)) : undefined;
 
   // Form state
   const [amount, setAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentDate, setPaymentDate] = useState(today);
   const [referenceNumber, setReferenceNumber] = useState('');
   const [notes, setNotes] = useState('');
 
+  // Presentational only: the settled balance shown at the top and used by
+  // the "Pay full balance" shortcut, which just fills the amount field.
+  const balanceDue = settleBalance(maxAmount);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!user?.id) return;
+    if (!user?.id || submittingRef.current) return;
 
     // Round to 2 decimal places immediately to prevent floating-point drift
     const amountNum = roundCurrency(parseFloat(amount));
@@ -46,12 +62,23 @@ export default function AddPaymentModal({
       return;
     }
 
-    if (amountNum > maxAmount + SETTLEMENT_TOLERANCE) {
+    if (amountNum > roundCurrency(maxAmount + SETTLEMENT_TOLERANCE)) {
       setError(`Payment amount cannot exceed balance due (${formatCurrency(settleBalance(maxAmount))})`);
       return;
     }
 
+    if (!paymentDate || paymentDate > today) {
+      setError('Payment date cannot be in the future');
+      return;
+    }
+
+    if (minDate && paymentDate < minDate) {
+      setError('Payment date cannot be before the invoice date');
+      return;
+    }
+
     try {
+      submittingRef.current = true;
       setSubmitting(true);
       setError(null);
 
@@ -64,118 +91,131 @@ export default function AddPaymentModal({
         notes: notes || undefined,
       });
 
+      // The DB moves the invoice status with the payment; onSuccess re-fetches the invoice.
+      showToast('Payment recorded', 'success');
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to record payment');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <Card className="max-w-lg w-full max-h-[90vh] overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-4">Record Payment</h2>
-
-        {/* Invoice Info */}
-        <div className="bg-muted p-4 rounded-md mb-6">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-muted-foreground">Invoice</p>
-              <p className="font-semibold">{invoice.invoice_number}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Client</p>
-              <p className="font-semibold">{invoice.clients?.name}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Invoice Total</p>
-              <p className="font-semibold">{formatCurrency(invoice.grand_total)}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Balance Due</p>
-              <p className="font-semibold text-orange-600">{formatCurrency(settleBalance(maxAmount))}</p>
-            </div>
-          </div>
+    <Modal
+      isOpen
+      onClose={onClose}
+      title="Record payment"
+      description={`Against invoice ${invoice.invoice_number ?? '(unnumbered)'}`}
+      maxWidth="lg"
+      dismissable={!submitting}
+    >
+      {/* Balance first: the figure the payment is measured against. */}
+      <div className="mb-5 rounded-lg border border-rule bg-paper-sunk px-4 py-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Balance due</div>
+        <div className={`amount mt-1 text-3xl font-bold tracking-tight ${balanceDue > 0 ? 'text-ink' : 'text-stamp'}`}>
+          {formatCurrency(balanceDue)}
         </div>
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 border-t border-rule pt-3 text-sm sm:grid-cols-3">
+          <div className="min-w-0">
+            <dt className="text-ink-muted">Invoice</dt>
+            <dd className="serial truncate font-medium text-ink">{invoice.invoice_number ?? '—'}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-ink-muted">Invoice total</dt>
+            <dd className="amount font-medium text-ink">{formatCurrency(invoice.grand_total)}</dd>
+          </div>
+          <div className="col-span-2 min-w-0 sm:col-span-1">
+            <dt className="text-ink-muted">Client</dt>
+            <dd className="truncate font-medium text-ink">{invoice.clients?.name ?? '—'}</dd>
+          </div>
+        </dl>
+      </div>
 
-        {error && <Alert variant="error" className="mb-4">{error}</Alert>}
+      {error && <Alert variant="error" className="mb-4">{error}</Alert>}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Amount */}
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Amount, with a shortcut that only fills the field. */}
+        <div>
           <Input
-            label="Payment Amount"
+            label="Amount"
             type="number"
+            inputMode="decimal"
             min="0.01"
             step="0.01"
-            max={maxAmount}
+            max={roundCurrency(maxAmount + SETTLEMENT_TOLERANCE)}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0.00"
             required
-            helperText={`Maximum: ${formatCurrency(settleBalance(maxAmount))}`}
+            data-autofocus
+            helperText={`Up to ${formatCurrency(balanceDue)}`}
           />
+          {balanceDue > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="-ml-3 mt-1 text-brand-primary hover:text-brand-primaryDark"
+              onClick={() => setAmount(balanceDue.toFixed(2))}
+              disabled={submitting}
+            >
+              Pay full balance ({formatCurrency(balanceDue)})
+            </Button>
+          )}
+        </div>
 
-          {/* Payment Method */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Select
-            label="Payment Method"
+            label="Method"
             value={paymentMethod}
             onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
             required
           >
             <option value="cash">Cash</option>
             <option value="upi">UPI</option>
-            <option value="bank_transfer">Bank Transfer</option>
+            <option value="bank_transfer">Bank transfer</option>
             <option value="card">Card</option>
             <option value="cheque">Cheque</option>
           </Select>
 
-          {/* Payment Date */}
-          <Input
-            label="Payment Date"
-            type="date"
+          <DateInput
+            label="Payment date"
             value={paymentDate}
             onChange={(e) => setPaymentDate(e.target.value)}
-            max={new Date().toISOString().split('T')[0]}
+            min={minDate}
+            max={today}
             required
           />
+        </div>
 
-          {/* Reference Number */}
-          <Input
-            label="Reference Number"
-            value={referenceNumber}
-            onChange={(e) => setReferenceNumber(e.target.value)}
-            placeholder="Transaction ID, Cheque number, etc."
-            helperText="Optional"
-          />
+        <Input
+          label="Reference"
+          value={referenceNumber}
+          onChange={(e) => setReferenceNumber(e.target.value)}
+          placeholder="UPI transaction ID, cheque number…"
+          helperText="Optional"
+        />
 
-          {/* Notes */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Notes</label>
-            <textarea
-              className="w-full border rounded-md p-2 min-h-[80px]"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Additional notes (optional)"
-            />
-          </div>
+        <Textarea
+          label="Notes"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Anything worth remembering about this payment"
+          helperText="Optional"
+        />
 
-          {/* Actions */}
-          <div className="flex gap-3 justify-end pt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-              disabled={submitting}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? 'Recording...' : 'Record Payment'}
-            </Button>
-          </div>
-        </form>
-      </Card>
-    </div>
+        {/* Action bar, pinned to the bottom of the scrolling dialog body. */}
+        <div className="sticky bottom-0 -mx-5 -mb-5 flex flex-col-reverse gap-2 border-t border-rule bg-white/95 px-5 py-4 backdrop-blur sm:-mx-6 sm:flex-row sm:justify-end sm:px-6">
+          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={submitting} isLoading={submitting}>
+            {submitting ? 'Recording…' : 'Record payment'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

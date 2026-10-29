@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { countErrorMessage } from '@/utils/query';
 
 // ================================================================
 // ADMIN USER SERVICE
@@ -6,9 +7,8 @@ import { supabase } from '@/lib/supabase';
 // CRITICAL RULES:
 // - Admin-only operations
 // - Cannot deactivate last admin
-// - Cannot downgrade self
+// - Cannot deactivate self
 // - Soft delete only (is_active flag)
-// - All changes auditable
 // ================================================================
 
 export interface CreateUserInput {
@@ -17,10 +17,6 @@ export interface CreateUserInput {
   phone?: string;
   role: 'admin' | 'manager' | 'accountant';
   outlet_ids?: string[]; // Only for managers
-}
-
-export interface UpdateUserRoleInput {
-  role: 'admin' | 'manager' | 'accountant';
 }
 
 export interface UserSummary {
@@ -77,116 +73,68 @@ export async function getUsers(adminUserId: string): Promise<UserSummary[]> {
 }
 
 /**
- * Get single user by ID (admin only)
+ * Every outlet assignment, grouped by user id (admin only).
+ * Includes assignments to inactive outlets, which admin_users_summary hides
+ * but which still grant database access.
  */
-export async function getUserById(
-  adminUserId: string,
-  targetUserId: string
-): Promise<UserSummary> {
+export async function getAllOutletAssignments(
+  adminUserId: string
+): Promise<Record<string, string[]>> {
   await verifyAdminRole(adminUserId);
 
   const { data, error } = await supabase
-    .from('admin_users_summary')
-    .select('*')
-    .eq('user_id', targetUserId)
-    .maybeSingle();
+    .from('user_outlet_assignments')
+    .select('user_id, outlet_id');
 
   if (error) {
-    throw new Error(`Failed to fetch user: ${error.message}`);
+    throw new Error(`Failed to fetch outlet assignments: ${error.message}`);
   }
 
-  if (!data) {
-    throw new Error('User not found');
+  const byUser: Record<string, string[]> = {};
+  for (const row of data || []) {
+    (byUser[row.user_id] ??= []).push(row.outlet_id);
+  }
+  return byUser;
+}
+
+/**
+ * Outlet IDs currently assigned to one user (admin only)
+ */
+export async function getUserOutletIds(
+  adminUserId: string,
+  targetUserId: string
+): Promise<string[]> {
+  await verifyAdminRole(adminUserId);
+
+  const { data, error } = await supabase
+    .from('user_outlet_assignments')
+    .select('outlet_id')
+    .eq('user_id', targetUserId);
+
+  if (error) {
+    throw new Error(`Failed to fetch outlet assignments: ${error.message}`);
   }
 
-  return data;
+  return (data || []).map((row) => row.outlet_id);
 }
 
 /**
  * Create new user (admin only)
- * 
- * ⚠️ USER CREATION VIA FRONTEND DISABLED
- * Users should be created directly in Supabase Dashboard:
- * 1. Go to Authentication → Users → Invite User
- * 2. After user is created, add a row in user_profiles table
- * 3. If manager, add rows in user_outlet_assignments table
+ *
+ * NOT AVAILABLE FROM THE APP. Creating a login needs the Supabase service
+ * role, which must never be in the browser. Until a server-side function
+ * exists, users are created in the Supabase Dashboard (see AddEditUserModal).
  */
 export async function createUser(
   adminUserId: string,
-  _input: CreateUserInput
+  input: CreateUserInput
 ): Promise<{ user_id: string }> {
-  // Verify admin role first (for consistency)
   await verifyAdminRole(adminUserId);
 
   throw new Error(
-    'User creation via the app is currently disabled. ' +
-    'Please create users directly in Supabase Dashboard → Authentication → Users.'
+    `Cannot create ${input.email || 'this user'} from the app. ` +
+      'Create the login in Supabase Dashboard → Authentication → Users, then add their user_profiles row.'
   );
-}
-
-/**
- * Update user role (admin only)
- */
-export async function updateUserRole(
-  adminUserId: string,
-  targetUserId: string,
-  newRole: 'admin' | 'manager' | 'accountant'
-): Promise<void> {
-  await verifyAdminRole(adminUserId);
-
-  // Cannot downgrade self
-  if (adminUserId === targetUserId) {
-    const { data: currentProfile } = await supabase
-      .from('user_profiles')
-      .select('role')
-      .eq('id', targetUserId)
-      .maybeSingle();
-
-    if (currentProfile?.role === 'admin' && newRole !== 'admin') {
-      throw new Error('Cannot downgrade your own admin role');
-    }
-  }
-
-  // If downgrading from admin, check if last admin
-  const { data: targetProfile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', targetUserId)
-    .maybeSingle();
-
-  if (targetProfile?.role === 'admin' && newRole !== 'admin') {
-    const { count, error: countError } = await supabase
-      .from('user_profiles')
-      .select('id', { count: 'exact', head: true })
-      .eq('role', 'admin')
-      .eq('is_active', true);
-
-    if (countError) {
-      throw new Error(`Failed to check admin count: ${countError.message}`);
-    }
-
-    if (count && count <= 1) {
-      throw new Error('Cannot downgrade the last active admin');
-    }
-  }
-
-  // Update role
-  const { error } = await supabase
-    .from('user_profiles')
-    .update({ role: newRole })
-    .eq('id', targetUserId);
-
-  if (error) {
-    throw new Error(`Failed to update user role: ${error.message}`);
-  }
-
-  // If changing to non-manager, remove outlet assignments
-  if (newRole !== 'manager') {
-    await supabase
-      .from('user_outlet_assignments')
-      .delete()
-      .eq('user_id', targetUserId);
-  }
 }
 
 /**
@@ -206,24 +154,28 @@ export async function toggleUserActive(
 
   // If deactivating an admin, check if last admin
   if (!isActive) {
-    const { data: targetProfile } = await supabase
+    const { data: targetProfile, error: targetError } = await supabase
       .from('user_profiles')
       .select('role')
       .eq('id', targetUserId)
       .maybeSingle();
 
+    if (targetError) {
+      throw new Error(`Failed to fetch user profile: ${targetError.message}`);
+    }
+
     if (targetProfile?.role === 'admin') {
-      const { count, error: countError } = await supabase
+      const { count, error: countError, status: countStatus } = await supabase
         .from('user_profiles')
         .select('id', { count: 'exact', head: true })
         .eq('role', 'admin')
         .eq('is_active', true);
 
       if (countError) {
-        throw new Error(`Failed to check admin count: ${countError.message}`);
+        throw new Error(`Failed to check admin count: ${countErrorMessage(countError, countStatus, 'active admins')}`);
       }
 
-      if (count && count <= 1) {
+      if (count !== null && count <= 1) {
         throw new Error('Cannot deactivate the last active admin');
       }
     }
@@ -241,7 +193,11 @@ export async function toggleUserActive(
 }
 
 /**
- * Assign outlets to user (managers only)
+ * Set the exact list of outlets assigned to a manager (admin only).
+ *
+ * Prefers the atomic set_user_outlet_assignments RPC (migration 042). If that
+ * function is not deployed yet, falls back to add-first-then-remove, so a
+ * failure part-way never leaves the manager with zero outlets.
  */
 export async function assignUserOutlets(
   adminUserId: string,
@@ -250,7 +206,22 @@ export async function assignUserOutlets(
 ): Promise<void> {
   await verifyAdminRole(adminUserId);
 
-  // Verify target user is a manager
+  const uniqueIds = [...new Set(outletIds)];
+
+  const { error: rpcError } = await supabase.rpc('set_user_outlet_assignments', {
+    p_user_id: targetUserId,
+    p_outlet_ids: uniqueIds,
+  });
+
+  if (!rpcError) return;
+
+  // PGRST202 / 42883: function not found. Any other error is real.
+  const missingFunction = rpcError.code === 'PGRST202' || rpcError.code === '42883';
+  if (!missingFunction) {
+    throw new Error(`Failed to assign outlets: ${rpcError.message}`);
+  }
+
+  // ---- Fallback (no RPC yet) ----
   const { data: targetProfile, error: profileError } = await supabase
     .from('user_profiles')
     .select('role')
@@ -269,71 +240,39 @@ export async function assignUserOutlets(
     throw new Error('Only managers can be assigned to outlets');
   }
 
-  // Remove existing assignments
-  const { error: deleteError } = await supabase
+  // 1. Add the new set first (existing rows are left untouched)
+  if (uniqueIds.length > 0) {
+    const { error: upsertError } = await supabase
+      .from('user_outlet_assignments')
+      .upsert(
+        uniqueIds.map((outletId) => ({
+          user_id: targetUserId,
+          outlet_id: outletId,
+          assigned_by: adminUserId,
+        })),
+        { onConflict: 'user_id,outlet_id', ignoreDuplicates: true }
+      );
+
+    if (upsertError) {
+      throw new Error(`Failed to assign outlets: ${upsertError.message}`);
+    }
+  }
+
+  // 2. Then remove the ones no longer selected
+  let removeQuery = supabase
     .from('user_outlet_assignments')
     .delete()
     .eq('user_id', targetUserId);
 
+  if (uniqueIds.length > 0) {
+    removeQuery = removeQuery.not('outlet_id', 'in', `(${uniqueIds.join(',')})`);
+  }
+
+  const { error: deleteError } = await removeQuery;
+
   if (deleteError) {
-    throw new Error(`Failed to remove existing outlet assignments: ${deleteError.message}`);
+    throw new Error(`Failed to remove old outlet assignments: ${deleteError.message}`);
   }
-
-  // Add new assignments
-  if (outletIds.length > 0) {
-    const assignments = outletIds.map((outletId) => ({
-      user_id: targetUserId,
-      outlet_id: outletId,
-    }));
-
-    const { error: insertError } = await supabase
-      .from('user_outlet_assignments')
-      .insert(assignments);
-
-    if (insertError) {
-      throw new Error(`Failed to assign outlets: ${insertError.message}`);
-    }
-  }
-}
-
-/**
- * Check if a user can be deactivated
- */
-export async function canDeactivateUser(
-  adminUserId: string,
-  targetUserId: string
-): Promise<{ canDeactivate: boolean; reason?: string }> {
-  await verifyAdminRole(adminUserId);
-
-  // Cannot deactivate self
-  if (adminUserId === targetUserId) {
-    return { canDeactivate: false, reason: 'Cannot deactivate your own account' };
-  }
-
-  // Check if last admin
-  const { data: targetProfile } = await supabase
-    .from('user_profiles')
-    .select('role, is_active')
-    .eq('id', targetUserId)
-    .maybeSingle();
-
-  if (!targetProfile?.is_active) {
-    return { canDeactivate: false, reason: 'User is already inactive' };
-  }
-
-  if (targetProfile?.role === 'admin') {
-    const { count } = await supabase
-      .from('user_profiles')
-      .select('id', { count: 'exact', head: true })
-      .eq('role', 'admin')
-      .eq('is_active', true);
-
-    if (count && count <= 1) {
-      return { canDeactivate: false, reason: 'Cannot deactivate the last active admin' };
-    }
-  }
-
-  return { canDeactivate: true };
 }
 
 // PHASE 9 STEP 2 COMPLETE (adminUserService.ts)

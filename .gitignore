@@ -39,3 +39,7 @@ index-*.js
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Impeccable transient review output (screenshots, decision pages)
+.impeccable/review/
+.impeccable/questions/

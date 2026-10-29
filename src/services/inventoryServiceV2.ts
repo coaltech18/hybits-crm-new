@@ -75,11 +75,9 @@ async function getUserRoleAndOutlets(userId: string): Promise<{
  * Get inventory items with V2 filters (lifecycle_status aware)
  */
 export async function getInventoryItemsV2(
-    userId: string,
+    _userId: string,
     filters: InventoryFiltersV2 = {}
 ): Promise<InventoryItemV2[]> {
-    await getUserRoleAndOutlets(userId);
-
     let query = supabase
         .from('inventory_items')
         .select(`
@@ -108,14 +106,14 @@ export async function getInventoryItemsV2(
         } else {
             query = query.eq('lifecycle_status', filters.lifecycle_status);
         }
-    } else if (filters.is_active !== undefined) {
+    } else if (filters.is_active !== undefined && filters.is_active !== 'all') {
         // Backward compatibility: is_active maps to lifecycle_status
         if (filters.is_active) {
             query = query.in('lifecycle_status', ['draft', 'active']);
         } else {
             query = query.in('lifecycle_status', ['discontinued', 'archived']);
         }
-    } else {
+    } else if (filters.is_active !== 'all') {
         // Default: show draft, active, discontinued (not archived)
         query = query.in('lifecycle_status', ['draft', 'active', 'discontinued']);
     }
@@ -131,7 +129,8 @@ export async function getInventoryItemsV2(
         throw new Error(error.message);
     }
 
-    return (data || []).map((item: any) => ({
+    type Row = InventoryItemV2 & { outlets?: { name?: string; code?: string } | null };
+    return ((data || []) as Row[]).map((item) => ({
         ...item,
         outlet_name: item.outlets?.name,
         outlet_code: item.outlets?.code,
@@ -149,25 +148,6 @@ export async function getItemsForAllocation(
         outlet_id: outletId,
         lifecycle_status: 'active',
     });
-}
-
-/**
- * Get items with unlocked opening balance (for corrections)
- */
-export async function getItemsWithUnlockedBalance(
-    userId: string,
-    outletId?: string
-): Promise<InventoryItemV2[]> {
-    const filters: InventoryFiltersV2 = {
-        opening_balance_confirmed: false,
-        lifecycle_status: ['draft', 'active'],
-    };
-
-    if (outletId) {
-        filters.outlet_id = outletId;
-    }
-
-    return getInventoryItemsV2(userId, filters);
 }
 
 /**
@@ -278,39 +258,6 @@ export async function createInventoryItemV2(
 // ================================================================
 
 /**
- * Activate a draft item (make it available for allocation)
- */
-export async function activateItem(
-    userId: string,
-    itemId: string
-): Promise<InventoryItemV2> {
-    const { role } = await getUserRoleAndOutlets(userId);
-
-    if (role === 'accountant') {
-        throw new Error('Accountants cannot activate items');
-    }
-
-    const item = await getInventoryItemByIdV2(userId, itemId);
-
-    if (item.lifecycle_status === 'archived') {
-        throw new Error('Cannot activate archived items');
-    }
-
-    if (item.lifecycle_status === 'active') {
-        return item; // Already active
-    }
-
-    const { error } = await supabase
-        .from('inventory_items')
-        .update({ lifecycle_status: 'active' })
-        .eq('id', itemId);
-
-    if (error) throw new Error(error.message);
-
-    return getInventoryItemByIdV2(userId, itemId);
-}
-
-/**
  * Discontinue an item (no new allocations, but can still receive returns)
  */
 export async function discontinueItemV2(
@@ -355,185 +302,8 @@ export async function discontinueItemV2(
     return getInventoryItemByIdV2(userId, itemId);
 }
 
-/**
- * Archive an item (read-only, for historical records)
- * Requirements: total_quantity = 0, no activity for 1 year
- */
-export async function archiveItem(
-    userId: string,
-    itemId: string
-): Promise<InventoryItemV2> {
-    const { role } = await getUserRoleAndOutlets(userId);
-
-    if (role !== 'admin') {
-        throw new Error('Only admins can archive items');
-    }
-
-    const { data: item, error: fetchError } = await supabase
-        .from('inventory_items')
-        .select('lifecycle_status, total_quantity')
-        .eq('id', itemId)
-        .maybeSingle();
-
-    if (fetchError) throw new Error(fetchError.message);
-    if (!item) throw new Error('Item not found');
-
-    if (item.lifecycle_status === 'archived') {
-        return getInventoryItemByIdV2(userId, itemId);
-    }
-
-    if (item.total_quantity > 0) {
-        throw new Error(`Cannot archive item with ${item.total_quantity} units in stock. Dispose stock first.`);
-    }
-
-    // Check last activity
-    const oneYearAgo = new Date();
-    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-
-    const { count, error: countError } = await supabase
-        .from('inventory_movements')
-        .select('id', { count: 'exact', head: true })
-        .eq('inventory_item_id', itemId)
-        .gte('created_at', oneYearAgo.toISOString());
-
-    if (countError) throw new Error(countError.message);
-
-    if (count && count > 0) {
-        throw new Error(`Cannot archive item with recent activity. ${count} movements in the last year. Wait until 1 year of inactivity.`);
-    }
-
-    const { error } = await supabase
-        .from('inventory_items')
-        .update({ lifecycle_status: 'archived' })
-        .eq('id', itemId);
-
-    if (error) throw new Error(error.message);
-
-    return getInventoryItemByIdV2(userId, itemId);
-}
-
-// ================================================================
-// OPENING BALANCE FUNCTIONS
-// ================================================================
-
-/**
- * Manually confirm opening balance (locks for adjustments)
- */
-export async function confirmOpeningBalance(
-    userId: string,
-    itemId: string
-): Promise<InventoryItemV2> {
-    const { role } = await getUserRoleAndOutlets(userId);
-
-    if (role === 'accountant') {
-        throw new Error('Accountants cannot confirm opening balance');
-    }
-
-    const item = await getInventoryItemByIdV2(userId, itemId);
-
-    if (item.opening_balance_confirmed) {
-        return item; // Already confirmed
-    }
-
-    const { error } = await supabase
-        .from('inventory_items')
-        .update({ opening_balance_confirmed: true })
-        .eq('id', itemId);
-
-    if (error) throw new Error(error.message);
-
-    return getInventoryItemByIdV2(userId, itemId);
-}
-
-// ================================================================
-// SUMMARY & REPORTING FUNCTIONS
-// ================================================================
-
-/**
- * Get lifecycle summary (count by status)
- */
-export async function getLifecycleSummary(
-    userId: string,
-    outletId?: string
-): Promise<{ status: LifecycleStatus; count: number }[]> {
-    await getUserRoleAndOutlets(userId);
-
-    let query = supabase
-        .from('inventory_items')
-        .select('lifecycle_status');
-
-    if (outletId) {
-        query = query.eq('outlet_id', outletId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw new Error(error.message);
-
-    // Group and count
-    const counts: Record<LifecycleStatus, number> = {
-        draft: 0,
-        active: 0,
-        discontinued: 0,
-        archived: 0,
-    };
-
-    (data || []).forEach((item: any) => {
-        const status = item.lifecycle_status as LifecycleStatus;
-        counts[status]++;
-    });
-
-    return Object.entries(counts).map(([status, count]) => ({
-        status: status as LifecycleStatus,
-        count,
-    }));
-}
-
-/**
- * Get items needing attention (damaged, in repair, etc.)
- */
-export async function getItemsNeedingAttention(
-    userId: string,
-    outletId?: string
-): Promise<{
-    damaged: InventoryItemV2[];
-    in_repair: InventoryItemV2[];
-    unlocked_balance: InventoryItemV2[];
-}> {
-    await getUserRoleAndOutlets(userId);
-
-    let query = supabase
-        .from('inventory_items')
-        .select(`
-      *,
-      outlets:outlet_id (
-        name,
-        code
-      )
-    `)
-        .in('lifecycle_status', ['draft', 'active', 'discontinued'])
-        .or('damaged_quantity.gt.0,in_repair_quantity.gt.0,opening_balance_confirmed.eq.false');
-
-    if (outletId) {
-        query = query.eq('outlet_id', outletId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw new Error(error.message);
-
-    const items = (data || []).map((item: any) => ({
-        ...item,
-        outlet_name: item.outlets?.name,
-        outlet_code: item.outlets?.code,
-    })) as InventoryItemV2[];
-
-    return {
-        damaged: items.filter(i => i.damaged_quantity > 0),
-        in_repair: items.filter(i => i.in_repair_quantity > 0),
-        unlocked_balance: items.filter(i => !i.opening_balance_confirmed),
-    };
-}
+// activateItem, archiveItem, confirmOpeningBalance, getLifecycleSummary and
+// getItemsNeedingAttention were removed: they had no callers.
 
 // ================================================================
 // BACKWARD COMPATIBILITY

@@ -1,113 +1,161 @@
-import { useState, useEffect } from 'react';
-import { Activity, Download, Filter } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { Activity, ChevronDown, Download, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { downloadCsv } from '@/utils/csv';
+import { todayISO } from '@/utils/date';
 import {
   getActivityLogs,
-  exportActivityLogsCSV,
-  getActivityModules,
+  activityLogsToCSV,
   getActivityActionTypes,
-  getActivityLogStats,
+  ACTIVITY_MODULES,
+  ACTIVITY_LOG_PAGE_SIZE,
   type ActivityLogEntry,
   type ActivityLogFilters,
 } from '@/services/activityLogService';
+import { getOutletOptions } from '@/services/adminOutletService';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Alert } from '@/components/ui/Alert';
+import { Badge, type BadgeVariant } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { DateInput } from '@/components/ui/DateInput';
+import { Select } from '@/components/ui/Select';
+import { Skeleton, Spinner, TableSkeleton } from '@/components/ui/Spinner';
+import { cn } from '@/utils/cn';
 
 // ================================================================
-// ACTIVITY LOGS PAGE (ADMIN + ACCOUNTANT + MANAGER)
+// ACTIVITY LOGS PAGE (ADMIN ONLY: route is admin-only in AppRoutes)
 // ================================================================
-// Unified audit trail with role-based filtering
+// Unified audit trail across modules
 // ================================================================
+
+const EMPTY_FILTERS: ActivityLogFilters = {
+  outlet_id: '',
+  user_id: '',
+  module: '',
+  action_type: '',
+  date_from: '',
+  date_to: '',
+};
+
+const MODULE_VARIANT: Record<string, BadgeVariant> = {
+  invoice: 'draft',
+  payment: 'paid',
+  subscription: 'final',
+  event: 'info',
+  inventory: 'partial',
+};
+
+/** "stock_adjusted" -> "Stock adjusted" */
+const sentence = (raw: string) => {
+  const t = raw.replace(/_/g, ' ').toLowerCase();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+/** Descriptions longer than this collapse behind a disclosure button. */
+const DESCRIPTION_CLAMP = 110;
 
 export default function ActivityLogsPage() {
-  const { user, outlets } = useAuth();
+  useDocumentTitle('Activity log');
+
+  const { user } = useAuth();
+  const userId = user?.id;
+  const userRole = user?.role || '';
   const [logs, setLogs] = useState<ActivityLogEntry[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  // Stats
-  const [stats, setStats] = useState({ total_activities: 0, unique_users: 0, modules_active: 0 });
-
   // Filters
-  const [filters, setFilters] = useState<ActivityLogFilters>({
-    outlet_id: '',
-    user_id: '',
-    module: '',
-    action_type: '',
-    date_from: '',
-    date_to: '',
-  });
+  const [filters, setFiltersState] = useState<ActivityLogFilters>(EMPTY_FILTERS);
+  const [page, setPage] = useState(0);
+  // Any filter change starts again from the newest page
+  const setFilters = (next: ActivityLogFilters) => {
+    setPage(0);
+    setFiltersState(next);
+  };
+  const [outletOptions, setOutletOptions] = useState<{ id: string; name: string; is_active: boolean }[]>([]);
+  const requestSeq = useRef(0);
+  // Presentational: which long descriptions are expanded
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
-  // Filter options
-  const [modules, setModules] = useState<string[]>([]);
-  const [actionTypes, setActionTypes] = useState<string[]>([]);
-
-  const userRole = user?.role || '';
   const showOutletFilter = userRole === 'admin' || userRole === 'accountant';
-  const availableOutlets = outlets || [];
+  const actionTypes = useMemo(() => getActivityActionTypes(filters.module), [filters.module]);
+  const dateRangeInvalid =
+    !!filters.date_from && !!filters.date_to && filters.date_from > filters.date_to;
 
+  // Outlet filter options: every outlet, including inactive ones, so the
+  // history of a closed outlet can still be isolated. Loaded once.
   useEffect(() => {
-    if (user?.id) {
-      loadLogs();
-      loadFilterOptions();
-    }
-  }, [user, filters]);
+    if (!userId || userRole !== 'admin') return;
+    getOutletOptions(userId)
+      .then(setOutletOptions)
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Failed to load outlets');
+      });
+  }, [userId, userRole]);
 
-  async function loadLogs() {
-    if (!user?.id) return;
+  // Keyed on the user id (not the user object) so token refreshes don't
+  // refetch. Only the latest request may update state.
+  useEffect(() => {
+    if (!userId) return;
+    const seq = ++requestSeq.current;
 
-    try {
-      setLoading(true);
+    // From after To: no query. Drop the old results (and any late response)
+    // so they are not mistaken for this range.
+    if (dateRangeInvalid) {
+      setLogs([]);
+      setTotal(0);
       setError(null);
-
-      const [logsData, statsData] = await Promise.all([
-        getActivityLogs(user.id, filters),
-        getActivityLogStats(user.id, filters),
-      ]);
-
-      setLogs(logsData);
-      setStats(statsData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load activity logs');
-    } finally {
       setLoading(false);
+      return;
     }
-  }
 
-  async function loadFilterOptions() {
-    if (!user?.id) return;
+    setLoading(true);
+    setError(null);
+    getActivityLogs(userId, filters, { page, pageSize: ACTIVITY_LOG_PAGE_SIZE })
+      .then((result) => {
+        if (seq !== requestSeq.current) return;
+        setLogs(result.rows);
+        setTotal(result.total);
+      })
+      .catch((err: unknown) => {
+        if (seq !== requestSeq.current) return;
+        setLogs([]);
+        setTotal(0);
+        setError(err instanceof Error ? err.message : 'Failed to load activity logs');
+      })
+      .finally(() => {
+        if (seq === requestSeq.current) setLoading(false);
+      });
+  }, [userId, filters, page, dateRangeInvalid]);
 
-    try {
-      const [modulesData, actionsData] = await Promise.all([
-        getActivityModules(user.id),
-        getActivityActionTypes(user.id, filters.module),
-      ]);
+  // Stats from the rows on screen; total from the exact count
+  const uniqueUsers = useMemo(
+    () => new Set(logs.map((row) => row.user_id).filter(Boolean)).size,
+    [logs]
+  );
+  const modulesActive = useMemo(() => new Set(logs.map((row) => row.module)).size, [logs]);
+  const truncated = total > logs.length;
+  const pageCount = Math.max(1, Math.ceil(total / ACTIVITY_LOG_PAGE_SIZE));
+  const firstRow = total === 0 ? 0 : page * ACTIVITY_LOG_PAGE_SIZE + 1;
+  const lastRow = Math.min(total, page * ACTIVITY_LOG_PAGE_SIZE + logs.length);
 
-      setModules(modulesData);
-      setActionTypes(actionsData);
-    } catch (err) {
-      console.error('Failed to load filter options:', err);
-    }
-  }
-
-  async function handleExportCSV() {
-    if (!user?.id) return;
-
+  function handleExportCSV() {
+    if (exporting || logs.length === 0) return;
     try {
       setExporting(true);
-      const csv = await exportActivityLogsCSV(user.id, filters);
-
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute(
-        'download',
-        `activity-logs-${new Date().toISOString().split('T')[0]}.csv`
-      );
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      downloadCsv(`activity-logs-${todayISO()}.csv`, activityLogsToCSV(logs));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to export CSV');
     } finally {
@@ -116,238 +164,264 @@ export default function ActivityLogsPage() {
   }
 
   function clearFilters() {
-    setFilters({
-      outlet_id: '',
-      user_id: '',
-      module: '',
-      action_type: '',
-      date_from: '',
-      date_to: '',
-    });
+    setFilters(EMPTY_FILTERS);
   }
 
-  const getModuleBadgeColor = (module: string) => {
-    switch (module) {
-      case 'inventory':
-        return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200';
-      case 'payment':
-        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
-      case 'subscription':
-        return 'bg-brand-primary/20 text-brand-primary';
-      case 'event':
-        return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200';
-      case 'invoice':
-        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
-      default:
-        return 'bg-brand-border/50 text-brand-text';
-    }
-  };
-
-  if (loading && logs.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-primary mx-auto"></div>
-          <p className="mt-4 text-brand-text/70">Loading activity logs...</p>
-        </div>
-      </div>
-    );
-  }
+  const first = loading && logs.length === 0;
+  const hasFilters = Object.values(filters).some(Boolean);
+  const n = (v: number) => v.toLocaleString('en-IN');
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Activity className="w-8 h-8" />
-            Activity Logs
-          </h1>
-          <p className="text-brand-text/70 mt-1">
-            Unified audit trail across all system modules
-          </p>
-        </div>
-        <button
-          onClick={handleExportCSV}
-          disabled={logs.length === 0 || exporting}
-          className="flex items-center gap-2 px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark disabled:opacity-50"
-        >
-          <Download className="w-5 h-5" />
-          {exporting ? 'Exporting...' : 'Export CSV'}
-        </button>
-      </div>
-
-      {error && (
-        <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      )}
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Total Activities</p>
-          <p className="text-2xl font-bold">{stats.total_activities}</p>
-        </div>
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Unique Users</p>
-          <p className="text-2xl font-bold text-brand-primary">{stats.unique_users}</p>
-        </div>
-        <div className="bg-white p-4 rounded-lg border border-brand-border">
-          <p className="text-sm text-brand-text/70">Active Modules</p>
-          <p className="text-2xl font-bold text-purple-600">{stats.modules_active}</p>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="bg-white rounded-lg border border-brand-border p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold flex items-center gap-2">
-            <Filter className="w-5 h-5" />
-            Filters
-          </h3>
-          <button
-            onClick={clearFilters}
-            className="text-sm text-brand-primary hover:text-brand-primaryDark"
+    <div>
+      <PageHeader
+        title="Activity log"
+        description="Who did what, and when, across invoices, payments, subscriptions, events and stock."
+        actions={
+          <Button
+            type="button"
+            onClick={handleExportCSV}
+            disabled={logs.length === 0 || loading}
+            isLoading={exporting}
           >
-            Clear Filters
-          </button>
-        </div>
+            {!exporting && <Download className="h-4 w-4" aria-hidden="true" />}
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </Button>
+        }
+      />
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {error && <Alert variant="error" className="mb-6">{error}</Alert>}
+
+      {/* Filter bar: stays mounted while results reload */}
+      <Card padding="sm" className="mb-6">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(5,minmax(0,1fr))_auto] lg:items-end">
           {/* Outlet Filter (Admin/Accountant only) */}
           {showOutletFilter && (
-            <div>
-              <label className="block text-sm font-medium mb-1">Outlet</label>
-              <select
-                value={filters.outlet_id}
-                onChange={(e) => setFilters({ ...filters, outlet_id: e.target.value })}
-                className="w-full px-3 py-2 border border-brand-border rounded-md bg-white"
-              >
-                <option value="">All Outlets</option>
-                {availableOutlets.map((outlet) => (
-                  <option key={outlet.id} value={outlet.id}>
-                    {outlet.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              label="Outlet"
+              value={filters.outlet_id}
+              onChange={(e) => setFilters({ ...filters, outlet_id: e.target.value })}
+            >
+              <option value="">All outlets</option>
+              {outletOptions.map((outlet) => (
+                <option key={outlet.id} value={outlet.id}>
+                  {outlet.name}{outlet.is_active ? '' : ' (inactive)'}
+                </option>
+              ))}
+            </Select>
           )}
 
-          {/* Module Filter */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Module</label>
-            <select
-              value={filters.module}
-              onChange={(e) => setFilters({ ...filters, module: e.target.value })}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white"
-            >
-              <option value="">All Modules</option>
-              {modules.map((mod) => (
-                <option key={mod} value={mod}>
-                  {mod.toUpperCase()}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Select
+            label="Module"
+            value={filters.module}
+            // Reset the action: the old one may not exist in the new module
+            onChange={(e) => setFilters({ ...filters, module: e.target.value, action_type: '' })}
+          >
+            <option value="">All modules</option>
+            {ACTIVITY_MODULES.map((mod) => (
+              <option key={mod} value={mod}>
+                {sentence(mod)}
+              </option>
+            ))}
+          </Select>
 
-          {/* Action Type Filter */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Action Type</label>
-            <select
-              value={filters.action_type}
-              onChange={(e) => setFilters({ ...filters, action_type: e.target.value })}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white"
-            >
-              <option value="">All Actions</option>
-              {actionTypes.map((action) => (
-                <option key={action} value={action}>
-                  {action.replace(/_/g, ' ').toUpperCase()}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Select
+            label="Action"
+            value={filters.action_type}
+            onChange={(e) => setFilters({ ...filters, action_type: e.target.value })}
+          >
+            <option value="">All actions</option>
+            {actionTypes.map((action) => (
+              <option key={action} value={action}>
+                {sentence(action)}
+              </option>
+            ))}
+          </Select>
 
-          {/* Date From */}
-          <div>
-            <label className="block text-sm font-medium mb-1">From Date</label>
-            <input
-              type="date"
-              value={filters.date_from}
-              onChange={(e) => setFilters({ ...filters, date_from: e.target.value })}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white"
-            />
-          </div>
+          <DateInput
+            label="From"
+            value={filters.date_from ?? ''}
+            onChange={(e) => setFilters({ ...filters, date_from: e.target.value })}
+            error={dateRangeInvalid ? 'Must be on or before the To date.' : undefined}
+          />
 
-          {/* Date To */}
-          <div>
-            <label className="block text-sm font-medium mb-1">To Date</label>
-            <input
-              type="date"
-              value={filters.date_to}
-              onChange={(e) => setFilters({ ...filters, date_to: e.target.value })}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white"
-            />
-          </div>
+          <DateInput
+            label="To"
+            value={filters.date_to ?? ''}
+            onChange={(e) => setFilters({ ...filters, date_to: e.target.value })}
+          />
+
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={clearFilters}
+            disabled={!hasFilters}
+            className={cn('justify-self-start', dateRangeInvalid && 'lg:mb-7')}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+            Clear filters
+          </Button>
         </div>
-      </div>
+      </Card>
 
-      {/* Logs Table */}
-      <div className="bg-white rounded-lg border border-brand-border overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-brand-bg border-b border-brand-border">
-              <tr>
-                <th className="text-left py-3 px-4 font-medium">Date/Time</th>
-                <th className="text-left py-3 px-4 font-medium">User</th>
-                {showOutletFilter && <th className="text-left py-3 px-4 font-medium">Outlet</th>}
-                <th className="text-left py-3 px-4 font-medium">Module</th>
-                <th className="text-left py-3 px-4 font-medium">Action</th>
-                <th className="text-left py-3 px-4 font-medium">Description</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-border">
-              {logs.map((log, idx) => (
-                <tr key={idx} className="hover:bg-brand-primary/5">
-                  <td className="py-3 px-4 text-sm">
-                    <div>
-                      <p>{new Date(log.occurred_at).toLocaleDateString()}</p>
-                      <p className="text-xs text-brand-text/70">
-                        {new Date(log.occurred_at).toLocaleTimeString()}
-                      </p>
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 text-sm">{log.user_name || 'System'}</td>
-                  {showOutletFilter && (
-                    <td className="py-3 px-4 text-sm text-brand-text/70">
-                      {log.outlet_name}
-                    </td>
-                  )}
-                  <td className="py-3 px-4">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getModuleBadgeColor(
-                        log.module
-                      )}`}
-                    >
-                      {log.module.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-xs font-mono">
-                    {log.action_type.replace(/_/g, ' ').toUpperCase()}
-                  </td>
-                  <td className="py-3 px-4 text-sm max-w-md truncate">{log.description}</td>
+      <section className="sheet overflow-hidden" aria-labelledby="log-h" aria-busy={loading || undefined}>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-rule px-5 py-4">
+          <div className="min-w-0">
+            <h2 id="log-h" className="text-lg font-semibold text-ink">Entries</h2>
+            {first ? (
+              <Skeleton className="mt-1.5 h-4 w-64 max-w-full" />
+            ) : (
+              <p className="tabular text-sm text-ink-muted">
+                {n(total)} entr{total === 1 ? 'y' : 'ies'} · {n(uniqueUsers)} {uniqueUsers === 1 ? 'person' : 'people'} ·{' '}
+                {n(modulesActive)} module{modulesActive === 1 ? '' : 's'}
+                {truncated ? ' (people and modules counted on this page)' : ''}
+              </p>
+            )}
+          </div>
+          {loading && !first && (
+            <span className="inline-flex items-center gap-2 text-sm text-ink-muted" role="status">
+              <Spinner size="sm" label="Updating" />
+              Updating…
+            </span>
+          )}
+        </div>
+
+        {first ? (
+          <TableSkeleton rows={8} cols={5} />
+        ) : logs.length === 0 ? (
+          <EmptyState
+            icon={Activity}
+            title={
+              dateRangeInvalid
+                ? 'Check the date range'
+                : hasFilters
+                  ? 'No activity matches these filters'
+                  : 'No activity recorded yet'
+            }
+            description={
+              dateRangeInvalid
+                ? 'The From date is after the To date. Fix the range to see entries.'
+                : hasFilters
+                  ? 'Widen the date range or clear a filter to see more entries.'
+                  : 'Entries appear here as invoices, payments, subscriptions, events and stock movements are recorded.'
+            }
+            action={hasFilters ? { label: 'Clear filters', onClick: clearFilters } : undefined}
+          />
+        ) : (
+          <div className={cn('overflow-x-auto transition-opacity', loading && 'opacity-60')}>
+            <table className="ledger">
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Module</th>
+                  <th scope="col">{showOutletFilter ? 'By · outlet' : 'By'}</th>
+                  <th scope="col">What happened</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {logs.length === 0 && !loading && (
-          <div className="text-center py-12 text-brand-text/70">
-            No activity logs found for the selected filters
+              </thead>
+              <tbody>
+                {logs.map((log, idx) => {
+                  const key = `${log.module}-${log.action_type}-${log.entity_id}-${log.occurred_at}-${idx}`;
+                  const d = new Date(log.occurred_at);
+                  return (
+                    <tr key={key} className="align-top">
+                      <td className="whitespace-nowrap align-top">
+                        <div className="inline-block max-w-full align-top">
+                          <div className="tabular text-ink">
+                            {d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </div>
+                          <div className="tabular text-xs text-ink-muted">
+                            {d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="align-top">
+                        <div>
+                          <Badge variant={MODULE_VARIANT[log.module] ?? 'default'}>{sentence(log.module)}</Badge>
+                          <div className="mt-1 whitespace-nowrap text-xs text-ink-muted">{sentence(log.action_type)}</div>
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap align-top">
+                        <div>
+                          <div className="text-ink">{log.user_name || <span className="text-ink-muted">System</span>}</div>
+                          {showOutletFilter && log.outlet_name && (
+                            <div className="text-xs text-ink-muted">{log.outlet_name}</div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="min-w-[18rem] max-w-xl align-top">
+                        <Description
+                          text={log.description}
+                          expanded={expanded.has(key)}
+                          onToggle={() => toggleExpanded(key)}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
-      </div>
+
+        {/* Pagination */}
+        {!first && logs.length > 0 && (
+          <nav
+            aria-label="Activity log pages"
+            className="flex flex-col gap-3 border-t border-rule px-5 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+          >
+            <p className="text-ink-muted">
+              Showing <span className="tabular font-semibold text-ink">{n(firstRow)}–{n(lastRow)}</span> of{' '}
+              <span className="tabular font-semibold text-ink">{n(total)}</span>
+              {pageCount > 1 ? ' · The CSV export contains this page.' : ''}
+            </p>
+            {pageCount > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={loading || page === 0}
+                >
+                  Previous
+                </Button>
+                <span className="tabular px-1 text-ink-muted">
+                  Page {n(page + 1)} of {n(pageCount)}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                  disabled={loading || page >= pageCount - 1}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </nav>
+        )}
+      </section>
     </div>
+  );
+}
+
+/** Long descriptions collapse to two lines; a disclosure button reveals the rest. */
+function Description({ text, expanded, onToggle }: { text: string; expanded: boolean; onToggle: () => void }) {
+  if (!text || text.length <= DESCRIPTION_CLAMP) {
+    return <p className="text-ink">{text || '—'}</p>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className="group block w-full rounded-md text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-logo"
+    >
+      <span className={cn('block break-words text-ink', !expanded && 'line-clamp-2')}>{text}</span>
+      <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-brand-primary group-hover:underline">
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
+        {expanded ? 'Show less' : 'Show all'}
+      </span>
+    </button>
   );
 }

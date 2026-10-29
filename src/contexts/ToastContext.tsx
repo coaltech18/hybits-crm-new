@@ -43,26 +43,10 @@ const TOAST_ICONS: Record<ToastType, React.ElementType> = {
 
 // Styles by type
 const TOAST_STYLES: Record<ToastType, { bg: string; icon: string; border: string }> = {
-    success: {
-        bg: 'bg-green-50',
-        icon: 'text-green-500',
-        border: 'border-green-200',
-    },
-    error: {
-        bg: 'bg-red-50',
-        icon: 'text-red-500',
-        border: 'border-red-200',
-    },
-    warning: {
-        bg: 'bg-yellow-50',
-        icon: 'text-yellow-500',
-        border: 'border-yellow-200',
-    },
-    info: {
-        bg: 'bg-blue-50',
-        icon: 'text-blue-500',
-        border: 'border-blue-200',
-    },
+    success: { bg: 'bg-white', icon: 'text-final', border: 'border-final-rule' },
+    error: { bg: 'bg-white', icon: 'text-danger', border: 'border-danger-rule' },
+    warning: { bg: 'bg-white', icon: 'text-partial', border: 'border-partial-rule' },
+    info: { bg: 'bg-white', icon: 'text-info', border: 'border-info-rule' },
 };
 
 // Generate unique ID
@@ -92,15 +76,15 @@ function ToastItem({
     return (
         <div
             className={`
-        flex items-start gap-3 p-4 rounded-lg border shadow-lg
+        flex items-start gap-3 px-4 py-3 rounded-sheet border shadow-lift
         ${styles.bg} ${styles.border}
         animate-slide-in-right
         max-w-sm w-full
       `}
-            role="alert"
+            role={toast.type === 'error' ? 'alert' : 'status'}
         >
             <Icon className={`w-5 h-5 flex-shrink-0 mt-0.5 ${styles.icon}`} />
-            <p className="flex-1 text-sm text-brand-text">{toast.message}</p>
+            <p className="flex-1 text-sm font-medium text-ink">{toast.message}</p>
             <button
                 onClick={() => onClose(toast.id)}
                 className="flex-shrink-0 text-brand-text/50 hover:text-brand-text transition-colors"
@@ -141,7 +125,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
             {/* Toast Container - Fixed position at top-right */}
             <div
-                className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"
+                className="fixed bottom-4 right-4 left-4 sm:left-auto z-[90] flex flex-col items-end gap-2 pointer-events-none"
                 aria-live="polite"
                 aria-atomic="true"
             >

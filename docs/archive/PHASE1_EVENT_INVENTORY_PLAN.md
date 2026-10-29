@@ -1,3 +1,5 @@
+> **Historical (2026-02) — superseded; see [docs/SOFTWARE_OVERVIEW.md](../SOFTWARE_OVERVIEW.md).**
+
 # PHASE 1: Embed Inventory Inside EventDetailPage — Technical Implementation Plan
 
 > Generated: 2026-02-24

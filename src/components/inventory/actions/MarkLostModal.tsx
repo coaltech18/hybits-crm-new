@@ -5,8 +5,10 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
-import { Spinner } from '@/components/ui/Spinner';
+import { Skeleton } from '@/components/ui/Spinner';
+import { ChoiceGroup, FactWell, ModalActions, PickList, PickRow, PickedReference } from '../ModalParts';
 import { supabase } from '@/lib/supabase';
+import { ilikePattern } from '@/utils/query';
 import { writeOffInventoryV2 } from '@/services/inventoryMovementServiceV2';
 
 // ================================================================
@@ -35,6 +37,7 @@ interface ReferenceResult {
     id: string;
     name: string;
     refType: 'subscription' | 'event';
+    outstanding: number; // outstanding_quantity of THIS item with this reference
 }
 
 export default function MarkLostModal({
@@ -59,7 +62,12 @@ export default function MarkLostModal({
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const maxQty = lostWhere === 'warehouse' ? availableQuantity : allocatedQuantity;
+    const maxQty =
+        lostWhere === 'warehouse'
+            ? availableQuantity
+            : selectedReference
+              ? selectedReference.outstanding
+              : allocatedQuantity;
 
     useEffect(() => {
         if (isOpen) {
@@ -74,67 +82,58 @@ export default function MarkLostModal({
         }
     }, [isOpen]);
 
+    // Only references that still hold this item (outstanding > 0) are listed.
     useEffect(() => {
-        if (lostWhere === 'client' && searchQuery.trim()) {
-            const timer = setTimeout(() => searchReferences(), 300);
-            return () => clearTimeout(timer);
-        } else {
+        const query = searchQuery.trim();
+        if (lostWhere !== 'client' || !query) {
             setSearchResults([]);
-        }
-    }, [searchQuery, referenceType, lostWhere]);
-
-    async function searchReferences() {
-        if (!searchQuery.trim()) return;
-
-        try {
-            setSearchLoading(true);
-
-            if (referenceType === 'subscription') {
-                const { data } = await supabase
-                    .from('subscriptions')
-                    .select('id, client_id, outlet_id, status, clients(name)')
-                    .eq('outlet_id', outletId)
-                    .eq('is_active', true)
-                    .not('clients', 'is', null)
-                    .limit(10);
-
-                const filtered = (data || []).filter(
-                    (s: any) => s.clients?.name?.toLowerCase().includes(searchQuery.toLowerCase())
-                );
-
-                setSearchResults(
-                    filtered.map((s: any) => ({
-                        id: s.id,
-                        name: s.clients?.name || 'Unknown',
-                        refType: 'subscription' as const,
-                    }))
-                );
-            } else {
-                const { data } = await supabase
-                    .from('events')
-                    .select('id, event_name, outlet_id, status')
-                    .eq('outlet_id', outletId)
-                    .ilike('event_name', `%${searchQuery}%`)
-                    .eq('is_active', true)
-                    .limit(10);
-
-                setSearchResults(
-                    (data || []).map((e: any) => ({
-                        id: e.id,
-                        name: e.event_name,
-                        refType: 'event' as const,
-                    }))
-                );
-            }
-        } catch (err) {
-            console.error('Search failed:', err);
-        } finally {
             setSearchLoading(false);
+            return;
         }
-    }
+
+        let stale = false;
+        const timer = setTimeout(async () => {
+            setSearchLoading(true);
+            try {
+                const { data, error: fetchError } = await supabase
+                    .from('inventory_allocations_with_details')
+                    .select('reference_id, reference_name, outstanding_quantity')
+                    .eq('inventory_item_id', itemId)
+                    .eq('outlet_id', outletId)
+                    .eq('reference_type', referenceType)
+                    .gt('outstanding_quantity', 0)
+                    .ilike('reference_name', ilikePattern(query))
+                    .limit(10);
+                if (fetchError) throw fetchError;
+                if (!stale) {
+                    setSearchResults(
+                        (data || []).map((row) => ({
+                            id: row.reference_id as string,
+                            name: (row.reference_name as string | null) || 'Unknown',
+                            refType: referenceType,
+                            outstanding: Number(row.outstanding_quantity) || 0,
+                        }))
+                    );
+                }
+            } catch (err) {
+                if (!stale) {
+                    setSearchResults([]);
+                    setError(err instanceof Error ? err.message : 'Search failed');
+                }
+            } finally {
+                if (!stale) setSearchLoading(false);
+            }
+        }, 300);
+
+        return () => {
+            stale = true;
+            clearTimeout(timer);
+        };
+    }, [searchQuery, referenceType, lostWhere, itemId, outletId]);
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (loading) return;
         setError(null);
 
         const qty = parseInt(quantity);
@@ -144,7 +143,7 @@ export default function MarkLostModal({
         }
 
         if (qty > maxQty) {
-            setError(`Quantity cannot exceed ${lostWhere === 'warehouse' ? 'available' : 'allocated'} stock (${maxQty})`);
+            setError(`Quantity cannot exceed ${lostWhere === 'warehouse' ? 'available stock' : 'what this client still holds'} (${maxQty})`);
             return;
         }
 
@@ -181,63 +180,55 @@ export default function MarkLostModal({
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Mark Lost">
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Mark lost"
+            description="Lost pieces are removed from total stock."
+            dismissable={!loading}
+        >
             <form onSubmit={handleSubmit} className="space-y-4">
                 {error && <Alert variant="error">{error}</Alert>}
 
-                {/* Item Info */}
-                <div className="bg-muted p-4 rounded">
-                    <p className="text-sm text-muted-foreground">Item</p>
-                    <p className="font-semibold">{itemName}</p>
-                </div>
+                <FactWell
+                    eyebrow="Item"
+                    title={itemName}
+                    facts={[
+                        {
+                            label:
+                                lostWhere === 'warehouse'
+                                    ? 'Available'
+                                    : selectedReference
+                                      ? 'With this client'
+                                      : 'Out (all clients)',
+                            value: maxQty,
+                            tone: lostWhere === 'warehouse' ? 'final' : 'info',
+                        },
+                    ]}
+                />
 
-                {/* Where Lost */}
-                <div>
-                    <label className="block text-sm font-medium mb-2">Where was it lost?</label>
-                    <div className="flex gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="radio"
-                                name="lostWhere"
-                                value="warehouse"
-                                checked={lostWhere === 'warehouse'}
-                                onChange={() => {
-                                    setLostWhere('warehouse');
-                                    setSelectedReference(null);
-                                }}
-                                className="w-4 h-4"
-                            />
-                            <span>Lost in Warehouse</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="radio"
-                                name="lostWhere"
-                                value="client"
-                                checked={lostWhere === 'client'}
-                                onChange={() => setLostWhere('client')}
-                                className="w-4 h-4"
-                            />
-                            <span>Lost by Client</span>
-                        </label>
-                    </div>
-                </div>
+                <ChoiceGroup<'warehouse' | 'client'>
+                    legend="Where was it lost?"
+                    name="lost-where"
+                    value={lostWhere}
+                    onChange={(v) => {
+                        if (v === 'warehouse') {
+                            setLostWhere('warehouse');
+                            setSelectedReference(null);
+                        } else {
+                            setLostWhere('client');
+                        }
+                    }}
+                    options={[
+                        { value: 'warehouse', label: 'At the outlet', hint: 'From available stock', tone: 'overdue' },
+                        { value: 'client', label: 'By a client', hint: 'From a subscription or event', tone: 'overdue' },
+                    ]}
+                />
 
-                {/* Max available info */}
-                <div className={`p-3 rounded ${lostWhere === 'warehouse' ? 'bg-green-50' : 'bg-blue-50'}`}>
-                    <p className="text-sm text-muted-foreground">
-                        {lostWhere === 'warehouse' ? 'Available Stock' : 'Allocated Stock'}
-                    </p>
-                    <p className={`text-lg font-bold ${lostWhere === 'warehouse' ? 'text-green-600' : 'text-brand-primary'}`}>
-                        {maxQty}
-                    </p>
-                </div>
-
-                {/* Client Loss - Reference Search */}
                 {lostWhere === 'client' && (
                     <>
                         <Select
-                            label="Reference Type"
+                            label="Booking type"
                             value={referenceType}
                             onChange={(e) => {
                                 setReferenceType(e.target.value as 'subscription' | 'event');
@@ -252,93 +243,86 @@ export default function MarkLostModal({
                         {!selectedReference && (
                             <div>
                                 <Input
-                                    label={referenceType === 'subscription' ? 'Search by client name' : 'Search by event name'}
+                                    type="search"
+                                    label={referenceType === 'subscription' ? 'Find by client name' : 'Find by event name'}
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
-                                    placeholder="Type to search..."
+                                    placeholder="Start typing…"
+                                    helperText="Only bookings still holding this item are listed."
+                                    autoComplete="off"
                                 />
 
                                 {searchLoading && (
-                                    <div className="flex items-center justify-center py-4">
-                                        <Spinner />
+                                    <div className="mt-2 space-y-2" aria-busy="true">
+                                        <Skeleton className="h-9" />
+                                        <Skeleton className="h-9" />
                                     </div>
                                 )}
 
                                 {searchResults.length > 0 && (
-                                    <div className="border rounded divide-y mt-2 max-h-36 overflow-y-auto">
+                                    <PickList label="Matching bookings">
                                         {searchResults.map((result) => (
-                                            <button
-                                                type="button"
+                                            <PickRow
                                                 key={result.id}
-                                                onClick={() => {
+                                                title={result.name}
+                                                meta={`${result.outstanding} still out`}
+                                                onPick={() => {
                                                     setSelectedReference(result);
                                                     setSearchQuery('');
                                                     setSearchResults([]);
                                                 }}
-                                                className="w-full text-left p-3 hover:bg-muted transition-colors text-sm"
-                                            >
-                                                <p className="font-medium">{result.name}</p>
-                                            </button>
+                                            />
                                         ))}
-                                    </div>
+                                    </PickList>
                                 )}
                             </div>
                         )}
 
                         {selectedReference && (
-                            <div className="bg-brand-primary/10 p-3 rounded flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-muted-foreground capitalize">{selectedReference.refType}</p>
-                                    <p className="font-medium">{selectedReference.name}</p>
-                                </div>
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => setSelectedReference(null)}
-                                >
-                                    Change
-                                </Button>
-                            </div>
+                            <PickedReference
+                                kind={selectedReference.refType}
+                                name={selectedReference.name}
+                                onChange={() => setSelectedReference(null)}
+                            />
                         )}
                     </>
                 )}
 
-                {/* Quantity */}
                 <Input
                     type="number"
-                    label="Quantity"
+                    inputMode="numeric"
+                    label="Lost pieces"
                     value={quantity}
                     onChange={(e) => setQuantity(e.target.value)}
                     min="1"
                     max={maxQty}
                     required
-                    placeholder={`Max: ${maxQty}`}
+                    placeholder={`Up to ${maxQty}`}
+                    className="tabular"
                 />
 
-                {/* Notes (REQUIRED) */}
                 <Textarea
-                    label="Notes (required)"
+                    label="What happened"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Describe the circumstances of the loss..."
+                    placeholder="Describe the circumstances of the loss"
+                    helperText="Required"
                     required
                     rows={3}
                 />
 
                 <Alert variant="warning">
-                    Lost items will be permanently removed from total stock count.
+                    Lost pieces are removed from total stock for good.
                 </Alert>
 
-                {/* Buttons */}
-                <div className="flex justify-end gap-2 pt-4">
+                <ModalActions>
                     <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
                         Cancel
                     </Button>
-                    <Button type="submit" disabled={loading} variant="destructive">
-                        {loading ? 'Processing...' : 'Mark as Lost'}
+                    <Button type="submit" isLoading={loading} variant="danger">
+                        {loading ? 'Saving…' : 'Mark lost'}
                     </Button>
-                </div>
+                </ModalActions>
             </form>
         </Modal>
     );

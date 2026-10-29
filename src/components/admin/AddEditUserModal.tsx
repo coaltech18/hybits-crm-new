@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
 import type { UserSummary } from '@/services/adminUserService';
 import type { Outlet } from '@/types';
+import { Modal } from '@/components/ui/Modal';
+import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
+import { Button } from '@/components/ui/Button';
+import { Alert } from '@/components/ui/Alert';
 
 // ================================================================
 // ADD / EDIT USER MODAL
@@ -91,173 +95,130 @@ export function AddEditUserModal({
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-brand-border sticky top-0 bg-white">
-          <h2 className="text-lg font-semibold">
-            {mode === 'create' ? 'Add New User' : 'Edit User'}
-          </h2>
-          <button
-            onClick={onClose}
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={mode === 'create' ? 'Add user' : 'Edit user'}
+      maxWidth="2xl"
+      dismissable={!isSubmitting}
+    >
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* User creation is not possible from the browser (needs the service role) */}
+        {mode === 'create' && (
+          <Alert variant="warning">
+            <h3 className="font-semibold">This form cannot create users yet</h3>
+            <p className="mt-1">
+              Creating a login needs a secure server step the app does not have, so the button below
+              stays disabled. Nothing you type here is saved. To add a user:
+            </p>
+            <ol className="mt-2 list-inside list-decimal space-y-1">
+              <li>
+                In the Supabase Dashboard, open Authentication → Users → Add user, enter their email, and
+                copy the new user's UID.
+              </li>
+              <li>
+                In Table Editor → <code className="serial">user_profiles</code>, insert a row with{' '}
+                <code className="serial">id</code> = that UID, the same <code className="serial">email</code>,{' '}
+                <code className="serial">full_name</code>, <code className="serial">role</code> (admin, manager
+                or accountant) and <code className="serial">is_active</code> = true.
+              </li>
+              <li>Reload this page. For a manager, use Assign outlets on their row.</li>
+            </ol>
+          </Alert>
+        )}
+
+        {error && <Alert variant="error">{error}</Alert>}
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <Input
+            label="Email"
+            type="email"
+            value={formData.email}
+            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            disabled={mode === 'edit' || isSubmitting}
+            helperText={mode === 'edit' ? 'Email cannot be changed.' : undefined}
+            required
+          />
+
+          <Input
+            label="Full name"
+            type="text"
+            value={formData.full_name}
+            onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
             disabled={isSubmitting}
-            className="text-brand-text/60 hover:text-brand-text"
+            required
+          />
+
+          <Input
+            label="Phone"
+            type="tel"
+            value={formData.phone}
+            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+            disabled={isSubmitting}
+          />
+
+          <Select
+            label="Role"
+            value={formData.role}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                role: e.target.value as 'admin' | 'manager' | 'accountant',
+                outlet_ids: e.target.value !== 'manager' ? [] : formData.outlet_ids,
+              })
+            }
+            disabled={isSubmitting}
+            required
           >
-            <X className="w-5 h-5" />
-          </button>
+            <option value="accountant">Accountant</option>
+            <option value="manager">Manager</option>
+            <option value="admin">Admin</option>
+          </Select>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* User creation disabled - use Supabase Dashboard */}
-          {mode === 'create' && (
-            <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-              <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 w-8 h-8 bg-amber-100 dark:bg-amber-800 rounded-full flex items-center justify-center">
-                  <span className="text-amber-600 dark:text-amber-400 text-lg">⚠️</span>
-                </div>
-                <div>
-                  <h3 className="font-medium text-amber-800 dark:text-amber-300">Create Users in Supabase</h3>
-                  <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
-                    To create new users, go to Supabase Dashboard → Authentication → Users → Invite User.
-                    After creating the auth user, add entries in user_profiles and user_outlet_assignments tables.
-                  </p>
-                </div>
-              </div>
+        {/* Outlet Assignment (Managers only) */}
+        {formData.role === 'manager' && (
+          <fieldset>
+            <legend className="mb-1.5 text-sm font-semibold text-ink">
+              Assigned outlets<span className="ml-0.5 text-danger" aria-hidden="true">*</span>
+            </legend>
+            <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-rule-strong p-2">
+              {outlets.filter((o) => o.is_active).map((outlet) => (
+                <label
+                  key={outlet.id}
+                  className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-sm text-ink hover:bg-paper"
+                >
+                  <input
+                    type="checkbox"
+                    checked={formData.outlet_ids?.includes(outlet.id) || false}
+                    onChange={(e) => {
+                      const newOutletIds = e.target.checked
+                        ? [...(formData.outlet_ids || []), outlet.id]
+                        : (formData.outlet_ids || []).filter((id) => id !== outlet.id);
+                      setFormData({ ...formData, outlet_ids: newOutletIds });
+                    }}
+                    disabled={isSubmitting}
+                    className="h-4 w-4 shrink-0 rounded accent-brand-primary"
+                  />
+                  <span className="min-w-0 flex-1">{outlet.name}</span>
+                  <span className="serial text-ink-muted">{outlet.code}</span>
+                </label>
+              ))}
             </div>
-          )}
+            <p className="mt-1.5 text-sm text-ink-muted">Managers can only see the outlets they are assigned.</p>
+          </fieldset>
+        )}
 
-          {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-red-600 dark:text-red-400 text-sm">
-              {error}
-            </div>
-          )}
-
-          {/* Email */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Email <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="email"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              disabled={mode === 'edit' || isSubmitting}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50 disabled:bg-brand-bg"
-              required
-            />
-            {mode === 'edit' && (
-              <p className="text-xs text-brand-text/60 mt-1">Email cannot be changed</p>
-            )}
-          </div>
-
-          {/* Full Name */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Full Name <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={formData.full_name}
-              onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-              disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50"
-              required
-            />
-          </div>
-
-          {/* Phone */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Phone</label>
-            <input
-              type="tel"
-              value={formData.phone}
-              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-              disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50"
-            />
-          </div>
-
-          {/* Role */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Role <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={formData.role}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  role: e.target.value as 'admin' | 'manager' | 'accountant',
-                  outlet_ids: e.target.value !== 'manager' ? [] : formData.outlet_ids,
-                })
-              }
-              disabled={isSubmitting}
-              className="w-full px-3 py-2 border border-brand-border rounded-md bg-white disabled:opacity-50"
-              required
-            >
-              <option value="accountant">Accountant</option>
-              <option value="manager">Manager</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
-
-          {/* Outlet Assignment (Managers only) */}
-          {formData.role === 'manager' && (
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Assigned Outlets <span className="text-red-500">*</span>
-              </label>
-              <div className="border border-brand-border rounded-md p-3 space-y-2 max-h-40 overflow-y-auto">
-                {outlets.filter(o => o.is_active).map((outlet) => (
-                  <label key={outlet.id} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.outlet_ids?.includes(outlet.id) || false}
-                      onChange={(e) => {
-                        const newOutletIds = e.target.checked
-                          ? [...(formData.outlet_ids || []), outlet.id]
-                          : (formData.outlet_ids || []).filter((id) => id !== outlet.id);
-                        setFormData({ ...formData, outlet_ids: newOutletIds });
-                      }}
-                      disabled={isSubmitting}
-                      className="rounded"
-                    />
-                    <span className="text-sm">
-                      {outlet.name} ({outlet.code})
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <p className="text-xs text-brand-text/60 mt-1">
-                Managers can only access assigned outlets
-              </p>
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t ">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-4 py-2 border border-brand-border rounded-md hover:bg-brand-bg disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting || mode === 'create'}
-              className="px-4 py-2 bg-brand-primary text-white rounded-md hover:bg-brand-primaryDark disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSubmitting ? 'Saving...' : mode === 'create' ? 'Use Supabase Dashboard' : 'Save Changes'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div className="flex flex-col-reverse gap-2 border-t border-rule pt-4 sm:flex-row sm:justify-end">
+          <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+            Cancel
+          </Button>
+          <Button type="submit" isLoading={isSubmitting} disabled={mode === 'create'}>
+            {isSubmitting ? 'Saving…' : mode === 'create' ? 'Not available in the app' : 'Save changes'}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

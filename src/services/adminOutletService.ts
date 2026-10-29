@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { countErrorMessage } from '@/utils/query';
 
 // ================================================================
 // ADMIN OUTLET SERVICE
@@ -7,7 +8,8 @@ import { supabase } from '@/lib/supabase';
 // - Admin-only operations
 // - Cannot deactivate outlet with active subscriptions
 // - Cannot deactivate outlet with allocated inventory
-// - Soft deactivate only (is_active flag)
+// - Soft deactivate only (is_active flag). Outlets can never be deleted:
+//   the block_outlet_delete trigger (migration 023) rejects every DELETE.
 // - Metadata edits only (no business logic)
 // ================================================================
 
@@ -86,19 +88,30 @@ export async function getOutlets(adminUserId: string): Promise<OutletSummary[]> 
   return data || [];
 }
 
+/** Editable fields of one outlet (the summary view has no phone/email). */
+export interface OutletDetails {
+  id: string;
+  name: string;
+  code: string;
+  city: string | null;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+}
+
 /**
- * Get single outlet by ID (admin only)
+ * Get one outlet's editable fields (admin only)
  */
-export async function getOutletById(
+export async function getOutletDetails(
   adminUserId: string,
   outletId: string
-): Promise<OutletSummary> {
+): Promise<OutletDetails> {
   await verifyAdminRole(adminUserId);
 
   const { data, error } = await supabase
-    .from('admin_outlets_summary')
-    .select('*')
-    .eq('outlet_id', outletId)
+    .from('outlets')
+    .select('id, name, code, city, address, phone, email')
+    .eq('id', outletId)
     .maybeSingle();
 
   if (error) {
@@ -110,6 +123,26 @@ export async function getOutletById(
   }
 
   return data;
+}
+
+/**
+ * Minimal outlet list for filters, including inactive outlets (admin only)
+ */
+export async function getOutletOptions(
+  adminUserId: string
+): Promise<{ id: string; name: string; is_active: boolean }[]> {
+  await verifyAdminRole(adminUserId);
+
+  const { data, error } = await supabase
+    .from('outlets')
+    .select('id, name, is_active')
+    .order('name');
+
+  if (error) {
+    throw new Error(`Failed to fetch outlets: ${error.message}`);
+  }
+
+  return data || [];
 }
 
 /**
@@ -190,10 +223,18 @@ export async function updateOutlet(
     }
   }
 
+  // Optional text fields are stored as NULL, not '', when cleared
+  const payload: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    const optional = key === 'address' || key === 'phone' || key === 'email';
+    payload[key] = optional ? value.trim() || null : value;
+  }
+
   // Update outlet
   const { error } = await supabase
     .from('outlets')
-    .update(updates)
+    .update(payload)
     .eq('id', outletId);
 
   if (error) {
@@ -240,25 +281,29 @@ export async function canDeactivateOutlet(
   await verifyAdminRole(adminUserId);
 
   // Check if already inactive
-  const { data: outlet } = await supabase
+  const { data: outlet, error: outletError } = await supabase
     .from('outlets')
     .select('is_active')
     .eq('id', outletId)
     .maybeSingle();
+
+  if (outletError) {
+    throw new Error(`Failed to check outlet: ${outletError.message}`);
+  }
 
   if (!outlet?.is_active) {
     return { canDeactivate: false, reason: 'Outlet is already inactive' };
   }
 
   // Check for active subscriptions
-  const { count: subscriptionCount, error: subError } = await supabase
+  const { count: subscriptionCount, error: subError, status: subStatus } = await supabase
     .from('subscriptions')
     .select('id', { count: 'exact', head: true })
     .eq('outlet_id', outletId)
     .eq('status', 'active');
 
   if (subError) {
-    throw new Error(`Failed to check subscriptions: ${subError.message}`);
+    throw new Error(`Failed to check subscriptions: ${countErrorMessage(subError, subStatus, 'active subscriptions')}`);
   }
 
   if (subscriptionCount && subscriptionCount > 0) {
@@ -269,14 +314,14 @@ export async function canDeactivateOutlet(
   }
 
   // Check for allocated inventory
-  const { count: inventoryCount, error: invError } = await supabase
+  const { count: inventoryCount, error: invError, status: invStatus } = await supabase
     .from('inventory_allocations')
     .select('id', { count: 'exact', head: true })
     .eq('outlet_id', outletId)
     .eq('is_active', true);
 
   if (invError) {
-    throw new Error(`Failed to check inventory allocations: ${invError.message}`);
+    throw new Error(`Failed to check inventory allocations: ${countErrorMessage(invError, invStatus, 'inventory allocations')}`);
   }
 
   if (inventoryCount && inventoryCount > 0) {
@@ -287,14 +332,14 @@ export async function canDeactivateOutlet(
   }
 
   // Check for active events
-  const { count: eventCount, error: eventError } = await supabase
+  const { count: eventCount, error: eventError, status: eventStatus } = await supabase
     .from('events')
     .select('id', { count: 'exact', head: true })
     .eq('outlet_id', outletId)
     .eq('status', 'planned');
 
   if (eventError) {
-    throw new Error(`Failed to check events: ${eventError.message}`);
+    throw new Error(`Failed to check events: ${countErrorMessage(eventError, eventStatus, 'planned events')}`);
   }
 
   if (eventCount && eventCount > 0) {
@@ -324,111 +369,6 @@ export async function activateOutlet(
   if (error) {
     throw new Error(`Failed to activate outlet: ${error.message}`);
   }
-}
-
-/**
- * Delete outlet permanently (admin only)
- * CRITICAL: Only allowed if outlet has NO linked data
- */
-export async function deleteOutlet(
-  adminUserId: string,
-  outletId: string
-): Promise<void> {
-  await verifyAdminRole(adminUserId);
-
-  // Check for any linked data
-  const validation = await canDeleteOutlet(adminUserId, outletId);
-  if (!validation.canDelete) {
-    throw new Error(validation.reason || 'Cannot delete outlet');
-  }
-
-  // Delete the outlet permanently
-  const { error } = await supabase
-    .from('outlets')
-    .delete()
-    .eq('id', outletId);
-
-  if (error) {
-    throw new Error(`Failed to delete outlet: ${error.message}`);
-  }
-}
-
-/**
- * Check if an outlet can be permanently deleted
- * CRITICAL: Only allow if NO data is linked
- */
-export async function canDeleteOutlet(
-  adminUserId: string,
-  outletId: string
-): Promise<{ canDelete: boolean; reason?: string }> {
-  await verifyAdminRole(adminUserId);
-
-  // Check for clients
-  const { count: clientCount } = await supabase
-    .from('clients')
-    .select('id', { count: 'exact', head: true })
-    .eq('outlet_id', outletId);
-
-  if (clientCount && clientCount > 0) {
-    return {
-      canDelete: false,
-      reason: `Cannot delete: ${clientCount} client(s) linked to this outlet.`,
-    };
-  }
-
-  // Check for subscriptions
-  const { count: subscriptionCount } = await supabase
-    .from('subscriptions')
-    .select('id', { count: 'exact', head: true })
-    .eq('outlet_id', outletId);
-
-  if (subscriptionCount && subscriptionCount > 0) {
-    return {
-      canDelete: false,
-      reason: `Cannot delete: ${subscriptionCount} subscription(s) linked to this outlet.`,
-    };
-  }
-
-  // Check for events
-  const { count: eventCount } = await supabase
-    .from('events')
-    .select('id', { count: 'exact', head: true })
-    .eq('outlet_id', outletId);
-
-  if (eventCount && eventCount > 0) {
-    return {
-      canDelete: false,
-      reason: `Cannot delete: ${eventCount} event(s) linked to this outlet.`,
-    };
-  }
-
-  // Check for inventory items
-  const { count: inventoryCount } = await supabase
-    .from('inventory_items')
-    .select('id', { count: 'exact', head: true })
-    .eq('outlet_id', outletId);
-
-  if (inventoryCount && inventoryCount > 0) {
-    return {
-      canDelete: false,
-      reason: `Cannot delete: ${inventoryCount} inventory item(s) linked to this outlet.`,
-    };
-  }
-
-  // Check for user assignments
-  const { count: userCount } = await supabase
-    .from('user_outlet_assignments')
-    .select('id', { count: 'exact', head: true })
-    .eq('outlet_id', outletId);
-
-  if (userCount && userCount > 0) {
-    return {
-      canDelete: false,
-      reason: `Cannot delete: ${userCount} user(s) assigned to this outlet.`,
-    };
-  }
-
-  return { canDelete: true };
 }
 
 // PHASE 9 STEP 2 COMPLETE (adminOutletService.ts)

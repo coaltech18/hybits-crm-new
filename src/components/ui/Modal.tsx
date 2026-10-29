@@ -1,10 +1,11 @@
 import { X } from 'lucide-react';
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { cn } from '@/utils/cn';
 
 // ================================================================
-// MODAL COMPONENT (REUSABLE)
-// ================================================================
-// Generic modal wrapper for consistent modal styling across the app
+// MODAL — accessible dialog: portal, focus trap, Escape, scroll lock,
+// focus restored to the opener on close.
 // ================================================================
 
 interface ModalProps {
@@ -13,57 +14,118 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '4xl';
+  description?: string;
+  /** Block Escape/backdrop close (e.g. while saving). */
+  dismissable?: boolean;
 }
 
-export function Modal({
-  isOpen,
-  onClose,
-  title,
-  children,
-  maxWidth = 'lg',
-}: ModalProps) {
+const maxWidthClasses = {
+  sm: 'max-w-sm',
+  md: 'max-w-md',
+  lg: 'max-w-lg',
+  xl: 'max-w-xl',
+  '2xl': 'max-w-2xl',
+  '4xl': 'max-w-4xl',
+};
+
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+/** Shared dialog behaviour for Modal and ConfirmDialog. */
+export function useDialog(isOpen: boolean, onClose: () => void, dismissable = true) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const dismissRef = useRef(dismissable);
+  dismissRef.current = dismissable;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const opener = document.activeElement as HTMLElement | null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const panel = panelRef.current;
+    const first = panel?.querySelector<HTMLElement>('[data-autofocus]') ?? panel?.querySelector<HTMLElement>(FOCUSABLE);
+    (first ?? panel)?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && dismissRef.current) {
+        e.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !panel) return;
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null);
+      if (items.length === 0) return;
+      const head = items[0];
+      const tail = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === head) {
+        e.preventDefault();
+        tail.focus();
+      } else if (!e.shiftKey && document.activeElement === tail) {
+        e.preventDefault();
+        head.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+      opener?.focus?.();
+    };
+  }, [isOpen]);
+
+  return panelRef;
+}
+
+export function Modal({ isOpen, onClose, title, children, maxWidth = 'lg', description, dismissable = true }: ModalProps) {
+  const panelRef = useDialog(isOpen, onClose, dismissable);
+  const titleId = useId();
+  const descId = useId();
+
   if (!isOpen) return null;
 
-  const maxWidthClasses = {
-    sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-xl',
-    '2xl': 'max-w-2xl',
-    '4xl': 'max-w-4xl',
-  };
-
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 overflow-y-auto">
-      {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
-        onClick={onClose}
+        className="fixed inset-0 bg-scrim/45 backdrop-blur-[2px] animate-fade-in"
+        onClick={dismissable ? onClose : undefined}
+        aria-hidden="true"
       />
-
-      {/* Modal */}
-      <div className="flex min-h-full items-center justify-center p-4">
+      <div className="flex min-h-full items-end justify-center p-0 sm:items-center sm:p-6">
         <div
-          className={`relative w-full ${maxWidthClasses[maxWidth]} bg-white rounded-lg shadow-xl`}
-          onClick={(e) => e.stopPropagation()}
+          ref={panelRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={description ? descId : undefined}
+          tabIndex={-1}
+          className={cn(
+            'relative w-full bg-white shadow-dialog animate-scale-in focus:outline-none',
+            'rounded-t-2xl sm:rounded-sheet',
+            maxWidthClasses[maxWidth]
+          )}
         >
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-brand-border">
-            <h3 className="text-lg font-semibold text-brand-text">
-              {title}
-            </h3>
+          <div className="flex items-start justify-between gap-4 border-b border-rule px-5 py-4 sm:px-6">
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-lg font-semibold text-ink">{title}</h2>
+              {description && <p id={descId} className="mt-0.5 text-sm text-ink-muted">{description}</p>}
+            </div>
             <button
+              type="button"
               onClick={onClose}
-              className="text-brand-text/60 hover:text-brand-text transition-colors"
+              disabled={!dismissable}
+              className="-mr-1.5 rounded-md p-1.5 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink disabled:opacity-40"
+              aria-label="Close dialog"
             >
-              <X className="w-5 h-5" />
+              <X className="h-5 w-5" aria-hidden="true" />
             </button>
           </div>
-
-          {/* Content */}
-          <div className="p-6">{children}</div>
+          <div className="max-h-[calc(100dvh-9rem)] overflow-y-auto px-5 py-5 sm:px-6">{children}</div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

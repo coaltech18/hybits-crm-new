@@ -3,6 +3,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Alert } from '@/components/ui/Alert';
+import { FactWell, ModalActions } from '../ModalParts';
 import { createStockInV2 } from '@/services/inventoryMovementServiceV2';
 
 // ================================================================
@@ -51,6 +52,7 @@ export default function AddStockModal({
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (loading) return;
         setError(null);
 
         const qty = parseInt(quantity);
@@ -80,59 +82,64 @@ export default function AddStockModal({
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Add Stock">
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Add stock"
+            description="New pieces go straight into available stock."
+            dismissable={!loading}
+        >
             <form onSubmit={handleSubmit} className="space-y-4">
                 {error && <Alert variant="error">{error}</Alert>}
 
-                {/* Item Info */}
-                <div className="bg-muted p-4 rounded">
-                    <p className="text-sm text-muted-foreground">Item</p>
-                    <p className="font-semibold">{itemName}</p>
-                    <p className="text-sm text-muted-foreground mt-2">Current Available</p>
-                    <p className="text-lg font-bold text-green-600">{availableQuantity}</p>
-                </div>
+                <FactWell
+                    eyebrow="Item"
+                    title={itemName}
+                    facts={[{ label: 'Available now', value: availableQuantity, tone: 'final' }]}
+                />
 
-                {/* Quantity */}
                 <Input
                     type="number"
-                    label="Quantity to Add"
+                    inputMode="numeric"
+                    label="Pieces to add"
                     value={quantity}
                     onChange={(e) => setQuantity(e.target.value)}
                     min="1"
                     required
-                    placeholder="Enter quantity"
+                    className="tabular"
                 />
 
-                {/* Opening Balance Toggle */}
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-rule px-3 py-2.5 hover:border-ink-faint">
                     <input
                         type="checkbox"
                         checked={isOpeningBalance}
                         onChange={(e) => setIsOpeningBalance(e.target.checked)}
-                        className="w-4 h-4 rounded border-gray-300 text-brand-primary focus:ring-brand-primary"
+                        className="mt-0.5 h-4 w-4 rounded border-rule-strong text-brand-primary focus:ring-brand-logo"
                     />
-                    <span className="text-sm text-muted-foreground">
-                        This is opening balance stock
+                    <span>
+                        <span className="block text-sm font-semibold text-ink">Opening balance</span>
+                        <span className="block text-sm text-ink-muted">
+                            Stock that was already on the shelf, not a new purchase.
+                        </span>
                     </span>
                 </label>
 
-                {/* Notes */}
                 <Input
-                    label="Notes (optional)"
+                    label="Notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="e.g., Purchase order #123"
+                    placeholder="e.g. Purchase order #123"
+                    helperText="Optional"
                 />
 
-                {/* Buttons */}
-                <div className="flex justify-end gap-2 pt-4">
+                <ModalActions>
                     <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
                         Cancel
                     </Button>
-                    <Button type="submit" disabled={loading}>
-                        {loading ? 'Adding...' : 'Add Stock'}
+                    <Button type="submit" isLoading={loading}>
+                        {loading ? 'Adding…' : 'Add stock'}
                     </Button>
-                </div>
+                </ModalActions>
             </form>
         </Modal>
     );

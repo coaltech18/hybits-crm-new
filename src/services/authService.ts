@@ -17,6 +17,105 @@ export interface LoginResponse {
 }
 
 /**
+ * signInWithPassword itself failed (wrong password, rate limit, network).
+ * No new session was created, so callers must not sign the user out.
+ */
+export class SignInError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SignInError';
+  }
+}
+
+/**
+ * The account cannot use the app (profile missing or deactivated).
+ * Callers should revoke the session everywhere.
+ */
+export class AccountUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AccountUnavailableError';
+  }
+}
+
+/**
+ * Returns `path` when it is a same-origin relative path that is safe to
+ * navigate to after login, otherwise '/dashboard'.
+ */
+export function safeRedirectPath(path: string | null | undefined): string {
+  if (
+    typeof path === 'string' &&
+    path.startsWith('/') &&
+    !path.startsWith('//') &&
+    !path.startsWith('/\\') &&
+    !path.startsWith('/login') &&
+    !path.startsWith('/reset-password')
+  ) {
+    return path;
+  }
+  return '/dashboard';
+}
+
+/**
+ * Record a successful sign-in (SECURITY DEFINER RPC from migration 042).
+ * Fire-and-forget: a failure is logged, never shown to the user.
+ */
+export async function recordLogin(): Promise<void> {
+  const { error } = await supabase.rpc('record_login');
+  if (error) {
+    console.warn('record_login failed', error.message);
+  }
+}
+
+interface AssignmentRow {
+  outlet_id: string;
+  outlets: Outlet | Outlet[] | null;
+}
+
+/**
+ * Load the outlets a user may work with. Throws on query errors so the caller
+ * can surface them instead of silently showing zero outlets.
+ */
+async function loadOutletsForProfile(
+  profile: UserProfile
+): Promise<{ outlets: Outlet[]; selectedOutlet: string | null }> {
+  if (profile.role === 'admin' || profile.role === 'accountant') {
+    // Admin and Accountant: all active outlets
+    const { data: allOutlets, error: outletsError } = await supabase
+      .from('outlets')
+      .select('*')
+      .eq('is_active', true)
+      .order('name');
+
+    if (outletsError) {
+      throw new Error('Failed to load outlets: ' + outletsError.message);
+    }
+    return { outlets: (allOutlets ?? []) as Outlet[], selectedOutlet: null };
+  }
+
+  if (profile.role === 'manager') {
+    // Manager: only assigned outlets
+    const { data: assignments, error: assignmentsError } = await supabase
+      .from('user_outlet_assignments')
+      .select('outlet_id, outlets(*)')
+      .eq('user_id', profile.id);
+
+    if (assignmentsError) {
+      throw new Error('Failed to load outlets: ' + assignmentsError.message);
+    }
+
+    const outlets = ((assignments ?? []) as AssignmentRow[])
+      .flatMap((a) => (Array.isArray(a.outlets) ? a.outlets : a.outlets ? [a.outlets] : []))
+      .filter((o) => o.is_active);
+
+    // Auto-select the outlet when only one is assigned
+    return { outlets, selectedOutlet: outlets.length === 1 ? outlets[0].id : null };
+  }
+
+  return { outlets: [], selectedOutlet: null };
+}
+
+/**
  * Login user with email and password
  * Returns user profile with role and assigned outlets (for managers)
  */
@@ -28,11 +127,11 @@ export async function login(credentials: LoginCredentials): Promise<LoginRespons
   });
 
   if (authError) {
-    throw new Error(authError.message);
+    throw new SignInError(authError.message);
   }
 
   if (!authData.user) {
-    throw new Error('Login failed. No user data returned.');
+    throw new SignInError('Login failed. No user data returned.');
   }
 
   // 2. Fetch user profile from user_profiles table
@@ -42,60 +141,24 @@ export async function login(credentials: LoginCredentials): Promise<LoginRespons
     .eq('id', authData.user.id)
     .maybeSingle();
 
-  if (profileError || !profile) {
-    throw new Error('User profile not found. Please contact support.');
+  if (profileError) {
+    throw new Error('Could not load your profile: ' + profileError.message);
   }
 
-  // Check if user is active
+  if (!profile) {
+    throw new AccountUnavailableError('User profile not found. Please contact support.');
+  }
+
+  // Check if user is active (the caller signs the session out)
   if (!profile.is_active) {
-    await supabase.auth.signOut();
-    throw new Error('Your account has been deactivated. Please contact admin.');
+    throw new AccountUnavailableError('Your account has been deactivated. Please contact admin.');
   }
 
-  // 3. Update last_login timestamp (for admin_users_summary view)
-  // This is idempotent and safe - updates the logged-in user's own profile
-  await supabase
-    .from('user_profiles')
-    .update({ last_login: new Date().toISOString() })
-    .eq('id', authData.user.id);
+  // 3. Record last_login (fire-and-forget; must not block or fail the login)
+  void recordLogin();
 
   // 4. Fetch outlets based on role
-  let outlets: Outlet[] = [];
-  let selectedOutlet: string | null = null;
-
-  if (profile.role === 'admin' || profile.role === 'accountant') {
-    // Admin and Accountant: Fetch ALL active outlets
-    const { data: allOutlets, error: outletsError } = await supabase
-      .from('outlets')
-      .select('*')
-      .eq('is_active', true)
-      .order('name');
-
-    if (outletsError) {
-      console.error('Error fetching outlets:', outletsError);
-    } else if (allOutlets) {
-      outlets = allOutlets;
-    }
-  } else if (profile.role === 'manager') {
-    // Manager: Fetch only assigned outlets
-    const { data: assignments, error: assignmentsError } = await supabase
-      .from('user_outlet_assignments')
-      .select('outlet_id, outlets(*)')
-      .eq('user_id', authData.user.id);
-
-    if (assignmentsError) {
-      console.error('Error fetching outlet assignments:', assignmentsError);
-    } else if (assignments && assignments.length > 0) {
-      outlets = assignments
-        .map((a: any) => a.outlets)
-        .filter((o: Outlet | null) => o !== null && o.is_active) as Outlet[];
-
-      // Auto-select first outlet if only one assigned
-      if (outlets.length === 1) {
-        selectedOutlet = outlets[0].id;
-      }
-    }
-  }
+  const { outlets, selectedOutlet } = await loadOutletsForProfile(profile as UserProfile);
 
   return {
     profile,
@@ -108,7 +171,7 @@ export async function login(credentials: LoginCredentials): Promise<LoginRespons
  * Logout current user
  */
 export async function logout(): Promise<void> {
-  const { error } = await supabase.auth.signOut();
+  const { error } = await supabase.auth.signOut({ scope: 'local' });
   if (error) {
     throw new Error(error.message);
   }
@@ -128,59 +191,44 @@ export async function getCurrentSession() {
 }
 
 /**
- * Get current user profile with outlets
+ * Get current user profile with outlets.
+ *
+ * Pass `userId` when it is already known (e.g. from an auth event) to skip the
+ * extra getSession() call. Returns null when there is no session or no profile
+ * row; throws on network/query errors.
  */
-export async function getCurrentUserProfile(): Promise<LoginResponse | null> {
-  const session = await getCurrentSession();
+export async function getCurrentUserProfile(userId?: string): Promise<LoginResponse | null> {
+  let id = userId;
+  if (!id) {
+    const session = await getCurrentSession();
+    id = session?.user?.id;
+  }
 
-  if (!session?.user) {
+  if (!id) {
     return null;
   }
 
   const { data: profile, error: profileError } = await supabase
     .from('user_profiles')
     .select('*')
-    .eq('id', session.user.id)
+    .eq('id', id)
     .maybeSingle();
 
-  if (profileError || !profile) {
+  if (profileError) {
+    throw new Error('Could not load your profile: ' + profileError.message);
+  }
+
+  if (!profile) {
     return null;
   }
 
-  // Fetch outlets based on role
-  let outlets: Outlet[] = [];
-  let selectedOutlet: string | null = null;
-
-  if (profile.role === 'admin' || profile.role === 'accountant') {
-    // Admin and Accountant: Fetch ALL active outlets
-    const { data: allOutlets, error: outletsError } = await supabase
-      .from('outlets')
-      .select('*')
-      .eq('is_active', true)
-      .order('name');
-
-    if (outletsError) {
-      console.error('Error fetching outlets:', outletsError);
-    } else if (allOutlets) {
-      outlets = allOutlets;
-    }
-  } else if (profile.role === 'manager') {
-    // Manager: Fetch only assigned outlets
-    const { data: assignments } = await supabase
-      .from('user_outlet_assignments')
-      .select('outlet_id, outlets(*)')
-      .eq('user_id', session.user.id);
-
-    if (assignments && assignments.length > 0) {
-      outlets = assignments
-        .map((a: any) => a.outlets)
-        .filter((o: Outlet | null) => o !== null && o.is_active) as Outlet[];
-
-      if (outlets.length === 1) {
-        selectedOutlet = outlets[0].id;
-      }
-    }
+  // A deactivated profile is returned as-is so the caller's validation logs
+  // the user out; RLS may refuse the outlet queries for inactive users.
+  if (!profile.is_active) {
+    return { profile, outlets: [], selectedOutlet: null };
   }
+
+  const { outlets, selectedOutlet } = await loadOutletsForProfile(profile as UserProfile);
 
   return {
     profile,

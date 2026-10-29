@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { countErrorMessage } from '@/utils/query';
 import type {
   Subscription,
   SubscriptionFilters,
@@ -11,7 +12,7 @@ import {
   isDateInPast,
   getTodayISO,
 } from '@/utils/billingDate';
-import { getClientById } from './clientService';
+import { getClientById, getUserRole, getAssignedOutletIds } from './clientService';
 
 // ================================================================
 // SUBSCRIPTION SERVICE
@@ -19,6 +20,31 @@ import { getClientById } from './clientService';
 // All CRUD operations for subscriptions with role-based access control
 // Includes pause, resume, and cancel functionality
 // ================================================================
+
+const CONCURRENT_CHANGE_MESSAGE = 'Subscription was changed by someone else, please reload';
+
+/**
+ * Standard Dishware Kit entry. The kit is a PLAN only: it is stored inside
+ * `questionnaire.standard_kit` and never moves stock. Dishes are dispatched
+ * through Inventory > Allocate, which writes the movement ledger.
+ */
+export interface SubscriptionKitItem {
+  inventory_item_id: string;
+  item_name: string | null;
+  quantity: number;
+}
+
+/** Read the planned dishware kit from a subscription (empty when none). */
+export function getSubscriptionKit(subscription: Pick<Subscription, 'questionnaire'>): SubscriptionKitItem[] {
+  const raw: unknown = subscription.questionnaire?.standard_kit;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (k): k is SubscriptionKitItem =>
+      typeof k === 'object' && k !== null &&
+      typeof (k as SubscriptionKitItem).inventory_item_id === 'string' &&
+      typeof (k as SubscriptionKitItem).quantity === 'number'
+  );
+}
 
 /**
  * Get all subscriptions with filters (role-based)
@@ -29,16 +55,7 @@ export async function getSubscriptions(
   userId: string,
   filters: SubscriptionFilters = {}
 ): Promise<Subscription[]> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
+  const role = await getUserRole(userId);
 
   let query = supabase
     .from('subscriptions')
@@ -61,24 +78,18 @@ export async function getSubscriptions(
     .order('created_at', { ascending: false });
 
   // Role-based outlet filtering
-  if (profile.role === 'manager') {
+  if (role === 'manager') {
     // Managers only see their assigned outlet subscriptions
-    const { data: assignments } = await supabase
-      .from('user_outlet_assignments')
-      .select('outlet_id')
-      .eq('user_id', userId);
-
-    if (assignments && assignments.length > 0) {
-      const outletIds = assignments.map(a => a.outlet_id);
-      query = query.in('outlet_id', outletIds);
-    } else {
-      // Manager has no outlets assigned, return empty array
+    const outletIds = await getAssignedOutletIds(userId);
+    if (outletIds.length === 0) {
+      // Manager has no outlets assigned
       return [];
     }
+    query = query.in('outlet_id', outletIds);
   }
 
-  // Admin/Accountant can optionally filter by specific outlet
-  if (filters.outlet_id && ['admin', 'accountant'].includes(profile.role)) {
+  // Optional specific-outlet filter (managers stay limited to their outlets above)
+  if (filters.outlet_id) {
     query = query.eq('outlet_id', filters.outlet_id);
   }
 
@@ -129,25 +140,61 @@ export async function getSubscriptionById(subscriptionId: string): Promise<Subsc
     .maybeSingle();
 
   if (error) {
-    if (error.code === 'PGRST116') {
-      return null; // Not found or no access
-    }
     throw new Error(error.message);
   }
 
-  return data;
+  return data; // null when not found or no access
+}
+
+/**
+ * Whether the subscription's price is locked by finalized/paid invoices.
+ *
+ * Invoices raised from the subscription carry invoices.subscription_id
+ * (migration 042), so those are matched directly. Older rows have
+ * subscription_id NULL; for them, subscription invoices of the same client
+ * created after this subscription was created still count (invoices older
+ * than the subscription cannot belong to it).
+ * Throws on query errors so callers can stay conservative.
+ */
+export async function isSubscriptionPriceLocked(
+  subscription: Pick<Subscription, 'id' | 'client_id' | 'created_at'>
+): Promise<boolean> {
+  const billed = () =>
+    supabase
+      .from('invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('invoice_type', 'subscription')
+      .in('status', ['finalized', 'partially_paid', 'paid']);
+
+  const [linked, legacy] = await Promise.all([
+    billed().eq('subscription_id', subscription.id),
+    billed()
+      .is('subscription_id', null)
+      .eq('client_id', subscription.client_id)
+      .gte('created_at', subscription.created_at),
+  ]);
+
+  for (const res of [linked, legacy]) {
+    if (res.error) {
+      throw new Error(`Failed to check invoices: ${countErrorMessage(res.error, res.status, 'invoices')}`);
+    }
+  }
+
+  return (linked.count ?? 0) + (legacy.count ?? 0) > 0;
 }
 
 /**
  * Create new subscription
- * 
+ *
  * V1 COMMERCIAL LAYER:
  * - price_per_unit: Manual entry, REQUIRED
  * - notes: REQUIRED (for pricing justification)
  * - questionnaire: Optional reference data
- * 
+ * - inventoryItems: Optional dishware kit PLAN (stored in questionnaire.standard_kit,
+ *   never written to inventory_allocations, never moves stock)
+ *
  * LOCKED RULES ENFORCED:
- * - Client must be corporate
+ * - Client must be active and corporate
  * - Client outlet must match subscription outlet
  * - Admin can create past-dated subscriptions
  * - Manager cannot create past-dated subscriptions
@@ -156,23 +203,18 @@ export async function createSubscription(
   userId: string,
   input: CreateSubscriptionInput
 ): Promise<Subscription> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  const role = await getUserRole(userId);
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot create subscriptions
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to create subscriptions');
+  // Only admins and managers can create subscriptions
+  if (!(role === 'admin' || role === 'manager')) {
+    throw new Error('You do not have permission to create subscriptions');
   }
 
   // Validate required fields
+  if (!input.outlet_id) {
+    throw new Error('Outlet is required');
+  }
+
   if (!input.client_id) {
     throw new Error('Client is required');
   }
@@ -207,14 +249,18 @@ export async function createSubscription(
   }
 
   // LOCKED RULE: Manager cannot create past-dated subscriptions
-  if (profile.role === 'manager' && isDateInPast(input.start_date)) {
+  if (role === 'manager' && isDateInPast(input.start_date)) {
     throw new Error('Managers cannot create subscriptions with past start dates');
   }
 
-  // Validate client exists and is corporate
+  // Validate client exists, is active and is corporate
   const client = await getClientById(input.client_id);
   if (!client) {
     throw new Error('Client not found');
+  }
+
+  if (!client.is_active) {
+    throw new Error('Client is inactive. Reactivate the client before creating a subscription.');
   }
 
   if (client.client_type !== 'corporate') {
@@ -227,18 +273,48 @@ export async function createSubscription(
   }
 
   // If manager, verify outlet is in their assigned outlets
-  if (profile.role === 'manager') {
-    const { data: assignments } = await supabase
-      .from('user_outlet_assignments')
-      .select('outlet_id')
-      .eq('user_id', userId);
-
-    const allowedOutlets = assignments?.map(a => a.outlet_id) || [];
-
+  if (role === 'manager') {
+    const allowedOutlets = await getAssignedOutletIds(userId);
     if (!allowedOutlets.includes(input.outlet_id)) {
       throw new Error('You can only create subscriptions for your assigned outlets');
     }
   }
+
+  // V1: Standard Dishware Kit, stored as a plan only (see SubscriptionKitItem)
+  const kit: SubscriptionKitItem[] = (input.inventoryItems || [])
+    .filter((item) => item.quantity > 0)
+    .map((item) => ({
+      inventory_item_id: item.inventoryItemId,
+      item_name: item.itemName ?? null,
+      quantity: Math.floor(item.quantity),
+    }));
+
+  if (kit.length > 0) {
+    // Every kit item must exist in the subscription's outlet
+    const { data: kitItems, error: kitError } = await supabase
+      .from('inventory_items')
+      .select('id, name')
+      .eq('outlet_id', input.outlet_id)
+      .in('id', kit.map((k) => k.inventory_item_id));
+
+    if (kitError) {
+      throw new Error(`Failed to check dishware kit items: ${kitError.message}`);
+    }
+
+    const found = new Map((kitItems || []).map((i) => [i.id as string, i.name as string]));
+    const missing = kit.filter((k) => !found.has(k.inventory_item_id));
+    if (missing.length > 0) {
+      throw new Error('Some dishware kit items do not belong to the selected outlet. Please re-select them.');
+    }
+    kit.forEach((k) => {
+      k.item_name = found.get(k.inventory_item_id) ?? k.item_name;
+    });
+  }
+
+  const questionnaire =
+    input.questionnaire || kit.length > 0
+      ? { ...(input.questionnaire || {}), ...(kit.length > 0 ? { standard_kit: kit } : {}) }
+      : null;
 
   // Calculate next_billing_date
   const nextBillingDate = calculateNextBillingDate(
@@ -248,7 +324,7 @@ export async function createSubscription(
   );
 
   // Insert subscription (created_by will be set automatically by trigger)
-  // V1: questionnaire is stored for reference only
+  // V1: questionnaire (and kit plan) is stored for reference only
   const { data, error } = await supabase
     .from('subscriptions')
     .insert({
@@ -262,7 +338,7 @@ export async function createSubscription(
       price_per_unit: input.price_per_unit,
       next_billing_date: nextBillingDate,
       notes: input.notes.trim(),
-      questionnaire: input.questionnaire || null,
+      questionnaire,
       status: 'active',
     })
     .select(`
@@ -299,30 +375,8 @@ export async function createSubscription(
     throw new Error(error.message);
   }
 
-  // V1: Create inventory allocations (Standard Dishware Kit)
-  // This is for operational planning only, does NOT affect pricing
-  if (input.inventoryItems && input.inventoryItems.length > 0) {
-    const allocations = input.inventoryItems
-      .filter(item => item.quantity > 0)
-      .map(item => ({
-        outlet_id: input.outlet_id,
-        inventory_item_id: item.inventoryItemId,
-        reference_type: 'subscription' as const,
-        reference_id: data.id,
-        allocated_quantity: item.quantity,
-        is_active: true,
-      }));
-
-    if (allocations.length > 0) {
-      const { error: allocationError } = await supabase
-        .from('inventory_allocations')
-        .insert(allocations);
-
-      if (allocationError) {
-        // Log but don't fail - inventory is optional for ops planning
-        console.warn('Failed to create inventory allocations:', allocationError.message);
-      }
-    }
+  if (!data) {
+    throw new Error('Subscription could not be created');
   }
 
   return data;
@@ -330,39 +384,32 @@ export async function createSubscription(
 
 /**
  * Update subscription
- * 
+ *
  * V1 COMMERCIAL LAYER:
  * - Price change BLOCKED if finalized invoices exist
  * - price_change_reason REQUIRED when changing price
  * - Reason is passed to DB trigger via session variable
- * 
+ *
  * LOCKED RULES:
+ * - Cancelled subscriptions cannot be modified
  * - Managers cannot change outlet_id or client_id (enforced by trigger)
  * - Price/quantity changes affect ONLY future invoices
+ * - next_billing_date is recomputed only when the cycle or billing day changes
  */
 export async function updateSubscription(
   userId: string,
   subscriptionId: string,
   updates: UpdateSubscriptionInput
 ): Promise<Subscription> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  const role = await getUserRole(userId);
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot update subscriptions
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to update subscriptions');
+  // Only admins and managers can update subscriptions
+  if (!(role === 'admin' || role === 'manager')) {
+    throw new Error('You do not have permission to update subscriptions');
   }
 
   // Managers cannot change outlet_id or client_id
-  if (profile.role === 'manager') {
+  if (role === 'manager') {
     if (updates.outlet_id !== undefined) {
       throw new Error('Only admins can change outlet assignment');
     }
@@ -377,27 +424,32 @@ export async function updateSubscription(
     throw new Error('Subscription not found');
   }
 
+  if (current.status === 'cancelled') {
+    throw new Error('Cancelled subscriptions cannot be modified');
+  }
+
+  if (updates.quantity !== undefined && !(updates.quantity > 0)) {
+    throw new Error('Quantity must be greater than 0');
+  }
+
+  if (updates.price_per_unit !== undefined && !(updates.price_per_unit >= 0)) {
+    throw new Error('Price per unit must be 0 or greater');
+  }
+
+  // V1: Pricing notes are mandatory at create, so they cannot be blanked later
+  if (updates.notes !== undefined && !updates.notes.trim()) {
+    throw new Error('Pricing notes / justification is required');
+  }
+
   // V1: Price change validation
   const isPriceChanging = updates.price_per_unit !== undefined &&
     updates.price_per_unit !== current.price_per_unit;
 
   if (isPriceChanging) {
-    // Check if finalized/paid invoices exist for this subscription
-    const { count: finalizedInvoiceCount, error: countError } = await supabase
-      .from('invoices')
-      .select('id', { count: 'exact', head: true })
-      .eq('invoice_type', 'subscription')
-      .eq('client_id', current.client_id)
-      .in('status', ['finalized', 'partially_paid', 'paid']);
-
-    if (countError) {
-      throw new Error(`Failed to check invoices: ${countError.message}`);
-    }
-
-    // Block price change if any finalized/paid invoices exist
-    if (finalizedInvoiceCount && finalizedInvoiceCount > 0) {
+    // Block price change if finalized/paid invoices exist
+    if (await isSubscriptionPriceLocked(current)) {
       throw new Error(
-        'Cannot change price: finalized invoices exist for this subscription. ' +
+        'Cannot change price: finalized invoices exist for this client\'s subscription billing. ' +
         'Price changes are only allowed before invoices are finalized.'
       );
     }
@@ -408,29 +460,49 @@ export async function updateSubscription(
     }
   }
 
-  // If billing_cycle or billing_day changed, recalculate next_billing_date
-  let nextBillingDate: string | undefined;
-  if (updates.billing_cycle || updates.billing_day !== undefined) {
-    const newCycle = updates.billing_cycle || current.billing_cycle;
-    const newBillingDay = updates.billing_day !== undefined ? updates.billing_day : current.billing_day;
+  // Billing schedule
+  const newCycle = updates.billing_cycle ?? current.billing_cycle;
+  const newBillingDay = updates.billing_day !== undefined ? updates.billing_day : current.billing_day;
+  const cycleChanged = updates.billing_cycle !== undefined && updates.billing_cycle !== current.billing_cycle;
+  const dayChanged = updates.billing_day !== undefined && (updates.billing_day ?? null) !== current.billing_day;
 
-    nextBillingDate = calculateNextBillingDate(
-      current.next_billing_date,
-      newCycle,
-      newBillingDay || undefined
-    );
+  if (newCycle === 'monthly' && (!newBillingDay || newBillingDay < 1 || newBillingDay > 28)) {
+    throw new Error('Billing day must be between 1 and 28 for monthly billing');
   }
 
   // Build update object
   // IMPORTANT: Include price_change_reason in payload - trigger will read it and clear it
-  const updateData: any = { ...updates };
-  if (nextBillingDate) {
-    updateData.next_billing_date = nextBillingDate;
+  const updateData: Record<string, unknown> = { ...updates };
+
+  if (updates.notes !== undefined) {
+    updateData.notes = updates.notes.trim();
   }
 
-  // Trim price_change_reason if present
-  if (updateData.price_change_reason) {
-    updateData.price_change_reason = updateData.price_change_reason.trim();
+  // billing_day is meaningful only for monthly cycles
+  if (newCycle !== 'monthly' && (updates.billing_day !== undefined || current.billing_day !== null)) {
+    updateData.billing_day = null;
+  }
+
+  // Recompute next_billing_date only when the schedule actually changed
+  if (cycleChanged || dayChanged) {
+    const today = getTodayISO();
+    const anchor = current.start_date > today ? current.start_date : today;
+    updateData.next_billing_date = calculateNextBillingDate(
+      anchor,
+      newCycle,
+      newCycle === 'monthly' ? newBillingDay ?? undefined : undefined
+    );
+  }
+
+  // Trim price_change_reason if present; drop it when the price is not changing
+  if (isPriceChanging && updates.price_change_reason) {
+    updateData.price_change_reason = updates.price_change_reason.trim();
+  } else {
+    delete updateData.price_change_reason;
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    return current; // Nothing to change
   }
 
   // Update subscription
@@ -438,6 +510,7 @@ export async function updateSubscription(
     .from('subscriptions')
     .update(updateData)
     .eq('id', subscriptionId)
+    .neq('status', 'cancelled')
     .select(`
       *,
       clients (id, name, client_type, phone),
@@ -449,6 +522,10 @@ export async function updateSubscription(
     throw new Error(error.message);
   }
 
+  if (!data) {
+    throw new Error(CONCURRENT_CHANGE_MESSAGE);
+  }
+
   return data;
 }
 
@@ -456,26 +533,16 @@ export async function updateSubscription(
  * Pause subscription
  * - Sets status to 'paused'
  * - Does NOT set end_date (can be resumed)
- * - Stops invoice generation
  */
 export async function pauseSubscription(
   userId: string,
   subscriptionId: string
 ): Promise<void> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  const role = await getUserRole(userId);
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot pause subscriptions
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to pause subscriptions');
+  // Only admins and managers can pause subscriptions
+  if (!(role === 'admin' || role === 'manager')) {
+    throw new Error('You do not have permission to pause subscriptions');
   }
 
   // Verify subscription exists and is active
@@ -488,14 +555,21 @@ export async function pauseSubscription(
     throw new Error('Only active subscriptions can be paused');
   }
 
-  // Pause subscription
-  const { error } = await supabase
+  // Pause subscription (conditional on status, so a concurrent change is not overwritten)
+  const { data, error } = await supabase
     .from('subscriptions')
     .update({ status: 'paused' })
-    .eq('id', subscriptionId);
+    .eq('id', subscriptionId)
+    .eq('status', 'active')
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
+  }
+
+  if (!data) {
+    throw new Error(CONCURRENT_CHANGE_MESSAGE);
   }
 }
 
@@ -503,26 +577,16 @@ export async function pauseSubscription(
  * Resume subscription
  * - Sets status to 'active'
  * - Recalculates next_billing_date from today
- * - Restarts invoice generation
  */
 export async function resumeSubscription(
   userId: string,
   subscriptionId: string
 ): Promise<void> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  const role = await getUserRole(userId);
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot resume subscriptions
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to resume subscriptions');
+  // Only admins and managers can resume subscriptions
+  if (!(role === 'admin' || role === 'manager')) {
+    throw new Error('You do not have permission to resume subscriptions');
   }
 
   // Verify subscription exists and is paused
@@ -541,25 +605,31 @@ export async function resumeSubscription(
     subscription.billing_day || undefined
   );
 
-  // Resume subscription
-  const { error } = await supabase
+  // Resume subscription (conditional on status)
+  const { data, error } = await supabase
     .from('subscriptions')
     .update({
       status: 'active',
       next_billing_date: nextBillingDate,
     })
-    .eq('id', subscriptionId);
+    .eq('id', subscriptionId)
+    .eq('status', 'paused')
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     throw new Error(error.message);
+  }
+
+  if (!data) {
+    throw new Error(CONCURRENT_CHANGE_MESSAGE);
   }
 }
 
 /**
  * Cancel subscription
  * - Sets status to 'cancelled'
- * - Sets end_date (permanent)
- * - Stops invoice generation permanently
+ * - Sets end_date (permanent); never earlier than start_date
  * - CANNOT be undone
  */
 export async function cancelSubscription(
@@ -567,20 +637,11 @@ export async function cancelSubscription(
   subscriptionId: string,
   cancellationDate?: string
 ): Promise<void> {
-  // Get user role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('id', userId)
-    .maybeSingle();
+  const role = await getUserRole(userId);
 
-  if (!profile) {
-    throw new Error('User profile not found');
-  }
-
-  // Accountants cannot cancel subscriptions
-  if (profile.role === 'accountant') {
-    throw new Error('Accountants do not have permission to cancel subscriptions');
+  // Only admins and managers can cancel subscriptions
+  if (!(role === 'admin' || role === 'manager')) {
+    throw new Error('You do not have permission to cancel subscriptions');
   }
 
   // Verify subscription exists and is not already cancelled
@@ -593,26 +654,52 @@ export async function cancelSubscription(
     throw new Error('Subscription is already cancelled');
   }
 
-  // Use provided date or today
-  const endDate = cancellationDate || getTodayISO();
+  // Use provided date or today, but never before the start date
+  // (CHECK end_date >= start_date; ISO date strings compare correctly as text)
+  let endDate = cancellationDate || getTodayISO();
+  if (endDate < subscription.start_date) {
+    endDate = subscription.start_date;
+  }
 
-  // Cancel subscription (permanent)
-  const { error } = await supabase
+  // Cancel subscription (permanent, conditional on status)
+  const { data, error } = await supabase
     .from('subscriptions')
     .update({
       status: 'cancelled',
       end_date: endDate,
     })
-    .eq('id', subscriptionId);
+    .eq('id', subscriptionId)
+    .in('status', ['active', 'paused'])
+    .select('id')
+    .maybeSingle();
 
   if (error) {
+    if (error.message.includes('check constraint') && error.message.includes('end_date')) {
+      throw new Error('End date cannot be before the start date');
+    }
     throw new Error(error.message);
   }
+
+  if (!data) {
+    throw new Error(CONCURRENT_CHANGE_MESSAGE);
+  }
+}
+
+interface PriceHistoryRow {
+  id: string;
+  subscription_id: string;
+  old_price: number;
+  new_price: number;
+  changed_by: string | null;
+  reason: string;
+  created_at: string;
+  changed_by_name?: string | null;
+  user_profiles?: { full_name: string | null } | null;
 }
 
 /**
  * Get subscription price change history
- * 
+ *
  * V1 COMMERCIAL LAYER:
  * - Returns audit trail of all price changes
  * - Includes who changed it and why
@@ -644,8 +731,9 @@ export async function getSubscriptionPriceHistory(
     throw new Error(`Failed to fetch price history: ${error.message}`);
   }
 
-  // Transform to flatten user profile
-  return (data || []).map((row: any) => ({
+  // Prefer the stored name snapshot (readable by every role once migration 042
+  // adds changed_by_name); fall back to the profile embed, which RLS limits.
+  return ((data || []) as PriceHistoryRow[]).map((row) => ({
     id: row.id,
     subscription_id: row.subscription_id,
     old_price: row.old_price,
@@ -653,6 +741,6 @@ export async function getSubscriptionPriceHistory(
     changed_by: row.changed_by,
     reason: row.reason,
     created_at: row.created_at,
-    changed_by_name: row.user_profiles?.full_name || null,
+    changed_by_name: row.changed_by_name || row.user_profiles?.full_name || undefined,
   }));
 }

@@ -1,6 +1,6 @@
 # Hybits CRM — Full Application Workflow
 
-_Last updated: 2026-07-08. This is a plain-English guide to what every part of the app does, who can do it, and how data flows from one module to the next._
+_Last updated: 2026-10-29 (after migrations 042 + 043 and the UI redesign). This is a plain-English guide to what every part of the app does, who can do it, and how data flows from one module to the next. For the detailed reference, see [SOFTWARE_OVERVIEW.md](SOFTWARE_OVERVIEW.md)._
 
 ---
 
@@ -10,12 +10,12 @@ Hybits CRM is a **billing + inventory system for a dish-rental business**. Every
 
 | Flow | What it is | Who it's for |
 |------|-----------|--------------|
-| **Corporate Subscriptions** | Recurring monthly rental of sterilized dishes | Offices, canteens, corporate clients |
-| **Events** | One-time dish rental for a wedding / function | Individuals, event organizers |
+| **Corporate subscriptions** | Recurring dish rental, billed daily, weekly or monthly | Offices, canteens, corporate clients |
+| **Events** | One-time dish rental for a wedding / function | Individuals, event organisers |
 
-Both flows end the same way: an **Invoice** is raised → a **Payment** is recorded → it shows up in **Reports** and **GST Working**. **Inventory** tracks the physical dishes going out and coming back.
+Both flows end the same way: an **invoice** is raised → **payments** are recorded against it → it shows up in **Reports** and **GST working**. **Inventory** tracks the physical dishes going out and coming back.
 
-The app is a website (React) talking directly to a **Supabase** database. There is no separate backend server — the database's Row-Level Security (RLS) rules are what enforce "who can see/do what."
+The app is a website (React) talking directly to a **Supabase** database. There is no separate backend server. The database's rules (row-level security, triggers) are what enforce "who can see/do what" — even someone calling the database directly with their own login gets the same answer as the app.
 
 ---
 
@@ -26,37 +26,38 @@ There are three roles. A user has exactly one.
 | Capability | Admin | Manager | Accountant |
 |-----------|:-----:|:-------:|:----------:|
 | See all outlets | ✅ | ❌ (only assigned outlets) | ✅ |
-| Create/edit clients, events, subscriptions | ✅ | ✅ (own outlets) | ❌ (view only) |
-| Create/edit invoices | ✅ | ✅ (own outlets) | ❌ (view only) |
-| Record payments | ✅ | ✅ (own outlets) | ✅ |
-| Inventory stock actions | ✅ | ✅ (own outlets) | ❌ (view only) |
-| Negative stock adjustments | ✅ only | ❌ | ❌ |
-| Manage users / outlets / settings | ✅ | ❌ | ❌ |
-| Reports & GST Working | ✅ | ✅ | ✅ |
+| Create/edit clients, events, subscriptions | ✅ | ✅ (own outlets) | ❌ view only |
+| Create/edit/finalize invoices | ✅ | ✅ (own outlets) | ❌ view only |
+| Record or void payments | ✅ | ✅ (own outlets) | ❌ view only |
+| Send / receive dishes, stock actions | ✅ | ✅ (own outlets) | ❌ view only |
+| Stock adjustments | ✅ only | ❌ | ❌ |
+| Create, count and submit stock audits | ✅ | ✅ (own outlets) | ❌ view only |
+| Approve or reject stock audits | ✅ only | ❌ | ❌ |
+| Back-date a subscription | ✅ only | ❌ | ❌ |
+| Manage users / outlets / settings, activity log | ✅ | ❌ | ❌ |
+| Dashboard, Reports & GST working | ✅ | ✅ (own outlets) | ✅ |
 
-**Key idea — outlet isolation:** A **Manager** only ever sees data for the outlet(s) they are assigned to (in Admin → Users). **Admins and Accountants** see every outlet. This is enforced both in the app and in the database.
+**The accountant is read-only everywhere, including payments.** The app hides every create, edit, send, void and payment button for accountants, and the database refuses their writes.
+
+**Outlet isolation:** a **manager** only ever sees data for the outlet(s) they are assigned to (Admin → Users → Assign outlets). A manager with several outlets picks the outlet on each create form. **Admins and accountants** see every outlet.
 
 ---
 
-## 3. The sidebar — every button explained
+## 3. Getting around
 
-When you log in you land on the **Dashboard**. The left sidebar is your map:
+- **Sign in** with your work email. If you opened a link while signed out, you are taken back to it after signing in.
+- **Forgot password?** on the sign-in card emails you a link to `/reset-password`, where you choose a new password (at least 8 characters).
+- **Sign out** (bottom of the sidebar) signs out **this device only**; other devices stay signed in.
+- **Ctrl+K** (Cmd+K on Mac), or the search box in the header, jumps to any page, invoice number, client or stock item.
+- The sidebar is grouped:
 
-| Menu item | What it does |
-|-----------|--------------|
-| **Dashboard** | Summary numbers: revenue, outstanding, recent activity. (Admin/Manager only.) |
-| **Clients** | Your customer database. Every invoice must belong to a client. |
-| **Subscriptions** | The recurring corporate rental agreements. |
-| **Events** | One-off weddings/functions. |
-| **Invoices** | The actual bills. Created from a subscription or an event. |
-| **Payments** | Money received against invoices. |
-| **Reports** | Revenue, outstanding aging, outlet performance. |
-| **GST Working** | Tax breakdown (CGST/SGST/IGST) for filing returns. |
-| **Inventory** | Dish stock: what you own, what's out, what's damaged. |
-| **Admin → Users** | Create/assign roles and outlets. (Admin only.) |
-| **Admin → Outlets** | Your branches/locations. (Admin only.) |
-| **Admin → Activity Logs** | Audit trail of who did what. (Admin only.) |
-| **Admin → Settings** | System configuration. (Admin only.) |
+| Group | Pages |
+|---|---|
+| **Overview** | Dashboard: money outstanding, invoices waiting for payment (oldest first, with aging bars), dishes out longest, things needing attention |
+| **Sales** | Clients, Subscriptions, Events, Invoices, Payments |
+| **Dishware** | Stock overview, Items, Send & receive (admin/manager), Movements, Stock audits, Stock reports |
+| **Accounts** | Reports (revenue, payments, aging, MRR, events, clients, outlets), GST working |
+| **Admin** (admin only) | Users, Outlets, Activity log, Settings |
 
 ---
 
@@ -64,43 +65,40 @@ When you log in you land on the **Dashboard**. The left sidebar is your map:
 
 **Clients** is the foundation — nothing can be billed without a client.
 
-1. **Clients → Add Client.**
+1. **Clients → New client.**
 2. Pick a **client type**:
-   - **Corporate** → GSTIN is expected (used for tax on invoices). These clients get **Subscriptions**.
-   - **Event** → individual customers. These get **Events**.
-3. Save. The client is tied to the **outlet** you're working in.
+   - **Corporate** → GSTIN (optional, format-checked) and a **GST type** (Domestic, SEZ or Export). These clients get **subscriptions**.
+   - **Event** → individual customers. These get **events**.
+3. Pick the **outlet** (if you have more than one) and save.
 
-> A corporate client and an event client are separate records even if it's the same company — the two billing flows never mix.
+> A corporate client and an event client are separate records even if it's the same company — the two billing flows never mix. Once a client has subscriptions, events or invoices, its type and outlet can no longer be changed.
 
 ---
 
 ## 5. Corporate subscription workflow
 
-Use this for **recurring monthly** dish rental.
-
-1. **Subscriptions → Add Subscription.**
-2. Choose the **corporate client**, the **outlet**, the **monthly amount / plan**, and the start date.
-3. A subscription has one of three states:
-   - **active** — currently running and billable.
-   - **paused** — temporarily on hold.
-   - **cancelled** — ended.
-4. To bill it, go to **Invoices → Create Invoice**, choose **type = subscription**, pick the client, and add the line items (the dishes/services and their price + GST rate). Save as **draft**.
-
-> ⚠️ Today the subscription does **not** automatically know which inventory items belong to it (see the Inventory guide — the auto-allocation hooks are placeholders). Dishes are allocated manually.
+1. **Subscriptions → New subscription.**
+2. Choose the outlet, the **corporate client**, the cycle (daily, weekly, or monthly on a day 1–28), the start date, quantity and price per unit, and the mandatory pricing notes. Optionally fill in the questionnaire and a **planned dishware kit** (a plan only — it does not move stock).
+3. States, enforced by the database:
+   - **active** → can be **paused** or **cancelled**,
+   - **paused** → can be **resumed** (active) or **cancelled**,
+   - **cancelled** → final; the subscription is frozen.
+   A subscription **cannot be cancelled while dishes are still out** with the client. Only admins can back-date the start date.
+4. **To send dishes:** subscription → **Allocate dishware** (opens Send & receive for that subscription). Only active subscriptions can receive dishes.
+5. **To bill it:** subscription → **New invoice** (or Invoices → New invoice, type Subscription). Billing is manual: the app does not raise subscription invoices automatically and does not move the next billing date when you invoice.
+6. **Price changes** need a reason and are kept in the price history. The price locks once the client has an issued subscription invoice raised after the subscription started.
 
 ---
 
 ## 6. Event workflow
 
-Use this for **one-time** weddings/functions.
-
-1. **Events → Add Event.**
-2. Choose the **event client**, **outlet**, event date, and details.
-3. Event status flows: **planned → completed** (or **planned → cancelled**).
-4. **You can only invoice an event once its status is `completed`.** A cancelled event can never be invoiced. This is enforced in the database.
-5. From the event (or Invoices → Create Invoice, type = event), raise the invoice with line items.
-
-**On the Event detail page** there are inventory buttons (Allocate / Return / Damage / Loss) so you can send dishes out for the event and record what comes back. ✅ These were rewired to the correct (V2) inventory path on 2026-07-08 — apply migrations `035a` + `035b` and deploy the frontend for the fix to take effect (details in the Inventory guide).
+1. **Events → New event.** Choose the outlet, the **event client**, event date and details. It starts as **planned**.
+2. **Event page → Send dishes** before the event.
+3. After the event, **Record return** for what came back: good, damaged or lost.
+4. **Complete** the event. Event status flows, enforced by the database:
+   - **planned → completed**, or **planned → cancelled**. Both are final; a completed or cancelled event can no longer be edited.
+   - **Cancel is blocked while dishes are still out.**
+5. **Event page → Create invoice** (only for completed events). An event can have **only one live invoice**; to bill it again, cancel the first invoice.
 
 ---
 
@@ -111,58 +109,66 @@ An invoice is a **GST legal document**, so the rules are strict.
 ### Lifecycle
 ```
 draft ──► finalized ──► partially_paid ──► paid
-  │            │
-  └► cancelled └► cancelled
+  │            │             ▲    │          │
+  │            │             └────┴──────────┘  (follows payments automatically)
+  └► cancelled └► cancelled (only while unpaid; database only, no button)
 ```
 
-- **draft** — fully editable. You can change items, quantities, prices, GST rates, terms.
-- **finalized** — the invoice is "issued." It gets a permanent invoice number and becomes **immutable** (no more editing items/amounts). Only status can change from here.
-- **partially_paid** — at least one payment recorded, but balance still due.
-- **paid** — fully settled.
-- **cancelled** — voided. Cannot be changed afterward.
+- **draft** — fully editable: invoice date, line items, quantities, prices, GST rates, terms. Type, outlet, client and event are fixed once created.
+- **finalized** — the invoice is issued. It becomes **immutable**: no more editing items or amounts, and the client's name, GSTIN, address and GST type are **frozen onto the invoice** (later client edits do not change it or move it to another GST sheet).
+- **partially_paid / paid** — **set automatically by the database from the payments.** Nobody sets these by hand. Voiding a payment moves the status back.
+- **cancelled** — voided; cannot change afterwards. In the app you cancel **drafts** (invoice page → menu → Cancel invoice).
+
+### Numbering
+- The invoice **number is given when the draft is created** (not at finalize), and never changes after finalizing. If you change a draft's date into another day or financial year, the draft gets a new number for that date.
+- Four formats, chosen per invoice: **Standard** `INV-YYYYMMDD-NNNN` (one running counter), **Outlet + FY** `INV/<CODE>/<2025-26>/NNNN` (per outlet per year), **Outlet short** `INV-<CODE>-NNNN` (one running counter per outlet), **FY only** `INV/<2025-26>/NNNN` (per year).
+- Dates and financial years (April–March) follow the invoice date in Indian time.
 
 ### How to create one
-1. **Invoices → Create Invoice.**
-2. Pick type (subscription or event), client, outlet.
-3. Add line items. Each line has: description, quantity, unit price, and a **GST rate** (allowed rates: 0%, 5%, 12%, 18%).
-4. The system computes line totals, tax, and grand total automatically (rounded to 2 decimals).
-5. Choose an **invoice number format** (standard, outlet+FY, outlet-short, or FY-only).
-6. Save as **draft** → review → **finalize** when ready to send.
+1. **Invoices → New invoice**, or a shortcut: client → New invoice, subscription → New invoice, completed event → Create invoice, or an invoice → Duplicate as new draft.
+2. Pick type (subscription or event), outlet, client (and the completed event).
+3. Set the invoice date (today by default; may be in the past, never in the future).
+4. Add line items: description, quantity, unit price and **GST rate** (0%, 5%, 12% or 18%). Totals are calculated exactly to the paisa.
+5. Choose the number format, check the terms, and save. The draft opens straight away.
+6. Review → **Finalize** when ready to send. An empty draft cannot be finalized. Download the PDF from the invoice page.
 
-> Invoices can **never be deleted** (legal requirement). To void one, use **Cancel**.
+> Invoices can **never be deleted** (legal requirement). To void a draft, use **Cancel**. There are no credit notes yet.
 
-> ✅ **Fixed (2026-07-08):** previously, a payment covering the **full amount in one go** left the invoice stuck at `finalized`. Migration `034_fix_invoice_payment_transitions.sql` fixes the transition rules, repairs any already-stuck invoices, and the app no longer hides status-sync errors. Make sure migration 034 is applied to production.
+### GST split
+- **Domestic** clients: CGST + SGST (half each; they always add up to the tax).
+- **SEZ / Export** clients: all tax as IGST.
+- There is no place-of-supply logic yet, so an inter-state domestic client cannot be billed with IGST.
 
 ---
 
 ## 8. Payment workflow
 
-1. **Payments** (or from an invoice) → **Add Payment.**
-2. Pick the invoice, amount, method (cash/UPI/bank/etc.), date, reference number.
+1. **Payments are recorded from the invoice.** Open the invoice and choose **Record payment**. (The Payments page lists payments and links to Invoices; it has no "add payment" button.)
+2. Enter the amount, method (cash, UPI, bank transfer, card or cheque), date and an optional reference (UTR / cheque no.) and notes.
 3. Rules the system enforces:
    - You cannot pay a **draft** or **cancelled** invoice — finalize it first.
-   - You cannot **overpay** beyond the balance due (small rounding tolerance allowed).
-   - Payment date cannot be in the future.
-4. Recording a payment updates the invoice's paid amount / balance and (should) advance its status.
-5. **Payments are never hard-deleted** — you "deactivate" them (soft delete) so the audit trail is preserved. Deactivating a payment recalculates the invoice balance.
+   - You cannot **overpay** beyond the balance due (₹0.05 rounding tolerance).
+   - The payment date cannot be in the future (Indian date) or before the invoice date.
+4. Recording a payment immediately updates the invoice's paid amount, balance and status (**finalized → partially_paid → paid**). The database does this itself.
+5. **Payments are never edited or deleted.** A wrong payment is **voided** (Payments page → Void, with an optional reason) and recorded again. The database keeps who voided it, when and why. Voiding recalculates the invoice balance and status. A voided payment cannot be brought back.
 
 ---
 
 ## 9. Reports & GST
 
-- **Reports** — daily revenue, outstanding aging (who owes you and for how long), outlet-wise performance, subscription MRR (monthly recurring revenue).
-- **GST Working** — splits invoice tax into domestic (CGST+SGST), SEZ, and export buckets so you (or your CA) can file GST returns. Numbers come straight from finalized invoices.
+- **Reports** — revenue by invoice date, payments by payment date, outstanding aging (0–30, 31–60, 61–90, 90+ days from the invoice date), subscription MRR, event revenue, client revenue and outlet performance. Only issued invoices count (no drafts, no cancelled). Every tab exports CSV.
+- **GST working** — Domestic (CGST + SGST), SEZ and Export (IGST) sheets for the CA, using the client details frozen at finalize. Export each as CSV.
 
-Managers see only their outlet's numbers; Admins/Accountants see everything.
+Managers see only their outlets' numbers; admins and accountants see everything.
 
 ---
 
 ## 10. Admin
 
-- **Users** — create users (note: actual account creation is done in the Supabase dashboard today; the app assigns role + outlets), toggle active/inactive, change roles. Safety rails: you can't deactivate or downgrade the **last active admin**, and you can't downgrade **yourself**.
-- **Outlets** — your physical branches. Each has its own GSTIN.
-- **Activity Logs** — audit trail.
-- **Settings** — system-wide configuration.
+- **Users** — list, deactivate/reactivate, and assign outlets to managers (saved in one step). New logins are created in the Supabase dashboard; the Add user screen explains how. Safety rails, enforced by the database: nobody can deactivate themselves, and the last active admin cannot be deactivated or demoted. There is no screen to change a role.
+- **Outlets** — your branches. Create, edit, deactivate or reactivate (blocked while the outlet has active subscriptions, dishes out or planned events). Outlets are never deleted.
+- **Activity log** — combined trail of stock movements, payments (voids marked), subscription and event changes, and invoices created. Admin actions themselves are not logged.
+- **Settings** — stored values marked **"Not yet enforced"**: nothing reads them yet. Each shows who changed it last.
 
 ---
 
@@ -172,12 +178,12 @@ Managers see only their outlet's numbers; Admins/Accountants see everything.
 
 1. **Clients** → add the customer as an **event** client.
 2. **Events** → create the event (planned), outlet = Bengaluru, date set.
-3. **Inventory** → allocate 500 plates to the event (dishes leave the warehouse). *(Use the Item Detail page action buttons — see Inventory guide for why.)*
-4. Event day passes → set event status to **completed**.
-5. **Inventory** → receive back: e.g. 480 good, 15 damaged, 5 lost.
-6. **Invoices → Create Invoice** (type = event) → add rental + any damage/loss charges → finalize.
-7. **Payments** → record the customer's payment → invoice becomes paid.
-8. **Reports / GST Working** → the revenue and tax now appear.
+3. **Event page → Send dishes** → 500 plates (dishes leave the warehouse).
+4. After the event: **Event page → Record return** → e.g. 480 good, 15 damaged, 5 lost.
+5. **Complete** the event.
+6. **Event page → Create invoice** → add rental + any damage/loss charges → **Finalize**.
+7. **Invoice → Record payment** → the invoice becomes paid automatically.
+8. **Reports / GST working** → the revenue and tax now appear.
 
 ---
 
@@ -186,5 +192,5 @@ Managers see only their outlet's numbers; Admins/Accountants see everything.
 ```
 Client ──► (Subscription or Event) ──► Invoice ──► Payment ──► Reports / GST
                      │
-                     └──► Inventory (allocate dishes out, receive back, track damage/loss)
+                     └──► Inventory (send dishes out, receive back, track damage/loss)
 ```

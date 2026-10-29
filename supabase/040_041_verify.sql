@@ -102,6 +102,9 @@ BEGIN
                         subtotal, tax_total, grand_total)
   VALUES ('subscription', v_client, v_outlet, 'draft', 100, 18, 118)
   RETURNING id INTO v_inv;
+  -- 042: a draft needs at least one line item to be finalized
+  INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, line_total, tax_rate, tax_amount)
+  VALUES (v_inv, 'Verify line', 1, 100, 100, 18, 18);
   UPDATE invoices SET status = 'finalized' WHERE id = v_inv;
 
   INSERT INTO payments (invoice_id, amount, payment_method, payment_date)

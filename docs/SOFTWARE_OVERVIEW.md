@@ -845,7 +845,7 @@ Run in the order given in `supabase/MIGRATION_ORDER.md`. **042 and 043 are the l
 - **Inventory repair and lifecycle actions** (send to repair, return from repair, reactivate, archive, delete) exist in the DB and partly in service code, but have no screen.
 - **Void details are stored but not shown.** `void_reason`, `voided_by` and `voided_at` are saved (043) but no screen displays them.
 - **Admin actions not logged.** User, outlet, assignment and settings changes do not appear in the activity log.
-- **Thin test coverage.** `npm test` runs a migration test (all migrations + verify scripts in PGlite) and Playwright smoke tests (every route rendered against a mocked Supabase; empty/error states for dashboard and invoices), and CI runs them with type-check, lint and build. There are no unit tests and no tests that drive write flows (creating invoices, recording payments) end to end.
+- **Test coverage.** `npm test` runs a migration test (all migrations + verify scripts in PGlite) and Playwright smoke tests (every route rendered against a mocked Supabase; empty/error states for dashboard and invoices), and CI runs them with type-check, lint and build. Business flows (invoice → finalize → payments, dishes out and back, per-role access) are tested twice: against Postgres through RLS (`tests/db/flows.sql`) and through the real forms against a stateful mock (`tests/e2e/flows.spec.ts`). Nothing runs against a real Supabase stack (auth, PostgREST) yet, and there are no unit tests.
 
 ### 7.3 Orphans (built, never used)
 

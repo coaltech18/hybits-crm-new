@@ -227,11 +227,141 @@ export function buildSession(user) {
   return { access_token, token_type: 'bearer', expires_in: exp - now, expires_at: exp, refresh_token: 'e2e-mock-refresh-token', user: authUser };
 }
 
+// ---------------------------------------------------------------- writes
+// Stateful mode (createHandler({ writes })) stores inserts/updates/deletes in
+// the per-test db copy and logs them, so a flow test can submit a form, see
+// the result on the next screen and assert on the exact payload the app sent.
+// Only the database side effects the UI needs to show that result are
+// emulated (invoice totals/number/status, payment details, stock counts);
+// the real rules are tested against Postgres in tests/db/flows.sql.
+const r2 = (n) => Math.round(n * 100) / 100;
+const byId = (rows, id) => (rows || []).find((r) => r.id === id);
+
+function refreshInvoice(db, invoiceId) {
+  const inv = byId(db.invoices, invoiceId);
+  if (!inv) return;
+  const items = db.invoice_items.filter((i) => i.invoice_id === invoiceId);
+  if (items.length) {
+    inv.subtotal = r2(items.reduce((s, i) => s + i.line_total, 0));
+    inv.tax_total = r2(items.reduce((s, i) => s + i.tax_amount, 0));
+    inv.grand_total = r2(inv.subtotal + inv.tax_total);
+  }
+  const paid = r2(db.payments.filter((p) => p.invoice_id === invoiceId && p.is_active).reduce((s, p) => s + p.amount, 0));
+  if (['finalized', 'partially_paid', 'paid'].includes(inv.status)) {
+    inv.status = paid >= inv.grand_total - 0.05 ? 'paid' : paid > 0 ? 'partially_paid' : 'finalized';
+  }
+  const balance_due = inv.status === 'draft' || inv.status === 'cancelled' ? 0 : r2(inv.grand_total - paid);
+  const view = { ...inv, amount_paid: paid, balance_due, payment_status: paid <= 0 ? 'unpaid' : balance_due <= 0 ? 'paid' : 'partially_paid' };
+  const i = db.invoices_with_payment_status.findIndex((r) => r.id === invoiceId);
+  if (i >= 0) db.invoices_with_payment_status[i] = view; else db.invoices_with_payment_status.push(view);
+  for (const p of db.payments) if (p.invoice_id === invoiceId) Object.assign(p, { invoice_status: inv.status, invoice_number: inv.invoice_number });
+}
+
+function finalizeNumber(db, inv) {
+  if (inv.invoice_number) return;
+  const outlet = byId(db.outlets, inv.outlet_id);
+  const prefix = `HYB/${outlet.code}/2026-27/`;
+  const last = Math.max(0, ...db.invoices.filter((x) => x.invoice_number?.startsWith(prefix)).map((x) => Number(x.invoice_number.slice(prefix.length))));
+  inv.invoice_number = `${prefix}${String(last + 1).padStart(4, '0')}`;
+  inv.issued_at ??= new Date().toISOString();
+  const client = byId(db.clients, inv.client_id);
+  Object.assign(inv, { client_name_snap: client.name, client_gstin_snap: client.gstin, client_address_snap: client.billing_address, client_gst_type_snap: client.gst_type });
+}
+
+function applyMovement(db, m) {
+  const item = byId(db.inventory_items, m.inventory_item_id);
+  const q = m.quantity;
+  const ref = m.reference_type === 'event' || m.reference_type === 'subscription';
+  let alloc = ref && db.reference_allocation_history.find((a) => a.is_active && a.inventory_item_id === m.inventory_item_id && a.reference_id === m.reference_id);
+  if (m.movement_type === 'allocation') {
+    item.available_quantity -= q;
+    item.allocated_quantity += q;
+    if (!alloc) {
+      alloc = {
+        id: crypto.randomUUID(), outlet_id: item.outlet_id, inventory_item_id: item.id, reference_type: m.reference_type, reference_id: m.reference_id,
+        allocated_quantity: 0, outstanding_quantity: 0, is_active: true, created_at: m.created_at, updated_at: m.created_at,
+        item_name: item.name, item_category: item.category, outlet_name: item.outlet_name, outlet_code: item.outlet_code, lifecycle_status: item.lifecycle_status,
+        reference_name: m.reference_type === 'event' ? byId(db.events, m.reference_id)?.event_name : null,
+        returned_good: 0, returned_damaged: 0, lost: 0, disposed: 0,
+      };
+      alloc.allocation_id = alloc.id;
+      db.reference_allocation_history.push(alloc);
+      db.inventory_allocations_with_details.push(alloc);
+    }
+    alloc.allocated_quantity += q;
+    alloc.outstanding_quantity += q;
+  } else if (['return', 'return_damaged', 'loss'].includes(m.movement_type) && alloc) {
+    item.allocated_quantity -= q;
+    if (m.movement_type === 'return') { item.available_quantity += q; alloc.returned_good += q; }
+    if (m.movement_type === 'return_damaged') { item.damaged_quantity += q; alloc.returned_damaged += q; }
+    if (m.movement_type === 'loss') { item.lost_quantity += q; item.total_quantity -= q; alloc.lost += q; }
+    alloc.outstanding_quantity -= q;
+    if (alloc.outstanding_quantity <= 0) {
+      alloc.is_active = false;
+      db.inventory_allocations_with_details.splice(db.inventory_allocations_with_details.indexOf(alloc), 1);
+    }
+  } else if (m.movement_type === 'stock_in') {
+    item.total_quantity += q;
+    item.available_quantity += q;
+  }
+}
+
+/** Fill in what the database would (ids, defaults, joined view columns) and apply side effects. */
+function insertRow(db, table, row, userId) {
+  const now = new Date().toISOString();
+  const out = { id: crypto.randomUUID(), created_at: now, updated_at: now, ...row };
+  if (table === 'invoices') Object.assign(out, { invoice_number: null, created_by: userId });
+  if (table === 'payments') {
+    const inv = byId(db.invoices, out.invoice_id);
+    const client = byId(db.clients, inv.client_id);
+    const outlet = byId(db.outlets, inv.outlet_id);
+    Object.assign(out, {
+      is_active: true, created_by: userId, invoice_number: inv.invoice_number, invoice_type: inv.invoice_type, invoice_total: inv.grand_total,
+      client_name: client.name, client_phone: client.phone, outlet_id: outlet.id, outlet_name: outlet.name, outlet_code: outlet.code,
+      recorded_by_name: byId(db.user_profiles, userId)?.full_name ?? null,
+    });
+  }
+  if (table === 'inventory_movements') {
+    const item = byId(db.inventory_items, out.inventory_item_id);
+    Object.assign(out, {
+      movement_id: out.id, created_by: userId, item_name: item.name, item_category: item.category, item_unit: item.unit,
+      outlet_name: item.outlet_name, outlet_code: item.outlet_code,
+      reference_name: out.reference_type === 'event' ? byId(db.events, out.reference_id)?.event_name ?? null : null,
+    });
+  }
+  (db[table] ??= []).push(out);
+  if (table === 'invoices' || table === 'invoice_items' || table === 'payments') refreshInvoice(db, out.invoice_id ?? out.id);
+  if (table === 'inventory_movements') applyMovement(db, out);
+  return out;
+}
+
+function applyWrite(db, table, method, params, body, userId) {
+  if (method === 'POST') {
+    return (Array.isArray(body) ? body : [body]).map((row) => insertRow(db, table, row, userId));
+  }
+  const rows = db[table] ?? [];
+  const hit = applyQuery(rows, params);
+  if (method === 'DELETE') {
+    db[table] = rows.filter((r) => !hit.includes(r));
+    for (const r of hit) if (r.invoice_id) refreshInvoice(db, r.invoice_id);
+    return hit;
+  }
+  for (const r of hit) {
+    const wasDraft = table === 'invoices' && r.status === 'draft';
+    Object.assign(r, body, { updated_at: new Date().toISOString() });
+    if (wasDraft && r.status === 'finalized') finalizeNumber(db, r);
+    if (table === 'invoices') refreshInvoice(db, r.id);
+    if (r.invoice_id) refreshInvoice(db, r.invoice_id);
+  }
+  return hit;
+}
+
 // ---------------------------------------------------------------- route handler
 /**
- * @param {object} opts { db, session, mode: 'normal'|'empty'|'error', log: (entry)=>void }
+ * @param {object} opts { db, session, mode: 'normal'|'empty'|'error', log: (entry)=>void,
+ *   writes?: array — stateful mode: writes are applied to `db` (pass a per-test copy) and logged here }
  */
-export function createHandler({ db, session, mode = 'normal', log }) {
+export function createHandler({ db, session, mode = 'normal', log, writes }) {
   const AUTH_TABLES = new Set(['user_profiles', 'outlets', 'user_outlet_assignments']);
   return async (route) => {
     const req = route.request();
@@ -290,6 +420,14 @@ export function createHandler({ db, session, mode = 'normal', log }) {
       let rows = known ? db[name] : [];
       if (mode === 'empty' && !AUTH_TABLES.has(name)) rows = [];
       log?.({ kind: 'rest', method, name, known, query: url.search });
+
+      if (writes && (method === 'POST' || method === 'PATCH' || method === 'DELETE')) {
+        writes.push({ method, table: name, body, query: Object.fromEntries(params) });
+        const changed = applyWrite(db, name, method, params, body, session.user.id);
+        if (!/return=representation/.test(headers.prefer || '')) return send(method === 'POST' ? 201 : 204);
+        const wantsObject = (headers.accept || '').includes('vnd.pgrst.object');
+        return send(method === 'POST' ? 201 : 200, wantsObject ? changed[0] ?? null : changed);
+      }
 
       if (method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE') {
         // Never mutate fixtures; echo something plausible.

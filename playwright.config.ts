@@ -25,10 +25,12 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } }],
+  // A production build, as users get it: no on-demand compiling, so the first
+  // page load in each parallel test is as fast as the rest.
   webServer: {
-    command: `npx vite --port ${PORT} --strictPort`,
+    command: `npx vite build --outDir build-e2e --emptyOutDir && npx vite preview --outDir build-e2e --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}/login`,
-    // Never attach to a dev server started by hand: it would carry the real .env.
+    // Never attach to a server started by hand: it would carry the real .env.
     reuseExistingServer: false,
     timeout: 120_000,
     env: {

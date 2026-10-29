@@ -21,11 +21,27 @@ export interface OpenOptions {
   mode?: MockMode;
   /** Open without a session (login, reset password). */
   signedOut?: boolean;
+  /** Who is signed in (fixture users): admin; manager of Indiranagar + Koramangala; accountant. */
+  as?: Role;
+  /**
+   * Writes (POST/PATCH/DELETE) are stored in a fresh copy of the fixtures for
+   * this test and logged in `writes`, instead of being echoed and forgotten.
+   */
+  stateful?: boolean;
+}
+
+export type Role = 'admin' | 'manager' | 'accountant';
+
+export interface Write {
+  method: 'POST' | 'PATCH' | 'DELETE';
+  table: string;
+  body: Record<string, unknown> | Record<string, unknown>[];
+  query: Record<string, string>;
 }
 
 export const { db, refs } = buildDb();
-const admin = db.user_profiles.find((u: { id: string }) => u.id === refs.U.admin);
-const session = buildSession(admin);
+const USER_IDS: Record<Role, string> = { admin: refs.U.admin, manager: refs.U.priya, accountant: refs.U.ramesh };
+const sessionFor = (role: Role) => buildSession(db.user_profiles.find((u: { id: string }) => u.id === USER_IDS[role]));
 
 /** Console noise that is not an app error. */
 const IGNORED_CONSOLE = [/React Router Future Flag Warning/, /Download the React DevTools/];
@@ -35,8 +51,16 @@ const IGNORED_CONSOLE = [/React Router Future Flag Warning/, /Download the React
  */
 const SIMULATED_500 = /status of 500|Simulated server error \(e2e mock\)|\(HTTP 500\)/;
 
-export async function openApp(page: Page, path: string, { mode = 'normal', signedOut = false }: OpenOptions = {}) {
+export async function openApp(
+  page: Page,
+  path: string,
+  { mode = 'normal', signedOut = false, as = 'admin', stateful = false }: OpenOptions = {},
+) {
   const problems: string[] = [];
+  const session = sessionFor(as);
+  const writes: Write[] = [];
+  const data = stateful ? structuredClone(db) : db;
+  const handler = createHandler({ db: data, session, mode, writes: stateful ? writes : undefined });
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
     const text = m.text();
@@ -61,7 +85,7 @@ export async function openApp(page: Page, path: string, { mode = 'normal', signe
       if (/^https:\/\/fonts\.(googleapis|gstatic)\.com\//.test(url)) {
         return route.fulfill({ status: 200, contentType: 'text/css', body: '' });
       }
-      if (/^https:\/\/[^/]+\.supabase\.co\//.test(url)) return createHandler({ db, session, mode })(route);
+      if (/^https:\/\/[^/]+\.supabase\.co\//.test(url)) return handler(route);
       problems.push(`unexpected network request: ${url}`);
       return route.abort();
     },
@@ -71,6 +95,10 @@ export async function openApp(page: Page, path: string, { mode = 'normal', signe
 
   return {
     problems,
+    /** Writes the app sent (stateful mode only), oldest first. */
+    writes,
+    /** This test's data; in stateful mode it reflects the writes. */
+    db: data,
     /** No ErrorBoundary, no console errors, no uncaught exceptions, no stray requests. */
     async expectHealthy() {
       await page.waitForLoadState('networkidle');

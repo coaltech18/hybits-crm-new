@@ -38,13 +38,17 @@ Never put the `service_role` key in `.env`; everything in a `VITE_*` variable en
 | `npm run preview` | Serve the production build locally |
 | `npm run lint` | ESLint over `src/`, zero warnings allowed |
 | `npm run type-check` | `tsc --noEmit` |
+| `npm test` | `test:db` then `test:e2e` |
+| `npm run test:db` | Migration test in PGlite (in-process Postgres): every migration in `supabase/MIGRATION_ORDER.md` order, a seed before 042, every `*_verify.sql`, the smoke checks in `tests/db/smoke-042.sql` and the business flows in `tests/db/flows.sql` |
+| `npm run test:e2e` | Playwright (Chromium): a smoke test per route, empty/error states for the dashboard and invoices, and business flows driven through the forms |
+| `npm run test:ui` | Playwright UI mode |
 
 ## Tests
 
 Neither suite talks to a real Supabase project.
 
-- **Migrations** (`tests/db/`): `supabase-stubs.sql` emulates what hosted Supabase provides (`anon`/`authenticated`/`service_role`, `auth.users`, `auth.uid()`/`auth.jwt()`). The run order is read from `supabase/MIGRATION_ORDER.md`, and the test fails if a migration file is not listed there. After 042 it runs the verify scripts up to 042 (the state between the two manual runs), then again after the last migration. Set `MIGRATION_TEST_VERBOSE=1` to print NOTICEs.
-- **Smoke** (`tests/e2e/`): Playwright starts Vite on port 4317 with a fake project URL (`https://hybits-e2e.supabase.co`), puts a fake admin session in `localStorage`, and answers every `*.supabase.co` request from `tests/e2e/support/fixtures.mjs` via `page.route`. Any other outside request fails the test. The clock is fixed at 29 Oct 2026, 14:30 IST, to match the fixtures. Each route must render without the ErrorBoundary, log no console errors, and show its heading and some fixture data. First run: `npx playwright install chromium`.
+- **Migrations** (`tests/db/`): `supabase-stubs.sql` emulates what hosted Supabase provides (`anon`/`authenticated`/`service_role`, `auth.users`, `auth.uid()`/`auth.jwt()`). The run order is read from `supabase/MIGRATION_ORDER.md`, and the test fails if a migration file is not listed there. After 042 it runs the verify scripts up to 042 (the state between the two manual runs), then again after the last migration. Set `MIGRATION_TEST_VERBOSE=1` to print NOTICEs. `flows.sql` runs the day-to-day flows as real admin / manager / accountant / anon sessions through RLS: invoice draft → finalize → locked → cancel; payments partial → paid → overpayment rejected → void; dishes stock in → sent to an event → returned / damaged / lost, with the ledger adding up after every step; and what each role can see and change per outlet.
+- **Browser** (`tests/e2e/`): Playwright builds the app and serves it on port 4317 (`vite preview`) with a fake project URL (`https://hybits-e2e.supabase.co`), puts a fake admin session in `localStorage`, and answers every `*.supabase.co` request from `tests/e2e/support/fixtures.mjs` via `page.route`. Any other outside request fails the test. The clock is fixed at 29 Oct 2026, 14:30 IST, to match the fixtures. Each route must render without the ErrorBoundary, log no console errors, and show its heading and some fixture data. `flows.spec.ts` signs in as a manager, accountant or admin and drives the real forms: create → finalize → PDF download, record a part payment then the rest, send dishes to an event and receive them back, and what each role is offered. The mock runs in stateful mode there, so each step sees the previous one's writes, and the test checks the exact payload the app sent. First run: `npx playwright install chromium`.
 
 CI (`.github/workflows/ci.yml`) runs `npm ci`, type-check, lint, build, `test:db` and `test:e2e` on every push to main/master and on every pull request.
 

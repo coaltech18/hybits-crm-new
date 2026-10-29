@@ -1,7 +1,8 @@
 // Migration test: applies supabase/*.sql to a fresh PGlite (real Postgres
 // compiled to WASM, in-process) in the canonical order from
-// supabase/MIGRATION_ORDER.md, then runs every *_verify.sql and the smoke
-// checks in smoke-042.sql.
+// supabase/MIGRATION_ORDER.md, then runs every *_verify.sql, the smoke
+// checks in smoke-042.sql and, on the final schema, the business-flow tests
+// in flows.sql (each run as a real admin / manager / accountant session).
 //
 //   npm run test:db
 //
@@ -30,10 +31,13 @@ const verifyTarget = (f) => Math.max(...(f.match(/\d{3}/g) ?? []).map(Number));
 const migrationNumber = (f) => Number(f.slice(0, 3));
 
 const { order, verifies } = readMigrationOrder(SUPABASE);
-const smokeChunks = read(HERE, 'smoke-042.sql')
+/** Split a file on "-- @@ <name>" markers; each chunk runs as its own step. */
+const chunks = (file) => read(HERE, file)
   .split(/^-- @@ /m)
   .slice(1)
   .map((c) => ({ name: c.slice(0, c.indexOf('\n')).trim(), sql: `-- @@ ${c}` }));
+const smokeChunks = chunks('smoke-042.sql');
+const flowChunks = chunks('flows.sql');
 
 const db = await PGlite.create({ extensions: { uuid_ossp, pgcrypto } });
 let broken = null;
@@ -89,5 +93,6 @@ for (const f of order) {
 }
 
 checks('', verifies);
+for (const c of flowChunks) step(`flow ${c.name}`, c.sql, { continueOnFail: true });
 
 test('close database', async () => { await db.close(); });

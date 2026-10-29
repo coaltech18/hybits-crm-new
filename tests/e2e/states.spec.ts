@@ -38,14 +38,11 @@ test.describe('invoices', () => {
     await app.expectHealthy();
   });
 
-  // Known bug: when the list fails to load, the page also shows "0 invoices"
-  // and the first-run "No invoices yet / Create the first invoice" empty
-  // state under the error. Remove test.fail() once InvoicesPage hides the
-  // empty state while `error` is set.
   test('error: does not claim there are no invoices', async ({ page }) => {
-    test.fail();
     await openApp(page, '/invoices', { mode: 'error' });
     await expect(page.getByRole('alert').filter({ has: page.getByRole('button', { name: 'Try again' }) })).toBeVisible();
-    await expect(page.getByText('No invoices yet')).toHaveCount(0, { timeout: 2_000 });
+    await expect(page.getByText('Invoices could not be loaded. Check the message above and try again.')).toBeVisible();
+    await expect(page.getByText('No invoices yet')).toHaveCount(0);
+    await expect(page.getByText(/^\d+ invoices?$/)).toHaveCount(0);
   });
 });

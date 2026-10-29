@@ -125,6 +125,8 @@ export default function InvoicesPage() {
   }
 
   const filtered = Boolean(selectedType || selectedStatus);
+  // A failed load has no count to report and no proof the list is empty.
+  const loadFailed = !loading && error !== null;
   const showingFrom = page * INVOICE_PAGE_SIZE + 1;
   const showingTo = Math.min((page + 1) * INVOICE_PAGE_SIZE, totalCount);
 
@@ -202,7 +204,7 @@ export default function InvoicesPage() {
         <p className="text-sm text-ink-muted" aria-live="polite">
           {loading ? (
             'Loading invoices…'
-          ) : (
+          ) : loadFailed ? null : (
             <>
               <span className="tabular font-semibold text-ink">{new Intl.NumberFormat('en-IN').format(totalCount)}</span>{' '}
               invoice{totalCount === 1 ? '' : 's'}
@@ -226,7 +228,11 @@ export default function InvoicesPage() {
         {loading ? (
           <TableSkeleton rows={8} cols={7} />
         ) : invoices.length === 0 ? (
-          filtered ? (
+          loadFailed ? (
+            <p className="px-5 py-12 text-center text-sm text-ink-muted">
+              Invoices could not be loaded. Check the message above and try again.
+            </p>
+          ) : filtered ? (
             <EmptyState
               icon={FileText}
               title="No invoices match these filters"

@@ -115,14 +115,11 @@ export default function UsersManagementPage() {
     if (!userId || !selectedUser) return;
 
     const newStatus = toggleAction === 'activate';
+    // A failure is thrown to ConfirmationModal, which stays open and shows it inline.
     try {
       await toggleUserActive(userId, selectedUser.user_id, newStatus);
     } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : `Failed to ${toggleAction} user`,
-        'error'
-      );
-      return; // keep the modal open
+      throw err instanceof Error ? err : new Error(`Failed to ${toggleAction} user`);
     }
 
     showToast(
@@ -320,7 +317,6 @@ export default function UsersManagementPage() {
         onClose={() => setIsAddModalOpen(false)}
         onSubmit={handleCreateUser}
         outlets={allOutlets}
-        mode="create"
       />
 
       {/* Toggle Status Confirmation */}

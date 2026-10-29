@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import type { UserSummary } from '@/services/adminUserService';
 import type { Outlet } from '@/types';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
@@ -10,16 +9,15 @@ import { Alert } from '@/components/ui/Alert';
 // ================================================================
 // ADD / EDIT USER MODAL
 // ================================================================
-// Modal for creating or editing user profiles
+// Modal for creating user profiles. Create only: the unused edit mode was
+// removed (outlets and active status are changed from the users table).
 // ================================================================
 
 interface AddEditUserModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: UserFormData) => Promise<void>;
-  user?: UserSummary | null;
   outlets: Outlet[];
-  mode: 'create' | 'edit';
 }
 
 export interface UserFormData {
@@ -34,9 +32,7 @@ export function AddEditUserModal({
   isOpen,
   onClose,
   onSubmit,
-  user,
   outlets,
-  mode,
 }: AddEditUserModalProps) {
   const [formData, setFormData] = useState<UserFormData>({
     email: '',
@@ -49,15 +45,7 @@ export function AddEditUserModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isOpen && user && mode === 'edit') {
-      setFormData({
-        email: user.email,
-        full_name: user.full_name,
-        phone: '',
-        role: user.role as 'admin' | 'manager' | 'accountant',
-        outlet_ids: [],
-      });
-    } else if (isOpen && mode === 'create') {
+    if (isOpen) {
       setFormData({
         email: '',
         full_name: '',
@@ -67,7 +55,7 @@ export function AddEditUserModal({
       });
     }
     setError(null);
-  }, [isOpen, user, mode]);
+  }, [isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,34 +87,32 @@ export function AddEditUserModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={mode === 'create' ? 'Add user' : 'Edit user'}
+      title="Add user"
       maxWidth="2xl"
       dismissable={!isSubmitting}
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* User creation is not possible from the browser (needs the service role) */}
-        {mode === 'create' && (
-          <Alert variant="warning">
-            <h3 className="font-semibold">This form cannot create users yet</h3>
-            <p className="mt-1">
-              Creating a login needs a secure server step the app does not have, so the button below
-              stays disabled. Nothing you type here is saved. To add a user:
-            </p>
-            <ol className="mt-2 list-inside list-decimal space-y-1">
-              <li>
-                In the Supabase Dashboard, open Authentication → Users → Add user, enter their email, and
-                copy the new user's UID.
-              </li>
-              <li>
-                In Table Editor → <code className="serial">user_profiles</code>, insert a row with{' '}
-                <code className="serial">id</code> = that UID, the same <code className="serial">email</code>,{' '}
-                <code className="serial">full_name</code>, <code className="serial">role</code> (admin, manager
-                or accountant) and <code className="serial">is_active</code> = true.
-              </li>
-              <li>Reload this page. For a manager, use Assign outlets on their row.</li>
-            </ol>
-          </Alert>
-        )}
+        <Alert variant="warning">
+          <h3 className="font-semibold">This form cannot create users yet</h3>
+          <p className="mt-1">
+            Creating a login needs a secure server step the app does not have, so the button below
+            stays disabled. Nothing you type here is saved. To add a user:
+          </p>
+          <ol className="mt-2 list-inside list-decimal space-y-1">
+            <li>
+              In the Supabase Dashboard, open Authentication → Users → Add user, enter their email, and
+              copy the new user's UID.
+            </li>
+            <li>
+              In Table Editor → <code className="serial">user_profiles</code>, insert a row with{' '}
+              <code className="serial">id</code> = that UID, the same <code className="serial">email</code>,{' '}
+              <code className="serial">full_name</code>, <code className="serial">role</code> (admin, manager
+              or accountant) and <code className="serial">is_active</code> = true.
+            </li>
+            <li>Reload this page. For a manager, use Assign outlets on their row.</li>
+          </ol>
+        </Alert>
 
         {error && <Alert variant="error">{error}</Alert>}
 
@@ -136,8 +122,7 @@ export function AddEditUserModal({
             type="email"
             value={formData.email}
             onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-            disabled={mode === 'edit' || isSubmitting}
-            helperText={mode === 'edit' ? 'Email cannot be changed.' : undefined}
+            disabled={isSubmitting}
             required
           />
 
@@ -214,8 +199,8 @@ export function AddEditUserModal({
           <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button type="submit" isLoading={isSubmitting} disabled={mode === 'create'}>
-            {isSubmitting ? 'Saving…' : mode === 'create' ? 'Not available in the app' : 'Save changes'}
+          <Button type="submit" isLoading={isSubmitting} disabled>
+            {isSubmitting ? 'Saving…' : 'Not available in the app'}
           </Button>
         </div>
       </form>

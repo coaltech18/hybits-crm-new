@@ -13,7 +13,7 @@ import { istDateTimeParts } from '@/services/inventoryMovementService';
 export const pcs = (n: number | null | undefined) =>
   n === null || n === undefined ? '—' : new Intl.NumberFormat('en-IN').format(n);
 
-/** Sentence-case label for a movement type ("Sent Out" → "Sent out"). */
+/** Sentence-case label for a movement type (also capitalises the raw fallback for unknown types). */
 export function movementLabel(type: string): string {
   const label = movementTypeLabel(type);
   return label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();

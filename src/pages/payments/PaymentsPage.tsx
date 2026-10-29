@@ -302,19 +302,22 @@ export default function PaymentsPage() {
 
       {/* Ledger */}
       <Card padding="none" className="overflow-hidden">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-rule px-5 py-3">
-          <p className="text-sm text-ink-muted" aria-live="polite">
-            {first ? (
-              'Loading payments…'
-            ) : (
-              <>
-                <span className="font-semibold text-ink">{plural(totalCount, 'payment')}</span>
-                {showDeleted ? ' including voided' : ''}
-                {summary ? ` · ${formatCurrency(summary.total_amount)} collected` : ''}
-              </>
-            )}
-          </p>
-        </div>
+        {/* A failed load has no count to report; the message below says so. */}
+        {!(error && !loading) && (
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-rule px-5 py-3">
+            <p className="text-sm text-ink-muted" aria-live="polite">
+              {first ? (
+                'Loading payments…'
+              ) : (
+                <>
+                  <span className="font-semibold text-ink">{plural(totalCount, 'payment')}</span>
+                  {showDeleted ? ' including voided' : ''}
+                  {summary ? ` · ${formatCurrency(summary.total_amount)} collected` : ''}
+                </>
+              )}
+            </p>
+          </div>
+        )}
 
         {first ? (
           <TableSkeleton rows={8} cols={5} />

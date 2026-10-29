@@ -845,7 +845,7 @@ Run in the order given in `supabase/MIGRATION_ORDER.md`. **042 and 043 are the l
 - **Inventory repair and lifecycle actions** (send to repair, return from repair, reactivate, archive, delete) exist in the DB and partly in service code, but have no screen.
 - **Void details are stored but not shown.** `void_reason`, `voided_by` and `voided_at` are saved (043) but no screen displays them.
 - **Admin actions not logged.** User, outlet, assignment and settings changes do not appear in the activity log.
-- **No tests or CI.** `npm test` and `npm run test:ui` run Playwright, but there is no `playwright.config` and no test files, and there is no CI pipeline. `npm run lint` and `npm run type-check` pass. The DB has rollback-only verify scripts (`038`, `040_041`, `042`, `043`).
+- **Thin test coverage.** `npm test` runs a migration test (all migrations + verify scripts in PGlite) and Playwright smoke tests (every route rendered against a mocked Supabase; empty/error states for dashboard and invoices), and CI runs them with type-check, lint and build. There are no unit tests and no tests that drive write flows (creating invoices, recording payments) end to end.
 
 ### 7.3 Orphans (built, never used)
 

@@ -39,7 +39,14 @@ Never put the `service_role` key in `.env`; everything in a `VITE_*` variable en
 | `npm run lint` | ESLint over `src/`, zero warnings allowed |
 | `npm run type-check` | `tsc --noEmit` |
 
-`npm test` and `npm run test:ui` call Playwright, but **there is no Playwright config and there are no tests**, so they do nothing useful. The project has no automated tests and no CI.
+## Tests
+
+Neither suite talks to a real Supabase project.
+
+- **Migrations** (`tests/db/`): `supabase-stubs.sql` emulates what hosted Supabase provides (`anon`/`authenticated`/`service_role`, `auth.users`, `auth.uid()`/`auth.jwt()`). The run order is read from `supabase/MIGRATION_ORDER.md`, and the test fails if a migration file is not listed there. After 042 it runs the verify scripts up to 042 (the state between the two manual runs), then again after the last migration. Set `MIGRATION_TEST_VERBOSE=1` to print NOTICEs.
+- **Smoke** (`tests/e2e/`): Playwright starts Vite on port 4317 with a fake project URL (`https://hybits-e2e.supabase.co`), puts a fake admin session in `localStorage`, and answers every `*.supabase.co` request from `tests/e2e/support/fixtures.mjs` via `page.route`. Any other outside request fails the test. The clock is fixed at 29 Oct 2026, 14:30 IST, to match the fixtures. Each route must render without the ErrorBoundary, log no console errors, and show its heading and some fixture data. First run: `npx playwright install chromium`.
+
+CI (`.github/workflows/ci.yml`) runs `npm ci`, type-check, lint, build, `test:db` and `test:e2e` on every push to main/master and on every pull request.
 
 ## Database setup
 
